@@ -21,6 +21,8 @@ jobs:
       - name: Package and verify the local app
         run: /usr/bin/python3 scripts/package.py
       - name: Verify packaged UI on a disposable runner
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
         run: ./tests/native/ui-hosted.sh dist/Lumen.app
       - name: Archive application
         run: ditto -c -k --keepParent dist/Lumen.app dist/Lumen.zip
@@ -30,5 +32,7 @@ jobs:
           path: dist/Lumen.zip
 
       - name: Verify real editor sessions in disposable VM
-        timeout-minutes: 5
-        run: /usr/bin/python3 tests/hosted-vscode.py
+        timeout-minutes: 4
+        env:
+          LUMEN_RUNNER_ENVIRONMENT: ${{ runner.environment }}
+        run: /usr/bin/python3 -B tests/hosted-vscode.py
