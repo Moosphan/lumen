@@ -21,6 +21,7 @@ jobs:
       - name: Package and verify the local app
         run: /usr/bin/python3 scripts/package.py
       - name: Verify packaged UI on a disposable runner
+        id: native_ui
         env:
           RUNNER_ENVIRONMENT: ${{ runner.environment }}
         run: ./tests/native/ui-hosted.sh dist/Lumen.app
@@ -30,6 +31,14 @@ jobs:
         with:
           name: Lumen-macOS-development
           path: dist/Lumen.zip
+
+      - name: Upload native overview screenshot
+        if: steps.native_ui.outputs.preview != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: Lumen-macOS-overview
+          path: ${{ steps.native_ui.outputs.preview }}
+          if-no-files-found: error
 
       - name: Verify real editor sessions in disposable VM
         timeout-minutes: 4

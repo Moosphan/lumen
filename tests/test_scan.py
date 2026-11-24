@@ -156,3 +156,45 @@ class ScannerTests(unittest.TestCase):
             result = scan([denied, expected.parent])
         self.assertEqual([f['path'] for f in result['files']], [str(expected)])
         self.assertTrue(any(str(denied) in issue for issue in result['issues']))
+
+    def test_browser_profile_data_and_sidecars_are_protected(self):
+        names = [
+            'Application Support/Google/Chrome/Default/Bookmarks',
+            'Application Support/Chromium/Profile 2/Login Data For Account-wal',
+            'Application Support/Microsoft Edge/Default/Network/Cookies-journal',
+            'Application Support/BraveSoftware/Brave-Browser/Default/Sessions/Session_128',
+            'Application Support/Google/Chrome Canary/Profile 3/Service Worker/CacheStorage/origin/body',
+            'Application Support/Google/Chrome/Local State',
+            'Application Support/Firefox/Profiles/id.release/logins.json',
+            'Application Support/Firefox/Profiles/id.release/key4.db-shm',
+            'Application Support/Firefox/Profiles/id.release/sessionstore-backups/recovery.jsonlz4',
+            'Application Support/Firefox/Profiles/id.release/storage/default/origin/idb/payload',
+            'Safari/Profiles/ABC/ReadingListArchives/page/content',
+            'Safari/SafariTabs.db-wal',
+            'Cookies/Cookies.binarycookies',
+            'Saved Application State/com.apple.Safari.savedState/data.data',
+            'Keychains/session/keychain-2.db-wal',
+            'Containers/com.apple.Safari/Data/Library/WebKit/WebsiteData/Default/payload',
+            'Group Containers/group.com.apple.Safari/Data/History.db-shm',
+        ]
+        targets = [self.file('Library/' + name) for name in names]
+        controls = [self.file('Projects/Google/Chrome/Default/Bookmarks'),
+                    self.file('Library/Application Support/Docs/Default/Login Data'),
+                    self.file('Downloads/Cookies-journal'),
+                    self.file('Library/Application Support/Google/Chrome/Default/Cache/opaque')]
+        _, rows = self.runscan()
+        for p in targets:
+            with self.subTest(path=p):
+                self.assertEqual(rows[p]['decision'], 'keep')
+        for p in controls:
+            with self.subTest(path=p):
+                self.assertEqual(rows[p]['decision'], 'review')
+
+    def test_shared_container_has_no_inferred_exclusive_app(self):
+        self.fixture()
+        p = self.file('Library/Group Containers/com.lumen.fixture/config/state')
+        result, rows = self.runscan()
+        self.assertEqual(rows[p]['decision'], 'keep')
+        self.assertEqual(rows[p]['owner'], '')
+        self.assertEqual(rows[p]['app_path'], '')
+        self.assertGreaterEqual(result['space']['shared_allocated_bytes'], rows[p]['allocated_bytes'])

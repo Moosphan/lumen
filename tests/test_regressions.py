@@ -73,6 +73,21 @@ class PublicWorkflowRegressions(unittest.TestCase):
         row = next(r for r in preview['apps'] if r['path'] == str(app))
         self.assertIsNotNone(row.get('uninstall_snapshot'))
 
+    def test_unverified_rule_cannot_overrule_an_external_reference(self):
+        # The same version and paths outside the registered lab must not authorize a move.
+        source = self.sample()
+        copy = self.work / 'unregistered-copy'
+        shutil.copytree(source, copy, symlinks=True)
+        log = copy / 'Library/Logs/com.lumen.fixture/expired-1.log'
+        page = self.work / 'incident.html'
+        page.write_text(f'<a href="{log.as_uri()}">incident record</a>')
+        preview = self.call('scan', roots=[str(self.work)], deep=True)
+        row = next(r for r in preview['files'] if r['path'] == str(log))
+        self.assertEqual(row['decision'], 'keep')
+        result = self.call('run', paths=[str(log)], action='quarantine', scan_id=preview['scan_id'])
+        self.assertEqual(result['last_action']['items'][0]['status'], 'skipped')
+        self.assertTrue(log.exists())
+
     def test_old_approval_cannot_move_same_spelling_from_replaced_root(self):
         target = self.work / 'draft.bin'
         target.write_bytes(b'OLD')

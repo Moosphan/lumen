@@ -196,9 +196,11 @@ def inventory(config, state, incremental=False, full=False):
             row["projects"] = sorted(set(row["projects"]).union(t["root"] for t in related))
             row["agents"] = sorted(set(row["agents"]).union(t["agent"] for t in related))
             row["task_ids"] = sorted(t["id"] for t in related)
-        if row.get("rule_id") == "vscode.1.95.3.main-log.v1" and row["app_path"] not in verified_apps:
+        if (row["decision"] == "safe" and row.get("rule_id") == "vscode.1.95.3.main-log.v1"
+                and row["app_path"] not in verified_apps):
             row.update(decision="review", reason="当前安装的版本和发行方未通过完整校验")
-        if row.get("rule_id") == "fixture.rotated-log.v1" and not any(inside(Path(row["path"]), lab) for lab in lab_roots):
+        if (row["decision"] == "safe" and row.get("rule_id") == "fixture.rotated-log.v1"
+                and not any(inside(Path(row["path"]), lab) for lab in lab_roots)):
             row.update(decision="review", reason="演练规则仅在本应用生成的样本目录内生效")
         if row["path"] in remnants and row["decision"] == "review":
             row.update(residual=True, reason=remnants[row["path"]]["reason"])

@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import Foundation
+import ImageIO
 
 private struct Failure: Error, CustomStringConvertible {
     let description: String
@@ -77,6 +78,55 @@ private func fixtureReport(_ lab: URL) -> FixtureReport? {
     return FixtureReport(root: roots[0], scan: scan)
 }
 
+private func captureOverview(pid: pid_t, lab: URL, ax: AXUIElement) {
+    guard CGPreflightScreenCaptureAccess() else {
+        print("Overview PNG: skipped because Screen Recording permission is unavailable.")
+        return
+    }
+    // A completed scan in the state directory can precede the SwiftUI redraw.
+    let ready: Bool? = try? eventually("the populated overview", seconds: 10) {
+        guard element("重新扫描", in: ax, button: true) != nil,
+              element("审阅清理项目", in: ax, button: false) != nil else { return nil }
+        return true
+    }
+    guard ready == true else {
+        print("Overview PNG: skipped because the populated overview controls could not be verified.")
+        return
+    }
+    // Select the one normal on-screen Lumen window belonging to this exact process.
+    let candidates = (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+                      as? [[String: Any]] ?? []).filter {
+        ($0[kCGWindowOwnerPID as String] as? Int32) == pid &&
+        ($0[kCGWindowLayer as String] as? Int) == 0 &&
+        ($0[kCGWindowName as String] as? String) == "既白 Lumen"
+    }
+    guard candidates.count == 1, let id = candidates[0][kCGWindowNumber as String] as? NSNumber,
+          id.uint32Value != kCGNullWindowID else {
+        print("Overview PNG: skipped because the Lumen window could not be uniquely identified.")
+        return
+    }
+    let pending = lab.appendingPathComponent("capture.png")
+    let capture = Process()
+    capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+    capture.arguments = ["-x", "-o", "-t", "png", "-l", id.stringValue, pending.path]
+    do {
+        try capture.run()
+        capture.waitUntilExit()
+        guard capture.terminationStatus == 0,
+              let source = CGImageSourceCreateWithURL(pending as CFURL, nil),
+              CGImageSourceGetType(source) as String? == "public.png",
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
+              image.width >= 900, image.height >= 500 else {
+            print("Overview PNG: skipped because the window capture did not produce a usable PNG.")
+            return
+        }
+        try FileManager.default.moveItem(at: pending, to: lab.appendingPathComponent("Lumen-overview.png"))
+        print("Overview PNG: captured the populated synthetic workspace in the Lumen window (\(image.width) × \(image.height)).")
+    } catch {
+        print("Overview PNG: skipped because the capture failed: \(error.localizedDescription)")
+    }
+}
+
 private func fallbackReport(_ pid: pid_t) {
     let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
     let windows = info.filter {
@@ -85,6 +135,9 @@ private func fallbackReport(_ pid: pid_t) {
     let title = windows.contains { ($0[kCGWindowName as String] as? String) == "既白 Lumen" }
     print("WindowServer visible app window: \(windows.isEmpty ? "unverified" : "verified").")
     print("Native window title: \(title ? "verified" : "unverified").")
+    print(CGPreflightScreenCaptureAccess()
+          ? "Overview PNG: skipped because the populated fixture overview could not be verified through AX."
+          : "Overview PNG: skipped because Screen Recording permission is unavailable.")
     print("AX controls: skipped because the runner has no accessibility permission. Fixture-button, scope-list and rescan interactions were not tested.")
 }
 
@@ -129,6 +182,7 @@ private func fallbackReport(_ pid: pid_t) {
         _ = try eventually("the native window title") { window(ax) }
         try press("创建演练样本", in: ax)
         let initial = try eventually("the fixture scan in a separate state directory") { fixtureReport(lab) }
+        captureOverview(pid: pid, lab: lab, ax: ax)
         try press("扫描范围", in: ax)
         _ = try eventually("the fixture path in the scope list") { element(initial.root, in: ax, button: false) }
         try press("重新扫描", in: ax)

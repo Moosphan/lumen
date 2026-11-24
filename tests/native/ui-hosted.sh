@@ -40,3 +40,9 @@ cat "$lab/result"
 if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
     cat "$lab/result" >> "$GITHUB_STEP_SUMMARY"
 fi
+
+if [[ -f "$lab/Lumen-overview.png" && -n "${GITHUB_OUTPUT:-}" ]]; then
+    preview_dir="$(mktemp -d "$RUNNER_TEMP/lumen-preview.XXXXXXXX")"
+    /usr/bin/install -m 600 "$lab/Lumen-overview.png" "$preview_dir/Lumen-overview.png"
+    echo "preview=$preview_dir/Lumen-overview.png" >> "$GITHUB_OUTPUT"
+fi

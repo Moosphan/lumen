@@ -30,4 +30,8 @@ except PermissionError:
     print("Write confinement verified")
 else:
     raise SystemExit("sandbox failed to deny outside write")' "$guard"
-"${sandbox[@]}" /usr/bin/python3 -B -m unittest discover -s tests -v
+case "${1:-}" in
+    "") "${sandbox[@]}" /usr/bin/python3 -B -m unittest discover -s tests -v ;;
+    --benchmark) "${sandbox[@]}" /usr/bin/python3 -B -m scripts.benchmark ;;
+    *) echo "Usage: $0 [--benchmark]" >&2; exit 2 ;;
+esac

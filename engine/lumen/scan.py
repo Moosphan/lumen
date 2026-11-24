@@ -65,6 +65,73 @@ def _kind(path):
     return 'other'
 
 
+# The default macOS data roots are part of the match. Ordinary project files
+# named Cookies, Current Tabs or Bookmarks have no special meaning on their own.
+CHROMIUM_DATA_ROOTS = {
+    ('google', name) for name in ('chrome', 'chrome beta', 'chrome dev', 'chrome canary', 'chrome for testing')
+} | {
+    (name,) for name in ('chromium', 'microsoft edge', 'microsoft edge beta', 'microsoft edge dev', 'microsoft edge canary')
+} | {
+    ('bravesoftware', name) for name in ('brave-browser', 'brave-browser-beta', 'brave-browser-nightly')
+}
+PROFILE_FILES = {
+    'bookmarks', 'reading list', 'login data', 'login data for account', 'web data', 'account web data',
+    'cookies', 'bound session cookies', 'network persistent state', 'history', 'last session', 'current session', 'last tabs', 'current tabs',
+    'preferences', 'secure preferences', 'favicons', 'top sites', 'affiliation database',
+}
+PROFILE_STORES = {
+    'sessions', 'local storage', 'session storage', 'indexeddb', 'service worker', 'file system',
+    'storage', 'webstorage', 'databases', 'application cache', 'sync data', 'local extension settings',
+    'sync extension settings', 'extension state', 'extensions', 'sharedstorage', 'offline pages',
+    'saved tab groups', 'web applications', 'blob_storage', 'network', 'shared dictionary',
+    'shared_proto_db', 'shared_proto_db_metadata', 'platform notifications', 'background fetch',
+}
+SAFARI_IDS = {'com.apple.safari', 'com.apple.safaritechnologypreview'}
+SIDECAR = re.compile(r'(-wal|-shm|-journal|\.bak|\.tmp)$')
+
+
+def _profile_protection(path):
+    parts = tuple(part.casefold() for part in path.parts)
+    for index, part in enumerate(parts):
+        if part != 'library':
+            continue
+        rel = parts[index + 1:]
+        if not rel:
+            continue
+        if rel[0] == 'group containers' and len(rel) >= 3:
+            return 'shared_container'
+        if rel[0] in ('safari', 'safari technology preview', 'keychains', 'cookies'):
+            return 'browser_data'
+        if rel[0] == 'saved application state' and len(rel) >= 3 and rel[1].removesuffix('.savedstate') in SAFARI_IDS:
+            return 'browser_data'
+        if len(rel) >= 2 and rel[0] in ('webkit', 'httpstorages') and (
+                rel[1] in SAFARI_IDS or rel[1].removesuffix('.binarycookies') in SAFARI_IDS):
+            return 'browser_data'
+        if (len(rel) >= 5 and rel[0] == 'containers' and rel[1] in SAFARI_IDS
+                and rel[2:4] == ('data', 'library')
+                and rel[4] in ('safari', 'cookies', 'webkit', 'httpstorages', 'saved application state')):
+            return 'browser_data'
+        if rel[0] != 'application support':
+            continue
+        product = rel[1:]
+        if product[:2] == ('firefox', 'profiles') or product in {
+                ('firefox', 'profiles.ini'), ('firefox', 'installs.ini')}:
+            return 'browser_data'
+        prefix = next((root for root in (product[:2], product[:1]) if root in CHROMIUM_DATA_ROOTS), None)
+        if prefix:
+            relative = product[len(prefix):]
+            # The Chromium profile directory can have a custom name. Require an
+            # immediate profile child with the exact store/file layout instead.
+            if len(relative) == 1 and SIDECAR.sub('', relative[0]) == 'local state':
+                return 'browser_data'
+            if len(relative) >= 2 and relative[1] in PROFILE_STORES:
+                return 'browser_data'
+            if len(relative) == 2 and SIDECAR.sub('', relative[1]) in PROFILE_FILES:
+                return 'browser_data'
+    return ''
+
+
+
 def _signature(s):
     return s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns
 
@@ -181,7 +248,7 @@ def _space(files):
         first = paths[0]
         logical += first['size']
         allocated += first['allocated_bytes']
-        if (first['nlink'] > 1 or
+        if (first['nlink'] > 1 or any(row.get('shared_container') for row in paths) or
                 len({p for row in paths for p in row['projects']}) > 1 or
                 any(row.get('shared_owners') or len(row.get('model_versions', [])) > 1 for row in paths)):
             shared += first['allocated_bytes']
@@ -238,6 +305,12 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
             files[p]['reason'] = '可能是构建产物，移除后可能需要重新构建'
         if any(parent.suffix.lower() == '.app' for parent in p.parents) or _under(p, [Path('/Library')]):
             protect(p, '应用本体或机器级资源库，仅盘点')
+        protection = _profile_protection(p)
+        if protection:
+            files[p][protection] = True
+            reason = ('共享容器的使用方尚未核实，保留数据' if protection == 'shared_container'
+                      else '浏览器配置、登录凭据、会话或离线资料需要保留')
+            protect(p, reason)
         if _under(p, kept):
             protect(p, '用户已标记保留')
 
@@ -362,6 +435,9 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
         proj = next((parent for parent in p.parents if parent in project_agents), None)
         if proj:
             row.update(projects=[str(proj)], agents=sorted(set(row['agents']) | project_agents[proj]), location='项目内')
+        if row.get('shared_container'):
+            # A group identifier alone cannot establish any exclusive owner.
+            continue
         app = next((parent for parent in p.parents if parent in apps), None)
         if app:
             protect(p, '应用本体')
