@@ -4,9 +4,12 @@ import SwiftUI
 
 typealias Object = [String: Any]
 
+let fileStates = ["cleaned":"已直接移除", "quarantined":"已隔离", "trashed":"已移入废纸篓",
+                  "restored":"已恢复", "purged":"已清空", "skipped":"已跳过"]
+
 struct ActionResult: Identifiable {
     let id = UUID()
-    let data: Object
+    let batches: [Object]
 }
 
 extension Dictionary where Key == String, Value == Any {
@@ -116,7 +119,8 @@ func resource(_ name: String, source: String) -> URL? {
                         self.notice = command == "scan" ? "扫描完成，共 \(self.files.count) 个文件。" : "已更新本地记录。"
                     }
                     if let last = dashboard["last_action"] as? Object {
-                        self.result = ActionResult(data: last)
+                        let batches = dashboard.rows("last_actions")
+                        self.result = ActionResult(batches: batches.isEmpty ? [last] : batches)
                     }
                     done?(dashboard)
                 }

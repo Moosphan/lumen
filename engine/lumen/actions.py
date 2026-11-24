@@ -324,6 +324,8 @@ def _execute_one(db, state, roots, action, uid, rec, trash_override):
                 raise ValueError('同卷存储不可用')
             db.execute("UPDATE item SET stored=?,status='moving' WHERE id=?", (str(dest / name), uid))
             _check(src, p.name, rec)
+            if 'ctime_ns' in rec and os.stat(p.name, dir_fd=src, follow_symlinks=False).st_ctime_ns != rec['ctime_ns']:
+                raise ValueError('执行前文件状态已变化')
             _rename(src, p.name, target, name)
             try:
                 _check(target, name, rec)
@@ -346,7 +348,7 @@ def execute(state_dir, roots, records, action, trash_override=None):
     with _journal(state_dir) as (db, state):
         batch = uuid.uuid4().hex
         now = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        staged = [(uuid.uuid4().hex, {k: r[k] for k in ('path','dev','ino','size','mtime_ns','decision') if k in r})
+        staged = [(uuid.uuid4().hex, {k: r[k] for k in ('path','dev','ino','size','mtime_ns','ctime_ns','decision') if k in r})
                   for r in records]
         db.execute('BEGIN')
         db.execute('INSERT INTO batch VALUES (?,?,?)', (batch, action, now))

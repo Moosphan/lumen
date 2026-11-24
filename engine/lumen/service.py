@@ -2,12 +2,13 @@
 import fcntl
 import json
 import os
+import stat
 import tempfile
 import time
 import uuid
 from pathlib import Path
 
-from . import actions, macmanage
+from . import actions, integrations, macmanage
 from .fixture import create_fixture
 from .scan import scan
 
@@ -65,6 +66,7 @@ def assign_roots(config, values, state, renew=()):
         p = Path(value)
         if p == Path("/") or p.is_symlink() or inside(p.resolve(), state.resolve()):
             raise ValueError("请选择具体的工作区或应用数据目录")
+    invalidated = set(config["roots"]).difference(new).union(renew)
     previous = config.get("root_ids", {})
     config["root_ids"] = {r: (previous.get(r) if r in config["roots"] and r not in renew else root_identity(r)) for r in new}
     config["roots"] = new
@@ -74,6 +76,9 @@ def assign_roots(config, values, state, renew=()):
         config[key] = [p for p in config[key] if allowed(p)]
     config["tasks"] = [task for task in config["tasks"] if allowed(task["root"])]
     for t in config["tasks"]:
+        if "temporary_snapshots" in t:
+            t["temporary_snapshots"] = {p: snap for p, snap in t["temporary_snapshots"].items()
+                                        if allowed(p) and not any(inside(Path(p), Path(r)) for r in invalidated)}
         for field in ("inputs", "outputs", "temporary"):
             t[field] = [p for p in t[field] if allowed(p)]
     config["projects"] = {p: a for p, a in config["projects"].items() if allowed(p)}
@@ -106,7 +111,7 @@ def apply_settings(config, request, state):
         config["projects"] = projects
     if "automatic_rules" in request:
         rules = request["automatic_rules"]
-        if not isinstance(rules, list) or any(r not in ("fixture.rotated-log.v1", "vscode.1.95.3.main-log.v1") for r in rules):
+        if not isinstance(rules, list) or any(r not in (*integrations.SAFE_RULE_IDS, integrations.TASK_TEMPORARY) for r in rules):
             raise ValueError("未知的自动清理规则")
         config["automatic_rules"] = sorted(set(rules))
     if "budget" in request:
@@ -116,6 +121,42 @@ def apply_settings(config, request, state):
         config["budget"] = budget
     if "snooze_until" in request:
         config["snooze_until"] = int(request["snooze_until"])
+
+
+SNAPSHOT_FIELDS = ("dev", "ino", "size", "mtime_ns", "ctime_ns")
+
+
+def register_temporaries(config, task, prior):
+    # Editing other task fields cannot renew old, missing or invalidated evidence.
+    snapshot = {}
+    project = Path(task["root"])
+    project_id = root_identity(project)
+    grants = active_roots(config)
+    if not project_id or not any(inside(project, Path(r)) for r in grants):
+        return snapshot
+    old = prior.get("temporary_snapshots", {}) if prior else {}
+    for name in task["temporary"]:
+        path = Path(name)
+        if prior and name in prior["temporary"]:
+            if name in old:
+                snapshot[name] = old[name]
+            continue
+        if task["closed"] or project not in path.parents:
+            continue
+        grant = max((r for r in grants if inside(path, Path(r))), key=len, default=None)
+        if not grant:
+            continue
+        try:
+            with actions._directory(path.parent) as parent:
+                info = os.stat(path.name, dir_fd=parent, follow_symlinks=False)
+                if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.getuid():
+                    continue
+        except OSError:
+            continue
+        identity = [info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns]
+        snapshot[name] = dict(identity=identity, project_id=project_id, grant=grant,
+                              grant_id=config["root_ids"][grant])
+    return snapshot
 
 
 def remember_task(config, request):
@@ -131,10 +172,15 @@ def remember_task(config, request):
         if any(not any(inside(Path(p), Path(r)) for r in config["roots"]) for p in task[field]):
             raise ValueError("请先授权任务引用的外部目录")
     task["id"] = str(request.get("id") or root + "|" + agent)
+    prior = next((t for t in config["tasks"] if t["id"] == task["id"]), None)
+    if prior and (prior["root"], prior["agent"]) != (root, agent):
+        raise ValueError("任务标识对应其他工程或 Agent")
+    task["temporary_snapshots"] = register_temporaries(config, task, prior)
     config["tasks"] = [t for t in config["tasks"] if t["id"] != task["id"]] + [task]
     agents = config["projects"].setdefault(root, [])
     if agent not in agents:
         agents.append(agent)
+    return task
 
 
 def app_protected(config, record, report):
@@ -230,7 +276,7 @@ def refresh(config, state):
     return report
 
 
-def perform(config, state, request):
+def perform(config, state, request, temporary_task=None, planned_paths=()):
     requested = paths(request.get("paths", []))
     action = request.get("action")
     if not requested or action not in ("quarantine", "clean", "trash"):
@@ -239,12 +285,15 @@ def perform(config, state, request):
     fresh = inventory(config, state, full=True)
     current = {r["path"]: r for r in fresh["files"]}
     selected, skipped = [], []
-    chosen = set(requested)
+    chosen = set(requested).union(planned_paths)
     for path in requested:
         old, row = preview.get(path), current.get(path)
         fields = ("dev", "ino", "size", "mtime_ns", "ctime_ns", "decision", "rule_id")
         if not old or not row or any(old.get(f) != row.get(f) for f in fields):
             skipped.append({"path": path, "status": "skipped", "reason": "预演已过期，请重新扫描"})
+            continue
+        if temporary_task and not eligible_temporary(config, temporary_task, row):
+            skipped.append({"path": path, "status":"skipped", "reason":"任务登记身份或保护状态已改变"})
             continue
         group = row.get("duplicate_group")
         copies = fresh.get("duplicates", {}).get(group, []) if group else []
@@ -259,6 +308,77 @@ def perform(config, state, request):
         result = actions.execute(state, active_roots(config), selected, action) if selected else {"items": []}
     result.setdefault("items", []).extend(skipped)
     return result
+
+
+def eligible_temporary(config, task, row):
+    proof = task.get("temporary_snapshots", {}).get(row["path"])
+    return bool(proof and Path(task["root"]) in Path(row["path"]).parents
+                and proof["grant"] in active_roots(config)
+                and proof["grant_id"] == config["root_ids"].get(proof["grant"])
+                and proof["project_id"] == root_identity(task["root"])
+                and proof["identity"] == [row.get(k) for k in SNAPSHOT_FIELDS]
+                and row["decision"] in ("review", "safe") and row["nlink"] == 1
+                and row["kind"] not in ("model", "symlink") and not row.get("refs")
+                and not row.get("shared_owners") and not set(row.get("projects", [])).difference([task["root"]]))
+
+
+def finish_task(config, state, task, previous_temporaries=()):
+    enabled = config.get("automatic_rules", [])
+    if task["id"].startswith("claude-session:"):
+        seen = config.setdefault("finished_session_ids", [])
+        if task["id"] not in seen:
+            seen.append(task["id"])
+    if not enabled:
+        return []
+    # Persist the closed state before the first move. Replayed hooks cannot start
+    # another batch after a process interruption. The action journal covers moves.
+    save_config(state, config)
+    report = inventory(config, state, full=True)
+    config["report"] = report
+    declared = {Path(p) for t in config["tasks"] for p in t["temporary"]}
+    declared.update(Path(p) for p in previous_temporaries)
+    disposable = [p for p in integrations.automatic_paths(report, enabled)
+                  if inside(Path(p), Path(task["root"])) and not any(inside(Path(p), d) for d in declared)]
+    temporary, skips = [], []
+    if integrations.TASK_TEMPORARY in enabled:
+        current = {row["path"]: row for row in report["files"]}
+        for path in task["temporary"]:
+            row = current.get(path)
+            if path not in task.get("temporary_snapshots", {}):
+                reason = "登记时缺少文件身份快照或原授权已撤回"
+            elif not row:
+                reason = "文件已缺失、排除或所属卷不在线"
+            elif row["decision"] not in ("review", "safe"):
+                reason = row["reason"]
+            elif not eligible_temporary(config, task, row):
+                reason = "文件身份、归属或引用与登记条件不符"
+            else:
+                temporary.append(path)
+                continue
+            skips.append({"path":path, "status":"skipped", "reason":reason})
+    # Both rules must jointly leave a copy even when they create different batches.
+    planned = set(disposable + temporary)
+    blocked = {p for group in report["duplicates"].values() if set(group) <= planned for p in group}
+    results = []
+    for action, chosen in (("quarantine", temporary), ("clean", disposable)):
+        paths_to_run = [p for p in chosen if p not in blocked]
+        skipped = [{"path":p, "status":"skipped", "reason":"重复组必须保留至少一份"} for p in chosen if p in blocked]
+        if action == "quarantine":
+            skipped.extend(skips)
+        if not paths_to_run and not skipped:
+            continue
+        locations = {Path(p).parent for p in paths_to_run}
+        before = volume_free(locations)
+        result = {"action":action, "items":[]}
+        if paths_to_run:
+            result = perform(config, state, {"paths":paths_to_run, "action":action},
+                             temporary_task=task if action == "quarantine" else None, planned_paths=planned)
+        after = volume_free(locations)
+        result.setdefault("action", action)
+        result["items"].extend(skipped)
+        measure_batch(config, result, before, after)
+        results.append(result)
+    return results
 
 
 def fixture_trash(config):
@@ -304,6 +424,16 @@ def volume_free(roots):
     return free
 
 
+def measure_batch(config, result, before, after):
+    processed = [i for i in result["items"] if i["status"] in
+                 ("cleaned", "quarantined", "trashed", "restored", "purged")]
+    delta = sum(after[k] - v for k, v in before.items()) if processed and before and before.keys() == after.keys() else None
+    metrics = {"logical_processed_bytes":sum(i.get("size", 0) for i in processed), "measured_free_delta":delta}
+    result.update(metrics)
+    if result.get("batch_id"):
+        config.setdefault("measurements", {})[result["batch_id"]] = metrics
+
+
 def followup(module, command, state, config, request):
     if command == "restore" and request.get("beside") is True:
         return module.restore(state, active_roots(config), request["batch_id"], beside=True)
@@ -328,6 +458,8 @@ def dispatch(state, request):
         fcntl.flock(lock, fcntl.LOCK_EX)
         config = load_config(state)
         last = None
+        completed_batches = []
+        duplicate = False
         if cmd == "fixture":
             root = Path(create_fixture())
             (root / ".Trash").mkdir(mode=0o700)
@@ -336,7 +468,8 @@ def dispatch(state, request):
             config.setdefault("labs", {})[str(root)] = [st.st_dev, st.st_ino]
             save_config(state, config)
             return {"root": str(root)}
-        before_space = volume_free(config["roots"]) if cmd in ("run","purge","restore","empty_trash","uninstall") else {}
+        measures_space = cmd in ("run","purge","restore","empty_trash","uninstall")
+        before_space = volume_free(active_roots(config)) if measures_space else {}
         if cmd in ("run", "uninstall", "empty_trash"):
             require_preview(config, request)
         if cmd == "scan":
@@ -346,25 +479,37 @@ def dispatch(state, request):
         elif cmd == "settings":
             apply_settings(config, request, state)
         elif cmd == "task":
-            remember_task(config, request)
+            identifier = request.get("id") or request["root"] + "|" + request["agent"]
+            prior = next((t for t in config["tasks"] if t["id"] == identifier), None)
+            if prior and request.get("closed") is True:
+                if (request["root"], request["agent"]) != (prior["root"], prior["agent"]):
+                    raise ValueError("任务标识对应其他工程或 Agent")
+                if prior["closed"]:
+                    duplicate = True
+                else:
+                    # A close-only request keeps all registered protections.
+                    closing = {**prior, **request}
+                    for key in ("inputs", "outputs"):
+                        closing[key] = list(dict.fromkeys(prior[key] + request.get(key, [])))
+                    task = remember_task(config, closing)
+                    completed_batches = finish_task(config, state, task, previous_temporaries=prior["temporary"])
+            else:
+                remember_task(config, request)
         elif cmd == "run":
             last = perform(config, state, request)
         elif cmd == "session_end":
-            from .integrations import claude_session_end, automatic_paths
-            task = claude_session_end(request["event"], active_roots(config))
+            task = integrations.claude_session_end(request["event"], active_roots(config))
             prior = next((t for t in config["tasks"] if t["id"] == task["id"]), None)
+            if prior and (prior["root"], prior["agent"]) != (task["root"], task["agent"]):
+                raise ValueError("会话标识对应其他工程")
+            if (prior and prior["closed"]) or task["id"] in config.get("finished_session_ids", []):
+                return {"duplicate": True, "task_id": task["id"]}
             if prior:
-                if (prior["root"], prior["agent"]) != (task["root"], task["agent"]):
-                    raise ValueError("会话标识对应其他工程")
-                if prior["closed"]:
-                    return {"duplicate": True, "task_id": task["id"]}
-                task.update({k: prior[k] for k in ("inputs", "outputs", "temporary")})
-            remember_task(config, task)
-            report = refresh(config, state)
-            choices = automatic_paths(report, config.get("automatic_rules", []))
-            scoped = [p for p in choices if inside(Path(p), Path(task["root"]))]
-            if scoped:
-                last = perform(config, state, {"paths":scoped, "action":"clean"})
+                prior["closed"] = True
+                task = prior
+            else:
+                task = remember_task(config, task)
+            completed_batches = finish_task(config, state, task)
         elif cmd in ("trash_list", "empty_trash", "uninstall"):
             if cmd == "uninstall":
                 target = request["path"]
@@ -395,19 +540,16 @@ def dispatch(state, request):
             last = followup(actions, cmd, state, config, request)
         elif cmd != "status":
             raise ValueError("未知操作")
+        if completed_batches:
+            last = completed_batches[-1]
         if last is not None:
-            after_space = volume_free(config["roots"])
-            last["measured_free_delta"] = sum(after_space[k] - v for k, v in before_space.items() if k in after_space)
-            last["logical_processed_bytes"] = sum(i.get("size", 0) for i in last["items"]
-                                                  if i["status"] not in ("skipped", "pending"))
+            if not completed_batches:
+                measure_batch(config, last, before_space, volume_free(active_roots(config)))
             if cmd == "empty_trash":
                 import datetime
                 last.update(id="trash-" + uuid.uuid4().hex, action="empty_trash",
                             created_at=datetime.datetime.now(datetime.timezone.utc).isoformat())
                 config.setdefault("trash_history", []).insert(0, last)
-            batch = last.get("batch_id")
-            if batch:
-                config.setdefault("measurements", {})[batch] = {k:last[k] for k in ("logical_processed_bytes","measured_free_delta")}
         if cmd != "status":
             refresh(config, state)
             save_config(state, config)
@@ -424,6 +566,10 @@ def dispatch(state, request):
         dashboard["history"].sort(key=lambda b:b.get("created_at",""), reverse=True)
         for batch in dashboard["history"]:
             batch.update(config.get("measurements", {}).get(batch["id"], {}))
+        if completed_batches:
+            dashboard["last_actions"] = completed_batches
+        if duplicate:
+            dashboard["duplicate"] = True
         if last is not None:
             dashboard["last_action"] = last
         return dashboard

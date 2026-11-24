@@ -253,10 +253,9 @@ struct HistoryView: View {
                     DisclosureGroup("逐项结果（\(items.count)）") {
                         ForEach(Array(items.enumerated()), id: \.offset) { pair in
                             let row = pair.element
-                            let states = ["cleaned":"已直接移除","quarantined":"已隔离","trashed":"已移入废纸篓","restored":"已恢复","purged":"已清空","skipped":"已跳过"]
                             VStack(alignment: .leading) {
                                 Text(row.string("path")).textSelection(.enabled)
-                                Text([states[row.string("status")] ?? row.string("status"),row.string("reason")].filter { !$0.isEmpty }.joined(separator: " · ")).foregroundStyle(.secondary)
+                                Text([fileStates[row.string("status")] ?? row.string("status"),row.string("reason")].filter { !$0.isEmpty }.joined(separator: " · ")).foregroundStyle(.secondary)
                             }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 3)
                         }
                     }

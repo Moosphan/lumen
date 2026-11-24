@@ -5,19 +5,22 @@ struct ResultSheet: View {
     let report: ActionResult
     @Environment(\.dismiss) var dismiss
     var body: some View {
-        let items = report.data.rows("items")
+        let items = report.batches.flatMap { $0.rows("items") }
         let skipped = items.filter { $0.string("status") == "skipped" }
         return VStack(alignment: .leading, spacing: 14) {
             Text("逐项操作结果").font(.title2.bold())
             Text("\(items.count) 条记录 · 跳过 \(skipped.count) 项").foregroundStyle(lilac)
-            BatchMetrics(data: report.data)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 8) {
-                    ForEach(Array(items.enumerated()), id: \.offset) { pair in
-                        let item = pair.element
-                        Text(item.string("path")).textSelection(.enabled)
-                        Text(item.string("status") + " · " + item.string("reason")).foregroundStyle(.secondary)
-                        Divider()
+                    ForEach(Array(report.batches.enumerated()), id: \.offset) { _, batch in
+                        if let title = actions[batch.string("action")] { Text(title).font(.headline) }
+                        BatchMetrics(data: batch)
+                        ForEach(Array(batch.rows("items").enumerated()), id: \.offset) { _, item in
+                            Text(item.string("path")).textSelection(.enabled)
+                            Text([fileStates[item.string("status")] ?? item.string("status"), item.string("reason")]
+                                .filter { !$0.isEmpty }.joined(separator: " · ")).foregroundStyle(.secondary)
+                            Divider()
+                        }
                     }
                 }
             }

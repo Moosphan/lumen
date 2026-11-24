@@ -163,6 +163,8 @@ struct WorkspaceEditor: View {
     @State var inputs = ""
     @State var outputs = ""
     @State var temporary = ""
+    @State var sessionID = ""
+    @State var formError = ""
     @State var closed = false
     func lines(_ value: String) -> [String] {
         value.split(separator: "\n").map(String.init)
@@ -182,14 +184,32 @@ struct WorkspaceEditor: View {
             }}
             TextField(kind == .task ? "Agent 名称" : "Agent 名称（多个名称用逗号分隔）", text: $agent)
             if kind == .task {
+                if agent.trimmingCharacters(in: .whitespaces) == "Claude Code" && task["id"] == nil {
+                    TextField("Claude 会话 ID（可选，用于自动接收结束事件）", text: $sessionID)
+                }
                 Text("每行填写一个已授权的绝对路径。输入与正式输出会标记为保留。").foregroundStyle(.secondary)
                 pathsEditor("输入", $inputs); pathsEditor("正式输出", $outputs); pathsEditor("临时产物", $temporary)
                 Toggle("任务已结束", isOn: $closed)
             }
+            if !formError.isEmpty { Text(formError).foregroundStyle(.orange) }
             HStack { Spacer(); Button("取消") { dismiss() }; Button("保存") {
                 if kind == .task {
                     var args: Object = ["root":root,"agent":agent,"inputs":lines(inputs),"outputs":lines(outputs),"temporary":lines(temporary),"closed":closed]
-                    args["id"] = task["id"] ?? UUID().uuidString
+                    let session = sessionID.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if task["id"] == nil && agent.trimmingCharacters(in: .whitespaces) == "Claude Code" && !session.isEmpty {
+                        guard session.range(of: #"^[A-Za-z0-9_-]{1,128}$"#, options: .regularExpression) != nil else {
+                            formError = "会话 ID 仅接受 1 至 128 个字母、数字、连字符或下划线。"
+                            return
+                        }
+                        let identifier = "claude-session:" + session
+                        guard !store.data.rows("tasks").contains(where: { $0.string("id") == identifier }) else {
+                            formError = "该会话已登记，请从任务清单编辑已有记录。"
+                            return
+                        }
+                        args["id"] = identifier
+                    } else {
+                        args["id"] = task["id"] ?? UUID().uuidString
+                    }
                     store.call("task", args)
                 } else {
                     var projects = store.data["configured_projects"] as? [String:[String]] ?? store.projects

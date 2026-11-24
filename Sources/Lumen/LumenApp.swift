@@ -254,19 +254,30 @@ struct Workbench: View {
             }
             Panel {
                 let rule = "vscode.1.95.3.main-log.v1"
+                let quarantineRule = "task.declared-temporary.quarantine.v1"
                 let rules = store.data.paths("automatic_rules")
-                Text("任务结束后的自动清理").font(.headline)
-                Text("导入显式任务结束事件时，可自动清理命中已验证 VS Code 1.95.3 轮转日志规则的文件。").foregroundStyle(.secondary)
+                Text("Agent 任务收尾").font(.headline)
+                Toggle("结束任务时隔离已登记的临时产物", isOn: Binding(
+                    get: { rules.contains(quarantineRule) },
+                    set: { enabled in
+                        let next = rules.filter { $0 != quarantineRule } + (enabled ? [quarantineRule] : [])
+                        store.call("settings", ["automatic_rules": next])
+                    }
+                ))
+                Text("在「Agent 工作区」登记临时文件。手动结束任务或收到关联的 Claude 会话结束事件时，既白会核对文件变化及已知引用。可在清理记录里恢复隔离的文件。").foregroundStyle(.secondary)
+                Divider()
+                Text("VS Code 1.95.3 过期日志").font(.headline)
                 if rules.contains(rule) {
-                    Button("停用自动清理") { store.call("settings", ["automatic_rules": rules.filter { $0 != rule }]) }
+                    Button("停用自动移除日志") { store.call("settings", ["automatic_rules": rules.filter { $0 != rule }]) }
                 } else {
-                    Button("启用此规则…") { automaticConfirmation = true }
+                    Button("启用自动移除日志…") { automaticConfirmation = true }
                 }
             }.disabled(!store.busy.isEmpty)
             .alert("允许在任务结束事件后自动删除日志？", isPresented: $automaticConfirmation) {
                 Button("取消", role: .cancel) {}
                 Button("确认启用", role: .destructive) {
-                    store.call("settings", ["automatic_rules": ["vscode.1.95.3.main-log.v1"]])
+                    let next = Set(store.data.paths("automatic_rules")).union(["vscode.1.95.3.main-log.v1"])
+                    store.call("settings", ["automatic_rules": next.sorted()])
                 }
             } message: {
                 Text("导入结束事件后，引擎可直接移除授权目录内符合该版本规则且经复核的旧日志，无法通过既白恢复。")

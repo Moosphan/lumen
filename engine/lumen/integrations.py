@@ -9,6 +9,7 @@ from xml.etree import ElementTree
 
 FIXTURE_LOG = 'fixture.rotated-log.v1'
 VSCODE_LOG = 'vscode.1.95.3.main-log.v1'
+TASK_TEMPORARY = 'task.declared-temporary.quarantine.v1'
 SAFE_RULE_IDS = frozenset({FIXTURE_LOG, VSCODE_LOG})
 
 
