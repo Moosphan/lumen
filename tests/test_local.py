@@ -97,12 +97,15 @@ class LocalInventoryTests(unittest.TestCase):
                          plistlib.dumps({"CFBundleIdentifier": "example.editor"})).parents[1]
         cache = self.write("Library/Containers/example.editor/Data/Library/Caches/preview.bin", b"rebuild")
         credential = self.write("Library/Containers/example.editor/Data/Library/Caches/Cookies", b"session")
+        sidecar = credential.with_name("Cookies.sqlite-wal")
+        sidecar.write_bytes(b"session journal")
         result = self.call("scan_local", startup=True)
         self.assertNotIn(str(cache), {r["path"] for r in result["files"]})
         result = self.call("scan_app", path=str(app))
         rows = {r["path"]: r for r in result["files"]}
         self.assertEqual((rows[str(cache)]["cleanup_kind"], rows[str(cache)]["decision"]), ("cache", "review"))
         self.assertEqual(rows[str(credential)]["decision"], "keep")
+        self.assertEqual(rows[str(sidecar)]["decision"], "keep")
         with patch("engine.lumen.app_cleanup.available", return_value=False):
             busy = self.call("run", paths=[str(cache)], scan_id=result["scan_id"], action="quarantine")
             self.assertEqual(busy["last_action"]["items"][0]["status"], "skipped")

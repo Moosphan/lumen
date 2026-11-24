@@ -3,6 +3,27 @@ import re
 from collections import defaultdict
 from pathlib import Path
 
+PERSONAL_DATA = {
+    "account", "accounts", "auth", "bookmarks", "cookies", "credentials", "globalstorage",
+    "indexeddb", "local state", "local storage", "login data", "logins", "preferences",
+    "service worker", "session", "sessions", "session storage", "settings", "tokens",
+    "web data", "workspacestorage",
+}
+DATA_SUFFIX = re.compile(r"(?:-wal|-shm|-journal|\.bak|\.tmp|\.json|\.sqlite3?|\.db)$")
+
+
+def _personal_data(parts):
+    for part in parts:
+        name = part.casefold()
+        while True:
+            stripped = DATA_SUFFIX.sub("", name)
+            if stripped == name:
+                break
+            name = stripped
+        if name in PERSONAL_DATA:
+            return True
+    return False
+
 
 def available(identifier):
     from .scan import _registered_code
@@ -80,9 +101,7 @@ def classify(report, home):
             continue
         row.update(owner=app["name"], app_path=app["path"], bundle_id=identifier,
                    app_version=app["version"], cleanup_kind=category)
-        personal = {"cookies", "login data", "local storage", "session storage", "indexeddb", "session",
-                    "sessions", "preferences", "globalstorage", "workspacestorage", "service worker", "auth.json"}
-        if row["decision"] == "review" and any(part.casefold() in personal for part in parts[1:]):
+        if row["decision"] == "review" and _personal_data(parts[1:]):
             row.update(decision="keep", reason="应用登录、配置或会话数据需要保留。")
         if row["decision"] == "review":
             row["reason"] = reason
