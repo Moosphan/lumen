@@ -131,9 +131,10 @@ def verify(lab):
                   json.dumps(request).encode(), timeout=75)
         response = json.loads(raw)
         if not response['ok']:
-            raise RuntimeError(response['error'])
+            raise RuntimeError(f"Local engine {request['cmd']} failed: {response['error']}")
         return response['data']
     before_digest = session('before')
+    print('First offline editor session completed and saved a genuine history revision.', flush=True)
     logs = profile / 'logs'
     real = [p for p in logs.iterdir() if re.fullmatch(r'[0-9]{8}T[0-9]{6}',p.name)
             and (p/'main.log').is_file() and (p/'main.log').stat().st_size]
@@ -195,7 +196,9 @@ def main():
         summary('Unverified — the runner has no GUI bootstrap session. Editor launch, live cleanup and reopen were not tested.')
         return 78
     try:
-        with tempfile.TemporaryDirectory(prefix='hosted-vscode-', dir=os.environ['RUNNER_TEMP']) as temp:
+        # Secure directory-fd traversal must open every ancestor. RUNNER_TEMP is
+        # inside the private runner home, which the editor/engine sandbox denies.
+        with tempfile.TemporaryDirectory(prefix='hosted-vscode-', dir='/private/tmp') as temp:
             verify(Path(temp).resolve())
     except Exception as exc:
         summary('Live VS Code verification incomplete. ' + str(exc))
