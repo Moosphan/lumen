@@ -214,6 +214,7 @@ private func fallbackReport(_ pid: pid_t) {
         try press("Agent 工作区", in: ax)
         _ = try eventually("the automatically detected project row") { element("Studio Project", in: ax, button: false) }
         _ = try eventually("the workspace cleanup icon") { element("审阅工程清理项目", in: ax, button: true) }
+        captureWindow(pid: pid, lab: lab, filename: "Lumen-agent-sweep.png")
         try press("大文件清理", in: ax)
         let nodes = ["Documents", "Library", ".cache", "Downloads", "Movies", "Pictures"]
         _ = try eventually("space map tiles in multiple rows and columns") {
