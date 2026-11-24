@@ -181,6 +181,11 @@ def verify(lab):
     for name, digest in before_history.items():
         if sha(history/name) != digest:
             raise RuntimeError('Editor history changed on reopening')
+    # Reuse this verified archive for the optional uninstall/restore regression.
+    # The normal suite establishes its own kernel-enforced temporary write scope.
+    run([str(ROOT / 'scripts/test-isolated.sh')], dict(os.environ, LUMEN_VSCODE_SIGNED_ZIP=str(archive)),
+        ROOT, timeout=100)
+    summary('The full isolated filesystem suite passed with the signed archive, including bundle uninstall and restore.')
     summary('VS Code 1.95.3 ARM64 verified on the hosted VM. Two real offline sessions passed. '
             'The production action removed one aged real main.log and preserved ten synthetic retention slots, '
             'the document, settings, offline asset, extension state and local history. No signed-in account was used.')
