@@ -88,7 +88,7 @@ def verify(lab):
     run(['/usr/bin/codesign','--verify','--strict','-R',
          '=anchor apple generic and identifier "com.microsoft.VSCode" and certificate leaf[subject.OU] = "UBF8T346G9"',
          str(app)], env, lab)
-    (work / 'draft.txt').write_text('Private sample draft\n')
+    (work / 'story.txt').write_text('Private sample draft\n')
     (work / '.vscode/settings.json').write_text('{"editor.tabSize":3}')
     (work / 'assets/offline.bin').write_bytes(bytes.fromhex('004c756d656eff'))
     user_settings = profile / 'User/settings.json'
@@ -96,7 +96,7 @@ def verify(lab):
         'update.mode':'none','extensions.autoUpdate':False, 'workbench.localHistory.enabled':True,
         'workbench.localHistory.mergeWindow':0, 'git.enabled':False, 'workbench.startupEditor':'none'}))
     (ext / 'package.json').write_text(json.dumps({'name':'local-proof','publisher':'lumen','version':'0.0.1',
-        'engines':{'vscode':'^1.95.0'}, 'main':'./proof.js','activationEvents':['*']}))
+        'engines':{'vscode':'^1.95.0'}, 'main':'./proof.js','activationEvents':['onStartupFinished']}))
     shutil.copyfile(ROOT / 'tests/hosted-vscode.js', ext / 'proof.js')
     policy = lab / 'offline.sb'
     policy.write_text('''(version 1)
@@ -116,10 +116,16 @@ def verify(lab):
             '--skip-welcome','--skip-release-notes','--disable-extension','vscode.github-authentication',
             '--disable-extension','vscode.microsoft-authentication','--disable-extension','vscode.git',
             '--user-data-dir='+str(profile),'--extensions-dir='+str(lab/'extensions'),
-            '--extensionDevelopmentPath='+str(ext),'--extensionTestsPath='+str(ext/'proof.js'),str(work)],
+            '--extensionDevelopmentPath='+str(ext),str(work)],
             dict(env, LUMEN_SESSION=phase, LUMEN_RECEIPT=str(receipt)), lab, timeout=55)
-        if json.loads(receipt.read_text()) != {'session':phase,'version':'1.95.3'}:
-            raise RuntimeError('Missing or invalid in-editor verification receipt')
+        if not receipt.is_file():
+            raise RuntimeError(f'{phase} editor quit without a verification receipt')
+        report = json.loads(receipt.read_text())
+        if report.get('ok') is not True:
+            raise RuntimeError(report.get('error') or 'Extension verification failed')
+        if (report.get('session'), report.get('version')) != (phase, '1.95.3'):
+            raise RuntimeError('Invalid in-editor verification receipt')
+        return report['history_sha']
     def bridge(request):
         raw = run(isolation + ['/usr/bin/python3','-B',str(ROOT/'engine/bridge.py')], env, lab,
                   json.dumps(request).encode(), timeout=75)
@@ -127,7 +133,7 @@ def verify(lab):
         if not response['ok']:
             raise RuntimeError(response['error'])
         return response['data']
-    session('before')
+    before_digest = session('before')
     logs = profile / 'logs'
     real = [p for p in logs.iterdir() if re.fullmatch(r'[0-9]{8}T[0-9]{6}',p.name)
             and (p/'main.log').is_file() and (p/'main.log').stat().st_size]
@@ -153,7 +159,10 @@ def verify(lab):
         if uri.scheme == 'file' and not uri.netloc and Path(unquote(uri.path)).resolve() == work/'story.txt':
             history_items.extend(index.parent/item['id'] for item in entry['entries'])
     previous = b'Prior local revision\nPrivate sample draft\n'
-    if not any(item.is_file() and item.read_bytes() == previous for item in history_items):
+    expected_digest = hashlib.sha256(previous).hexdigest()
+    if before_digest != expected_digest:
+        raise ValueError('Editor reported the wrong prior revision hash')
+    if not any(item.is_file() and sha(item) == expected_digest for item in history_items):
         raise ValueError(f'Missing indexed prior document text ({len(history_items)} matching entries)')
     preview = bridge({'cmd':'scan', 'roots':list(map(str,[app,logs,work])), 'deep':True})
     row = next(r for r in preview['files'] if r['path'] == str(target))
@@ -164,7 +173,8 @@ def verify(lab):
         raise RuntimeError('Production clean action did not remove exactly the selected log')
     if (contents(logs),contents(work),contents(history),sha(user_settings)) != (before_logs,before_work,before_history,settings_sha):
         raise RuntimeError('A retained log, sample asset, local history entry, or setting changed during cleanup')
-    session('after')
+    if session('after') != before_digest:
+        raise RuntimeError('Reopened editor could not verify the original indexed revision hash')
     if contents(work) != before_work or sha(user_settings) != settings_sha:
         raise RuntimeError('Project or preferences changed on reopening')
     for name, digest in before_history.items():
