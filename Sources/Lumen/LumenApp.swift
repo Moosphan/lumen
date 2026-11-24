@@ -34,13 +34,14 @@ struct Panel<Content: View>: View {
 }
 
 enum Page: String, CaseIterable {
-    case home = "空间总览", apps = "应用排行", agents = "Agent 工作区", review = "清理建议", history = "清理记录", scopes = "扫描范围"
+    case home = "空间总览", apps = "应用排行", agents = "Agent 工作区", review = "清理建议", large = "大文件清理", history = "清理记录", scopes = "扫描范围"
     var icon: String {
         switch self {
         case .home: return "square.grid.2x2"
         case .apps: return "macwindow"
         case .agents: return "square.3.layers.3d"
         case .review: return "sparkles"
+        case .large: return "chart.bar.xaxis"
         case .history: return "clock.arrow.circlepath"
         case .scopes: return "folder.badge.gearshape"
         }
@@ -54,6 +55,8 @@ struct Workbench: View {
     @State var owner = ""
     @State var project = ""
     @State var bucketPaths: Set<String>?
+    @State var reviewPath = ""
+    @State var selectedApplication: String?
     @State var verdict = ""
     @AppStorage("scheduledLocalInventory") var scheduled = false
     @State var lastScheduledScan = Date()
@@ -63,6 +66,7 @@ struct Workbench: View {
         self.owner = owner
         self.project = project
         self.bucketPaths = nil
+        self.reviewPath = ""
         self.verdict = verdict
         page = .review
     }
@@ -80,6 +84,7 @@ struct Workbench: View {
                         Text("清理中心").font(.caption).foregroundStyle(.secondary).padding(.top, 20)
                     }
                     Button {
+                        selectedApplication = nil
                         if link == .review { review() } else { page = link }
                     } label: {
                         Label(link.rawValue, systemImage: link.icon)
@@ -103,7 +108,8 @@ struct Workbench: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
                         HStack {
-                            Text(page.rawValue).font(.system(size: 32, weight: .semibold))
+                            Text(page == .apps && selectedApplication != nil ? "应用清理详情" : page.rawValue)
+                                .font(.system(size: 32, weight: .semibold))
                             Spacer()
                             if page == .home || page == .scopes {
                                 scanControl
@@ -118,12 +124,26 @@ struct Workbench: View {
                         }
                         switch page {
                         case .home: home
-                        case .apps: AppRanking(store: store) { review(owner: $0, verdict: $1) }
+                        case .apps:
+                            if let path = selectedApplication,
+                               let app = store.inventory.apps.first(where: { $0.id == path }) {
+                                AppCleanupDetail(store: store, app: app) { selectedApplication = nil }.id(path)
+                            } else {
+                                AppRanking(store: store, drill: { review(owner: $0, verdict: $1) },
+                                           cleanup: { selectedApplication = $0 })
+                            }
                         case .agents: WorkspaceView(store: store, drill: { bucket in
                             review(project: bucket.title)
                             bucketPaths = bucket.paths
                         })
-                        case .review: ReviewView(store: store, owner: $owner, project: $project, verdict: $verdict, bucketPaths: $bucketPaths)
+                        case .review: ReviewView(store: store, owner: $owner, project: $project, verdict: $verdict,
+                                                 bucketPaths: $bucketPaths, path: $reviewPath)
+                        case .large:
+                            SpaceBrowser(store: store) { path, enroll in
+                                review()
+                                reviewPath = path
+                                if enroll { store.scan(store.roots + [path], deep: false, renewRoots: [path]) }
+                            }
                         case .history: HistoryView(store: store)
                         case .scopes: scopes
                         }

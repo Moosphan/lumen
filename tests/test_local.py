@@ -1,7 +1,9 @@
 import json
+import os
 import plistlib
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from engine.lumen.service import dispatch
@@ -89,3 +91,56 @@ class LocalInventoryTests(unittest.TestCase):
         self.assertIn(str(early), startup["projects"])
         self.assertNotIn(str(late), startup["projects"])
         self.assertTrue(any("后续工作目录" in issue for issue in startup["issues"]))
+
+    def test_application_cache_analysis_preserves_credentials_and_requires_an_idle_app(self):
+        app = self.write("Applications/Editor.app/Contents/Info.plist",
+                         plistlib.dumps({"CFBundleIdentifier": "example.editor"})).parents[1]
+        cache = self.write("Library/Containers/example.editor/Data/Library/Caches/preview.bin", b"rebuild")
+        credential = self.write("Library/Containers/example.editor/Data/Library/Caches/Cookies", b"session")
+        result = self.call("scan_local", startup=True)
+        self.assertNotIn(str(cache), {r["path"] for r in result["files"]})
+        result = self.call("scan_app", path=str(app))
+        rows = {r["path"]: r for r in result["files"]}
+        self.assertEqual((rows[str(cache)]["cleanup_kind"], rows[str(cache)]["decision"]), ("cache", "review"))
+        self.assertEqual(rows[str(credential)]["decision"], "keep")
+        with patch("engine.lumen.app_cleanup.available", return_value=False):
+            busy = self.call("run", paths=[str(cache)], scan_id=result["scan_id"], action="quarantine")
+            self.assertEqual(busy["last_action"]["items"][0]["status"], "skipped")
+        with patch("engine.lumen.app_cleanup.available", return_value=True):
+            direct = self.call("run", paths=[str(cache)], scan_id=busy["scan_id"], action="clean")
+            self.assertEqual(direct["last_action"]["items"][0]["status"], "skipped")
+            moved = self.call("run", paths=[str(cache), str(credential)], scan_id=direct["scan_id"], action="quarantine")
+        self.assertEqual({r["status"] for r in moved["last_action"]["items"]}, {"quarantined", "skipped"})
+        self.assertEqual(credential.read_bytes(), b"session")
+        self.call("restore", batch_id=moved["last_action"]["id"])
+        self.assertEqual(cache.read_bytes(), b"rebuild")
+
+    def test_xcode_candidates_exclude_compiled_deliverables_and_sources(self):
+        self.write("Applications/Xcode.app/Contents/Info.plist",
+                   plistlib.dumps({"CFBundleIdentifier": "com.apple.dt.Xcode"}))
+        prefix = "Library/Developer/Xcode/DerivedData/Example/"
+        intermediate = self.write(prefix + "Build/Intermediates.noindex/output.o")
+        product = self.write(prefix + "Build/Products/export.zip")
+        checkout = self.write(prefix + "SourcePackages/checkouts/module/README.md")
+        report = self.call("scan_local", startup=True)
+        rows = {r["path"]: r for r in report["files"]}
+        self.assertEqual(rows[str(intermediate)]["cleanup_kind"], "build")
+        self.assertNotIn("cleanup_kind", rows[str(product)])
+        self.assertNotIn("cleanup_kind", rows[str(checkout)])
+
+    def test_space_tree_ranks_immediate_children_and_does_not_follow_links(self):
+        biggest = self.write("Projects/big/deep.bin", bytes(32 * 1024))
+        small = self.write("Downloads/notes.txt", b"hello")
+        hidden = self.write("Projects/hidden/private.bin", bytes(64 * 1024))
+        (self.home / "cross-link").symlink_to(self.manual, target_is_directory=True)
+        (self.manual / "outside").write_bytes(bytes(128 * 1024))
+        os.link(biggest, biggest.with_name("same-inode.bin"))
+        self.call("settings", local_exclude=[str(hidden.parent)])
+        top = self.call("size_tree")
+        self.assertEqual([row["name"] for row in top["children"]], ["Projects", "Downloads", "cross-link"])
+        self.assertEqual(top["bytes"], (os.stat(biggest).st_blocks + os.stat(small).st_blocks) * 512)
+        projects = self.call("size_tree", path=str(self.home / "Projects"))
+        self.assertEqual([row["name"] for row in projects["children"]], ["big"])
+        self.assertEqual(projects["children"][0]["bytes"], os.stat(biggest).st_blocks * 512)
+        with self.assertRaises(ValueError):
+            self.call("size_tree", path=str(self.home / "cross-link"))

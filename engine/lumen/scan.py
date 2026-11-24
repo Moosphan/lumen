@@ -236,7 +236,7 @@ def _idle(path):
     return result.returncode == 1 and not result.stderr and not result.stdout
 
 
-def _registered_code():
+def _registered_code(identifier='com.microsoft.VSCode'):
     """Ask AppKit about stable Code bundle IDs only, without reading process arguments."""
     ctypes.CDLL('/System/Library/Frameworks/AppKit.framework/AppKit')
     objc = ctypes.CDLL('/usr/lib/libobjc.A.dylib')
@@ -260,7 +260,7 @@ def _registered_code():
             raise ValueError('AppKit 注册服务不可用')
         bundle_id = None
         for suffix in ('', '.helper', '.helper.GPU', '.helper.Plugin', '.helper.Renderer'):
-            name = ctypes.c_char_p(('com.microsoft.VSCode' + suffix).encode())
+            name = ctypes.c_char_p((identifier + suffix).encode())
             string = send_arg(objc.objc_getClass(b'NSString'), selector(b'stringWithUTF8String:'), name)
             running = send_arg(runner, selector(b'runningApplicationsWithBundleIdentifier:'), string)
             if not running:

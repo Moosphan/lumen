@@ -93,6 +93,11 @@ private func captureOverview(pid: pid_t, lab: URL, ax: AXUIElement) {
         print("Overview PNG: skipped because the populated overview controls could not be verified.")
         return
     }
+    captureWindow(pid: pid, lab: lab, filename: "Lumen-overview.png")
+}
+
+private func captureWindow(pid: pid_t, lab: URL, filename: String) {
+    guard CGPreflightScreenCaptureAccess() else { return }
     // Select the one normal on-screen Lumen window belonging to this exact process.
     let candidates = (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
                       as? [[String: Any]] ?? []).filter {
@@ -120,8 +125,8 @@ private func captureOverview(pid: pid_t, lab: URL, ax: AXUIElement) {
             print("Overview PNG: skipped because the window capture did not produce a usable PNG.")
             return
         }
-        try FileManager.default.moveItem(at: pending, to: lab.appendingPathComponent("Lumen-overview.png"))
-        print("Overview PNG: captured the populated synthetic workspace in the Lumen window (\(image.width) × \(image.height)).")
+        try FileManager.default.moveItem(at: pending, to: lab.appendingPathComponent(filename))
+        print("\(filename): captured the synthetic workspace (\(image.width) × \(image.height)).")
     } catch {
         print("Overview PNG: skipped because the capture failed: \(error.localizedDescription)")
     }
@@ -192,8 +197,22 @@ private func fallbackReport(_ pid: pid_t) {
         try press("应用排行", in: ax)
         _ = try eventually("the installed application row") { element("Sample Studio", in: ax, button: false) }
         _ = try eventually("the application Finder action") { element("打开目录", in: ax, button: true) }
+        try press("应用清理详情", in: ax)
+        _ = try eventually("the selected application's analysis action") { element("分析应用缓存", in: ax, button: true) }
+        try press("分析应用缓存", in: ax)
+        _ = try eventually("an analyzed sandbox cache candidate") { element("preview-cache.bin", in: ax, button: false) }
+        captureWindow(pid: pid, lab: lab, filename: "Lumen-app-cleanup.png")
+        try press("返回应用排行", in: ax)
         try press("Agent 工作区", in: ax)
         _ = try eventually("the automatically detected project row") { element("Studio Project", in: ax, button: false) }
+        _ = try eventually("the workspace cleanup icon") { element("审阅工程清理项目", in: ax, button: true) }
+        try press("大文件清理", in: ax)
+        _ = try eventually("the measured space map") { element("空间分布", in: ax, button: false) }
+        captureWindow(pid: pid, lab: lab, filename: "Lumen-large-files.png")
+        try press("Documents", in: ax)
+        try press("Codex", in: ax)
+        try press("Studio Project", in: ax)
+        _ = try eventually("the nested project's file") { element("notes.txt", in: ax, button: true) }
         try press("空间总览", in: ax)
         try press("创建演练样本", in: ax)
         let initial = try eventually("the fixture scan in a separate state directory") { fixtureReport(lab) }

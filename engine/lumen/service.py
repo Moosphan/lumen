@@ -8,7 +8,7 @@ import time
 import uuid
 from pathlib import Path
 
-from . import actions, integrations, local, macmanage
+from . import actions, app_cleanup, integrations, local, macmanage, space_tree
 from .fixture import create_fixture
 from .scan import _under, scan
 
@@ -225,6 +225,8 @@ def inventory(config, state, incremental=False, full=False, quick=False):
         blocked = [Path(p) for p in exclusions + config.get("local_exclude", [])]
         locations, detected, installed, discovery_issues, suggestions = local.plan(
             Path(config["_local_home"]), config["_include_system"], blocked, quick=not deep)
+        locations += app_cleanup.extensions(Path(config["_local_home"]), installed,
+                                            config.get("app_analysis", ()), set(blocked))
         exclusions += config.get("local_exclude", [])
     projects = {p: list(a) for p, a in config["projects"].items()}
     for path, agents in detected.items():
@@ -237,6 +239,8 @@ def inventory(config, state, incremental=False, full=False, quick=False):
                   hash_cache=config.setdefault("hash_cache", {}) if incremental else None, installed=installed)
     report["issues"].extend(sorted(discovery_issues))
     report["local_locations"] = locations
+    if installed is not None:
+        app_cleanup.classify(report, Path(config["_local_home"]))
     report["suggested_projects"] = sorted(set(report["suggested_projects"]) | suggestions)
     for lost in sorted(set(config["roots"])-set(active_roots(config))):
         report["issues"].append(lost + " · 授权目录离线或身份变化，请重新选择")
@@ -268,6 +272,7 @@ def inventory(config, state, incremental=False, full=False, quick=False):
     review_roots = set(map(Path, manual))
     if installed is not None:
         review_roots.update(auto_review_roots(Path(config["_local_home"])))
+        review_roots.update(Path(row["path"]) for row in locations if row.get("app_cleanup"))
     for row in report["files"]:
         related = task_paths.get(row["path"], ())
         if related:
@@ -285,7 +290,8 @@ def inventory(config, state, incremental=False, full=False, quick=False):
         path = Path(row["path"])
         if _under(path, protected_paths):
             row.update(decision="keep", reason="用户标记保留或任务正在引用")
-        if installed is not None and row["decision"] == "review" and not _under(path, review_roots):
+        if (installed is not None and row["decision"] == "review" and not _under(path, review_roots)
+                and not row.get("cleanup_kind")):
             row.update(decision="keep", reason="自动发现的位置仅盘点，可在扫描范围添加后审阅")
     local.summarize(report)
     return report
@@ -301,6 +307,7 @@ def operation_roots(config, report):
         return roots
     home = Path(config["_local_home"])
     supported = auto_review_roots(home) + [home / "Library/Application Support/Code"]
+    supported += [Path(row["path"]) for row in report.get("local_locations", []) if row.get("app_cleanup")]
     indexed = {row["path"]: row["identity"] for row in report.get("local_locations", [])}
     return roots + [str(root) for root in supported if str(root) in indexed and
                     indexed[str(root)] == root_identity(root) and
@@ -342,18 +349,27 @@ def perform(config, state, request, temporary_task=None, planned_paths=()):
     manual_or_review = manual + (auto_review_roots(Path(config["_local_home"])) if config.get("_local_home") else [])
     previous_roots = set(operation_roots(config, config["report"]))
     roots = [root for root in operation_roots(config, fresh) if root in previous_roots]
+    idle_apps = {}
     for path in requested:
         old, row = preview.get(path), current.get(path)
-        fields = ("dev", "ino", "size", "mtime_ns", "ctime_ns", "decision", "rule_id")
+        fields = ("dev", "ino", "size", "mtime_ns", "ctime_ns", "decision", "rule_id", "cleanup_kind", "app_path")
         if not old or not row or any(old.get(f) != row.get(f) for f in fields):
             skipped.append({"path": path, "status": "skipped", "reason": "预演已过期，请重新扫描"})
             continue
-        if action != "clean" and not any(inside(Path(path), root) for root in manual_or_review):
+        if (action != "clean" and not any(inside(Path(path), root) for root in manual_or_review)
+                and not row.get("cleanup_kind")):
             skipped.append({"path": path, "status": "skipped", "reason": "此位置仅支持低影响清理"})
             continue
         if temporary_task and not eligible_temporary(config, temporary_task, row):
             skipped.append({"path": path, "status":"skipped", "reason":"任务登记身份或保护状态已改变"})
             continue
+        if row.get("cleanup_kind") and row["decision"] == "review":
+            identifier = row["bundle_id"]
+            if identifier not in idle_apps:
+                idle_apps[identifier] = app_cleanup.available(identifier)
+            if not idle_apps[identifier]:
+                skipped.append({"path": path, "status": "skipped", "reason": "请先退出应用，既白需要确认它已停止运行"})
+                continue
         group = row.get("duplicate_group")
         copies = fresh.get("duplicates", {}).get(group, []) if group else []
         if copies and all(p in chosen for p in copies):
@@ -523,6 +539,15 @@ def dispatch(state, request, local_home=None, include_system=False):
         completed_batches = []
         duplicate = False
         startup = cmd == "scan_local" and request.get("startup") is True
+        if cmd == "size_tree":
+            labs = list(map(Path, config.get("labs", {})))
+            if labs:
+                target = Path(request.get("path") or labs[0])
+                if target.resolve(strict=True) != target or not any(inside(target, root) for root in labs):
+                    raise ValueError("演练只读取样本目录")
+            else:
+                target = Path(request.get("path") or config.get("_local_home") or Path.home())
+            return space_tree.measure(target, [state, *config["exclude"], *config.get("local_exclude", [])])
         if cmd == "fixture":
             root = Path(create_fixture())
             (root / ".Trash").mkdir(mode=0o700)
@@ -541,6 +566,13 @@ def dispatch(state, request, local_home=None, include_system=False):
             config["local_enabled"] = True
             if not startup:
                 config["deep"] = bool(request.get("deep", False))
+        elif cmd == "scan_app":
+            if not config.get("local_enabled"):
+                raise ValueError("请先完成本机盘点")
+            app = request["path"]
+            if not any(item["path"] == app for item in config["report"].get("apps", [])):
+                raise ValueError("当前应用清单已变化，请重新扫描")
+            config["app_analysis"] = sorted(set(config.get("app_analysis", ())) | {app})
         elif cmd == "scan":
             if "roots" in request and (request["roots"] != config["roots"] or request.get("renew_roots")):
                 assign_roots(config, request["roots"], state, request.get("renew_roots", ()))
@@ -620,7 +652,7 @@ def dispatch(state, request, local_home=None, include_system=False):
                             created_at=datetime.datetime.now(datetime.timezone.utc).isoformat())
                 config.setdefault("trash_history", []).insert(0, last)
         if cmd != "status":
-            refresh(config, state, quick=startup)
+            refresh(config, state, quick=startup or cmd == "scan_app")
             save_config(state, config)
         dashboard = dict(config.get("report", {}))
         for key, default in (("files", []), ("issues", []), ("projects", {}), ("apps", []), ("duplicates", {})):

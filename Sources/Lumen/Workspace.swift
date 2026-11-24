@@ -4,6 +4,7 @@ import AppKit
 struct AppRanking: View {
     @ObservedObject var store: Store
     let drill: (String, String) -> Void
+    let cleanup: (String) -> Void
     @State private var bySafe = false
     @State private var query = ""
     @State private var systemOnly = false
@@ -33,7 +34,7 @@ struct AppRanking: View {
                         Text("占用空间").tag(false)
                         Text("可低影响清理").tag(true)
                     }.labelsHidden().frame(width: 126).accessibilityLabel("按空间排序")
-                    Text("操作").frame(width: 110, alignment: .trailing)
+                    Text("操作").frame(width: 141, alignment: .trailing)
                 }.font(.caption.weight(.medium)).foregroundStyle(.secondary).padding(.horizontal, 15).padding(.vertical, 10)
                 Divider()
                 if visible.isEmpty {
@@ -57,15 +58,17 @@ struct AppRanking: View {
                                 if item.count > 0 { Text(bytes(item.safe) + " 可清理").font(.caption).foregroundStyle(lilac) }
                             }.frame(width: 126)
                             HStack(spacing: 4) {
+                                CleanupIcon(title: "应用清理详情") { cleanup(item.id) }
                                 FinderButton(path: item.id, reveal: true)
                                 FinderButton(path: URL(fileURLWithPath: item.id).deletingLastPathComponent().path)
                                 Menu {
+                                    Button("应用清理详情") { cleanup(item.id) }
                                     Button("查看已索引的关联文件") { drill(item.id, "") }
                                     Button("审阅低影响项目") { drill(item.id, "safe") }.disabled(item.count == 0)
                                     Button("卸载应用…") { uninstall = item }.disabled(item.app["uninstall_snapshot"] as? Object == nil)
                                 } label: { Image(systemName: "ellipsis.circle").frame(width: 23) }
                                     .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().accessibilityLabel("应用操作")
-                            }.frame(width: 110, alignment: .trailing)
+                            }.frame(width: 141, alignment: .trailing)
                         }.padding(.horizontal, 15).padding(.vertical, 10)
                         Divider().padding(.leading, 61)
                     }
@@ -224,7 +227,7 @@ struct WorkspaceView: View {
                 } label: { Image(systemName: "folder") }
                     .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("打开共享项目目录")
             }
-            Button("文件") { drill(row) }.disabled(row.paths.isEmpty)
+            CleanupIcon(title: "审阅工程清理项目") { drill(row) }.disabled(row.paths.isEmpty)
         }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 10)
     }
 

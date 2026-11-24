@@ -100,12 +100,12 @@ func resource(_ name: String, source: String) -> URL? {
                 task.waitUntilExit()
                 let envelope = (try? JSONSerialization.jsonObject(with: reply)) as? Object
                 let dashboard = envelope?["data"] as? Object
-                let presentation = command == "fixture" ? nil : dashboard.map(InventoryPresentation.init)
+                let presentation = ["fixture", "size_tree"].contains(command) ? nil : dashboard.map(InventoryPresentation.init)
                 DispatchQueue.main.async {
                     guard self.process === task else { return }
                     self.process = nil
                     self.busy = ""
-                    if ["scan", "scan_local"].contains(command) && task.terminationReason == .uncaughtSignal {
+                    if ["scan", "scan_local", "size_tree"].contains(command) && task.terminationReason == .uncaughtSignal {
                         self.notice = "扫描已停止，保留上次完成的盘点。"
                         return
                     }
@@ -144,6 +144,9 @@ func resource(_ name: String, source: String) -> URL? {
     }
     func cancelScan() {
         if scanning, let process, process.isRunning { process.terminate() }
+    }
+    func cancelSpaceAnalysis() {
+        if busy == "size_tree", let process, process.isRunning { process.terminate() }
     }
     func addScope(deep: Bool) {
         guard fixtureState == nil else { return }

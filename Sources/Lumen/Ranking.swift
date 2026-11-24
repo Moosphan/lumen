@@ -145,10 +145,12 @@ struct InventoryPresentation {
     let safeCount: Int
     let reviewCount: Int
     let kinds: [String]
+    let appFiles: [String: [Entry]]
 
     init(_ dashboard: Object = [:]) {
         let entries = dashboard.rows("files").map(Entry.init)
         files = entries
+        appFiles = Dictionary(grouping: entries.filter { !$0.raw.string("app_path").isEmpty }) { $0.raw.string("app_path") }
         apps = rankedApps(dashboard.rows("apps"), files: entries, scanID: dashboard.string("scan_id"), bySafe: false)
         workspaces = workspacePartitions(projects: dashboard["projects"] as? [String: [String]] ?? [:],
                                           files: entries, bySafe: false)

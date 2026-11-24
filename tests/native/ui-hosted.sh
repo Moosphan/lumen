@@ -41,6 +41,18 @@ downloads.mkdir()
 project = home / "Documents/Codex/Studio Project"
 project.mkdir(parents=True)
 (project / "notes.txt").write_text("Keep this.")
+(project / "render.mov").write_bytes(b"render" * 600_000)
+for folder, name, size in [
+    (".cache", "tool-cache.bin", 2_000_000),
+    ("Desktop", "capture.png", 900_000),
+    ("Downloads", "recording.mov", 1_360_000),
+    ("Library/Containers/org.lumen.sample-studio/Data/Library/Caches", "preview-cache.bin", 992_000),
+    ("Library/Containers/org.lumen.sample-studio/Data/tmp", "render-preview.tmp", 560_000),
+    ("Library/Caches/org.lumen.sample-studio", "renderer.bin", 752_000),
+]:
+    path = home / folder / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"x" * size)
 PY
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 /usr/bin/xcrun swiftc -parse-as-library -module-cache-path "$lab/modules" \
@@ -62,6 +74,8 @@ fi
 
 if [[ -f "$lab/Lumen-overview.png" && -n "${GITHUB_OUTPUT:-}" ]]; then
     preview_dir="$(mktemp -d "$RUNNER_TEMP/lumen-preview.XXXXXXXX")"
-    /usr/bin/install -m 600 "$lab/Lumen-overview.png" "$preview_dir/Lumen-overview.png"
-    echo "preview=$preview_dir/Lumen-overview.png" >> "$GITHUB_OUTPUT"
+    for screenshot in "$lab"/Lumen-*.png; do
+        /usr/bin/install -m 600 "$screenshot" "$preview_dir/$(basename "$screenshot")"
+    done
+    echo "preview=$preview_dir" >> "$GITHUB_OUTPUT"
 fi

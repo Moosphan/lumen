@@ -49,6 +49,7 @@ private struct ReviewQuery: Equatable {
     let owner: String
     let project: String
     let bucketPaths: Set<String>?
+    let path: String
     let verdict: String
     let kind: String
     let age: String
@@ -69,6 +70,7 @@ private struct ReviewQuery: Equatable {
             guard !Task.isCancelled else { return false }
             return (owner.isEmpty || f.owner == owner || f.raw.string("app_path") == owner)
             && (bucketPaths?.contains(f.path) ?? (project.isEmpty || f.raw.paths("projects").contains(project)))
+            && (path.isEmpty || f.path == path || f.path.hasPrefix(path + "/"))
             && (verdict.isEmpty || f.decision == verdict) && (kind.isEmpty || f.raw.string("kind") == kind)
             && f.size >= minimum && (age == "不限时间" || f.raw.number("mtime_ns") < cutoff)
             && (selectedTask.isEmpty || taskPaths.contains(f.path))
@@ -108,6 +110,7 @@ struct ReviewView: View {
     @Binding var project: String
     @Binding var verdict: String
     @Binding var bucketPaths: Set<String>?
+    @Binding var path: String
     @State private var query = ""
     @State private var kind = ""
     @State private var age = "不限时间"
@@ -125,7 +128,7 @@ struct ReviewView: View {
     @State private var initialSelectionApplied = false
 
     var body: some View {
-        let filters = ReviewQuery(generation: store.generation, owner: owner, project: project, bucketPaths: bucketPaths,
+        let filters = ReviewQuery(generation: store.generation, owner: owner, project: project, bucketPaths: bucketPaths, path: path,
                                   verdict: verdict, kind: kind, age: age, minimumSize: minimumSize, selectedTask: selectedTask,
                                   sorting: sorting, duplicatesOnly: duplicatesOnly, residualsOnly: residualsOnly, query: query)
         let current = matches?.query == filters ? matches : nil
@@ -166,8 +169,11 @@ struct ReviewView: View {
                         }
                     }
                 }
-                if !owner.isEmpty || !project.isEmpty {
-                    HStack { Text(owner + project).lineLimit(1); Button("清除筛选") { owner = ""; project = ""; bucketPaths = nil } }
+                if !owner.isEmpty || !project.isEmpty || !path.isEmpty {
+                    HStack {
+                        Text(path.isEmpty ? owner + project : displayPath(path)).lineLimit(1).truncationMode(.middle)
+                        Button("清除筛选") { owner = ""; project = ""; path = ""; bucketPaths = nil }
+                    }
                 }
             }
             Panel {
