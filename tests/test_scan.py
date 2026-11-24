@@ -94,7 +94,7 @@ class ScannerTests(unittest.TestCase):
             log = self.file(f'Library/Application Support/Code/logs/202401{i:02}T120000/main.log')
             os.utime(log, (old, old))
             logs.append(log)
-        with patch('engine.lumen.scan._code_stopped', return_value=True):
+        with patch('engine.lumen.scan._code_stopped', return_value=(True, '')):
             _, files = self.runscan()
             self.assertEqual(files[logs[0]]['decision'], 'safe')
             self.assertNotEqual(files[logs[1]]['decision'], 'safe')
@@ -198,3 +198,50 @@ class ScannerTests(unittest.TestCase):
         self.assertEqual(rows[p]['owner'], '')
         self.assertEqual(rows[p]['app_path'], '')
         self.assertGreaterEqual(result['space']['shared_allocated_bytes'], rows[p]['allocated_bytes'])
+
+    def test_running_editor_and_independent_electron_apps(self):
+        from unittest.mock import patch
+        from engine.lumen.scan import _code_stopped
+
+        def installed(name):
+            rel = name + '.app/Contents/Frameworks/Electron Framework.framework/Electron Framework'
+            image = self.file(rel)
+            return self.home / (name + '.app'), image
+
+        confirmed, image = installed('VS Code')
+        renamed, other_image = installed('Renamed Editor')
+        _, slack_image = installed('Slack')
+        running_images = {str(slack_image)}
+
+        def holders(command, **kwargs):
+            self.assertEqual(command[:4], ['/usr/sbin/lsof', '-nP', '-t', '--'])
+            self.assertNotIn(str(slack_image), command)
+            busy = running_images.intersection(command[4:])
+            return subprocess.CompletedProcess(command, 0 if busy else 1, b'420' if busy else b'', b'')
+
+        with patch('engine.lumen.scan._registered_code', return_value=(False, [renamed])), \
+                patch('engine.lumen.scan.subprocess.run', side_effect=holders):
+            self.assertEqual(_code_stopped(confirmed), (True, ''))
+            for executable in (image, other_image):
+                with self.subTest(executable=executable):
+                    running_images.add(str(executable))
+                    self.assertFalse(_code_stopped(confirmed)[0])
+                    running_images.remove(str(executable))
+        with patch('engine.lumen.scan._registered_code', return_value=(True, [])), \
+                patch('engine.lumen.scan.subprocess.run', side_effect=AssertionError('unneeded probe')):
+            self.assertFalse(_code_stopped(confirmed)[0])
+
+    def test_editor_probe_errors_defer_without_reading_process_list(self):
+        from unittest.mock import patch
+        from engine.lumen.scan import _code_stopped
+
+        with patch('engine.lumen.scan._registered_code', side_effect=PermissionError(13, 'denied')):
+            stopped, why = _code_stopped(self.home / 'Editor.app')
+            self.assertFalse(stopped)
+            self.assertIn('13', why)
+        app = self.home / 'Editor.app'
+        app.mkdir()
+        with patch('engine.lumen.scan._registered_code', return_value=(False, [])):
+            stopped, why = _code_stopped(app)
+            self.assertFalse(stopped)
+            self.assertIn('errno', why)

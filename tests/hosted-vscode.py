@@ -83,6 +83,10 @@ def verify(lab):
          '--proto-redir','=https','--connect-timeout','12','--max-time','75','-o',str(archive),ARCHIVE_URL], env, lab, timeout=78)
     if sha(archive) != ARCHIVE_SHA:
         raise ValueError('Official VS Code archive SHA-256 mismatch')
+    # Reuse the verified archive for the optional bundle uninstall/restore case.
+    run([str(ROOT / 'scripts/test-isolated.sh')], dict(os.environ, LUMEN_VSCODE_SIGNED_ZIP=str(archive)),
+        ROOT, timeout=100)
+    summary('The full isolated filesystem suite passed with the signed archive, including bundle uninstall and restore.')
     run(['/usr/bin/ditto','-x','-k',str(archive),str(apps)], env, lab)
     app = apps / 'Visual Studio Code.app'
     run(['/usr/bin/codesign','--verify','--strict','-R',
@@ -113,6 +117,7 @@ def verify(lab):
         code = app / 'Contents/MacOS/Electron'
         run(isolation + [str(code), '--no-sandbox','--disable-gpu','--use-mock-keychain',
             '--password-store=basic','--disable-workspace-trust','--disable-updates','--disable-telemetry',
+            '--disable-crash-reporter','--disable-breakpad',
             '--skip-welcome','--skip-release-notes','--disable-extension','vscode.github-authentication',
             '--disable-extension','vscode.microsoft-authentication','--disable-extension','vscode.git',
             '--user-data-dir='+str(profile),'--extensions-dir='+str(lab/'extensions'),
@@ -135,6 +140,17 @@ def verify(lab):
         return response['data']
     before_digest = session('before')
     print('First offline editor session completed and saved a genuine history revision.', flush=True)
+    # Quit can return before the helper processes release their executable images.
+    # Probe the disposable application only, leaving the production guards intact.
+    for probe in range(12):
+        holders = subprocess.run(['/usr/sbin/lsof', '-nP', '-t', '+D', str(app)],
+                                 capture_output=True, timeout=15)
+        if holders.returncode == 1 and not holders.stdout and not holders.stderr.strip():
+            break
+        if probe == 11:
+            raise RuntimeError('Editor bundle still in use after normal quit: ' +
+                               (holders.stderr or holders.stdout).decode(errors='replace')[:500])
+        time.sleep(1)
     logs = profile / 'logs'
     real = [p for p in logs.iterdir() if re.fullmatch(r'[0-9]{8}T[0-9]{6}',p.name)
             and (p/'main.log').is_file() and (p/'main.log').stat().st_size]
@@ -168,7 +184,9 @@ def verify(lab):
     preview = bridge({'cmd':'scan', 'roots':list(map(str,[app,logs,work])), 'deep':True})
     row = next(r for r in preview['files'] if r['path'] == str(target))
     if (row['decision'], row.get('rule_id')) != ('safe','vscode.1.95.3.main-log.v1'):
-        raise RuntimeError('Real log failed scan preflight: ' + row['reason'])
+        raise RuntimeError('Real log failed scan preflight: ' + row['reason'] +
+                           '; matched app=' + row.get('app_path', '') +
+                           '; issues=' + str(preview.get('issues', [])[:3]))
     result = bridge({'cmd':'run','scan_id':preview['scan_id'],'paths':[str(target)],'action':'clean'})
     if [i['status'] for i in result['last_action']['items']] != ['cleaned'] or target.exists():
         raise RuntimeError('Production clean action did not remove exactly the selected log')
@@ -181,11 +199,6 @@ def verify(lab):
     for name, digest in before_history.items():
         if sha(history/name) != digest:
             raise RuntimeError('Editor history changed on reopening')
-    # Reuse this verified archive for the optional uninstall/restore regression.
-    # The normal suite establishes its own kernel-enforced temporary write scope.
-    run([str(ROOT / 'scripts/test-isolated.sh')], dict(os.environ, LUMEN_VSCODE_SIGNED_ZIP=str(archive)),
-        ROOT, timeout=100)
-    summary('The full isolated filesystem suite passed with the signed archive, including bundle uninstall and restore.')
     summary('VS Code 1.95.3 ARM64 verified on the hosted VM. Two real offline sessions passed. '
             'The production action removed one aged real main.log and preserved ten synthetic retention slots, '
             'the document, settings, offline asset, extension state and local history. No signed-in account was used.')

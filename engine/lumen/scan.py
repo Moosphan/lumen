@@ -1,4 +1,5 @@
 """Read-only inventory. All discovery starts inside caller-selected roots."""
+import ctypes
 import hashlib
 import json
 import os
@@ -227,15 +228,93 @@ def _idle(path):
     return result.returncode == 1 and not result.stderr and not result.stdout
 
 
-def _code_stopped():
-    # Inspect only executable names, never editor arguments or document names.
+def _registered_code():
+    """Ask AppKit about stable Code bundle IDs only, without reading process arguments."""
+    ctypes.CDLL('/System/Library/Frameworks/AppKit.framework/AppKit')
+    objc = ctypes.CDLL('/usr/lib/libobjc.A.dylib')
+    ptr = ctypes.c_void_p
+    objc.objc_getClass.argtypes = [ctypes.c_char_p]
+    objc.objc_getClass.restype = ptr
+    objc.sel_registerName.argtypes = [ctypes.c_char_p]
+    objc.sel_registerName.restype = ptr
+    selector = objc.sel_registerName
+    msg = ('objc_msgSend', objc)
+    send = ctypes.CFUNCTYPE(ptr, ptr, ptr)(msg)
+    send_arg = ctypes.CFUNCTYPE(ptr, ptr, ptr, ptr)(msg)
+    count = ctypes.CFUNCTYPE(ctypes.c_ulong, ptr, ptr)(msg)
+    at = ctypes.CFUNCTYPE(ptr, ptr, ptr, ctypes.c_ulong)(msg)
+    get_path = ctypes.CFUNCTYPE(ctypes.c_char_p, ptr, ptr)(msg)
+    pool = send(objc.objc_getClass(b'NSAutoreleasePool'), selector(b'new'))
     try:
-        result = subprocess.run(['/bin/ps', '-A', '-o', 'comm='], capture_output=True,
-                                check=True, timeout=5)
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return not any(token in result.stdout.lower() for token in
-                   (b'visual studio code', b'code helper', b'electron'))
+        workspace = send(objc.objc_getClass(b'NSWorkspace'), selector(b'sharedWorkspace'))
+        runner = objc.objc_getClass(b'NSRunningApplication')
+        if not workspace or not runner:
+            raise ValueError('AppKit 注册服务不可用')
+        bundle_id = None
+        for suffix in ('', '.helper', '.helper.GPU', '.helper.Plugin', '.helper.Renderer'):
+            name = ctypes.c_char_p(('com.microsoft.VSCode' + suffix).encode())
+            string = send_arg(objc.objc_getClass(b'NSString'), selector(b'stringWithUTF8String:'), name)
+            running = send_arg(runner, selector(b'runningApplicationsWithBundleIdentifier:'), string)
+            if not running:
+                raise ValueError('无法查询 VS Code 应用或辅助进程')
+            if count(running, selector(b'count')):
+                return True, []
+            if not suffix:
+                bundle_id = string
+        urls = send_arg(workspace, selector(b'URLsForApplicationsWithBundleIdentifier:'), bundle_id)
+        if not urls:
+            raise ValueError('无法查询 VS Code 安装位置')
+        apps = []
+        for index in range(count(urls, selector(b'count'))):
+            url = at(urls, selector(b'objectAtIndex:'), index)
+            path = get_path(url, selector(b'fileSystemRepresentation'))
+            if not path:
+                raise ValueError('无法解析注册安装位置')
+            apps.append(Path(os.fsdecode(path)))
+        return False, apps
+    finally:
+        ctypes.CFUNCTYPE(None, ptr, ptr)(msg)(pool, selector(b'drain'))
+
+
+def _code_stopped(app):
+    """Return (stopped, reason). A failed probe never authorizes log removal."""
+    try:
+        active, registered = _registered_code()
+        if active:
+            return False, 'VS Code 编辑器或辅助进程仍在运行'
+        images = set()
+        for bundle in set(registered) | {app}:
+            try:
+                bundle.stat()
+            except FileNotFoundError:
+                if bundle == app:
+                    return False, '已确认的 VS Code 安装已移动'
+                continue  # LaunchServices can retain obsolete installation URLs.
+            fw = bundle / 'Contents/Frameworks/Electron Framework.framework'
+            framework = fw / 'Electron Framework'
+            # Electron maps this image in its main, GPU, renderer and plugin
+            # processes even when a helper is absent from LaunchServices.
+            framework.stat()
+            images.add(framework)
+            for file in (bundle / 'Contents/MacOS/Electron', fw / 'Helpers/chrome_crashpad_handler'):
+                try:
+                    file.stat()
+                except FileNotFoundError:
+                    continue
+                images.add(file)
+        # Query only executable images belonging to the confirmed/registered
+        # applications. No recursive walk of other installations is needed.
+        check = subprocess.run(['/usr/sbin/lsof', '-nP', '-t', '--', *sorted(map(str, images))],
+                               capture_output=True, timeout=12)
+        if check.stdout:
+            return False, 'VS Code 编辑器、辅助进程或崩溃报告进程仍在使用程序文件'
+        if check.returncode != 1 or check.stderr.strip():
+            return False, f'无法核对 VS Code 程序文件占用（lsof {check.returncode}）'
+        return True, ''
+    except OSError as exc:
+        return False, f'查询 VS Code 安装或进程失败（errno {exc.errno}）'
+    except (ValueError, AttributeError, subprocess.TimeoutExpired) as exc:
+        return False, f'无法确认 VS Code 退出状态（{type(exc).__name__}）'
 
 
 def _space(files):
@@ -428,7 +507,7 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
                 re.fullmatch(r'[0-9]{8}T[0-9]{6}', directory.name)):
             session_names[directory.parent].append(directory)
     expired_sessions = {p for paths in session_names.values() for p in sorted(paths)[:-10]}
-    editor_stopped = None
+    editor_state = {}
     for p, row in files.items():
         # Nearest declared project controls path ownership; references can
         # subsequently add projects outside the containing directory.
@@ -468,12 +547,13 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
                 if (is_vscode and apps[app]['version'] == '1.95.3' and p.parent in expired_sessions
                         and len(parts) == 5 and parts[2] == 'logs' and p.name == 'main.log'
                         and row['decision'] == 'review' and time.time_ns() - row['mtime_ns'] >= 30 * 86400 * 10**9):
-                    if editor_stopped is None:
-                        editor_stopped = _code_stopped()
-                    if editor_stopped:
+                    if app not in editor_state:
+                        editor_state[app] = _code_stopped(app)
+                    stopped, status_reason = editor_state[app]
+                    if stopped:
                         row.update(decision='safe', rule_id=integrations.VSCODE_LOG, reason='VS Code 1.95.3 已退出，旧会话在十次保留范围外，仅移除主进程诊断日志')
                     else:
-                        defer(p, '编辑器运行中或退出状态未确认')
+                        defer(p, status_reason)
                 break
         if app:
             row.update(owner=apps[app]['name'], app_path=str(app), bundle_id=apps[app]['bundle_id'],
