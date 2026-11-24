@@ -9,7 +9,8 @@ private struct SpaceNode: Identifiable {
     var directory: Bool { raw["directory"] as? Bool == true }
     var partial: Bool { raw["partial"] as? Bool == true }
     var link: Bool { raw["link"] as? Bool == true }
-    var icon: String { directory ? "folder" : link ? "link" : "doc" }
+    var application: Bool { directory && name.lowercased().hasSuffix(".app") }
+    var icon: String { application ? "app" : directory ? "folder" : link ? "link" : "doc" }
 }
 
 private struct SpaceLevel {
@@ -28,13 +29,15 @@ private struct SpaceLevel {
 
 struct SpaceBrowser: View {
     @ObservedObject var store: Store
+    let canvasHeight: CGFloat
     let review: (String, Bool) -> Void
     @State private var trail: [String] = []
     @State private var current: SpaceLevel?
     @State private var levels: [String: SpaceLevel] = [:]
     @State private var selection: String?
-    @State private var limit = 80
+    @State private var limit = 72
     @State private var filter = "全部"
+    @State private var mode: SpaceDisplay = .map
     @State private var plan: BatchPreview?
     @State private var enrollment: String?
 
@@ -75,8 +78,7 @@ struct SpaceBrowser: View {
                 }
             }
             if let current {
-                summary(current)
-                directoryList(current)
+                browser(current)
             } else if store.busy == "size_tree" {
                 Panel {
                     ProgressView("正在统计目录与子目录的占用…").controlSize(.small)
@@ -108,79 +110,105 @@ struct SpaceBrowser: View {
         }
     }
 
-    private func summary(_ level: SpaceLevel) -> some View {
-        Panel {
-            HStack(alignment: .firstTextBaseline) {
-                Text("空间分布").font(.headline)
-                Spacer()
-                Text(bytes(level.amount)).font(.system(size: 24, weight: .semibold, design: .rounded)).monospacedDigit()
-                Text("\(level.children.count.formatted()) 项").font(.caption).foregroundStyle(.secondary)
-            }
-            if level.gaps > 0 {
-                Label("\(level.gaps.formatted()) 处未能读取或位于其他卷", systemImage: "info.circle")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            if level.amount > 0 {
-                ProportionalMap(nodes: level.children, total: level.amount, selected: selection, select: open)
-                    .frame(height: 208)
-            } else {
-                Text("当前目录没有可计量的文件占用。").font(.callout).foregroundStyle(.secondary)
-            }
-            if let selection, let file = level.children.first(where: { $0.id == selection }) {
-                HStack(spacing: 10) {
-                    Label(file.name, systemImage: file.icon).lineLimit(1).truncationMode(.middle)
-                    Spacer()
-                    Text(bytes(file.amount)).monospacedDigit().foregroundStyle(.secondary)
-                    FinderButton(path: file.id, reveal: true)
-                    CleanupIcon(title: "审阅此文件") { clean(file) }.disabled(!store.busy.isEmpty || file.link)
-                }.font(.callout).padding(.top, 4)
-            }
-        }
-    }
-
-    private func directoryList(_ level: SpaceLevel) -> some View {
+    private func browser(_ level: SpaceLevel) -> some View {
         let rows = level.children.filter { filter == "全部" || $0.directory == (filter == "文件夹") }
-        return Panel {
-            HStack {
-                Text("此层目录").font(.headline)
-                Spacer()
-                Picker("显示", selection: $filter) {
-                    ForEach(["全部", "文件夹", "文件"], id: \.self) { Text($0) }
-                }.pickerStyle(.segmented).labelsHidden().frame(width: 175)
-            }
-            if rows.isEmpty { Text("此层没有符合条件的项目。").foregroundStyle(.secondary) }
-            LazyVStack(spacing: 0) {
-                ForEach(rows.prefix(limit)) { node in
-                    Divider()
-                    row(node, total: level.amount)
+        let navigator = trail.dropLast().last.flatMap { levels[$0] } ?? level
+        let folders = navigator.children.filter { $0.directory && !$0.application }
+        return HStack(alignment: .top, spacing: 14) {
+            directoryRail(level, folders: folders, siblings: navigator.path != level.path)
+                .frame(width: 176)
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(shortName(level.path)).font(.system(size: 21, weight: .semibold))
+                            .lineLimit(1).truncationMode(.middle).help(displayPath(level.path))
+                        Text("\(rows.count.formatted()) 项 · \(bytes(rows.reduce(0) { $0 + $1.amount }))")
+                            .font(.callout.monospacedDigit()).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 4)
+                    Picker("排列", selection: $mode) {
+                        ForEach(SpaceDisplay.allCases) { item in Text(item.rawValue).tag(item) }
+                    }.pickerStyle(.segmented).labelsHidden().frame(width: 119)
+                    Menu(filter) {
+                        ForEach(["全部", "文件夹", "文件"], id: \.self) { category in
+                            Button(category) { filter = category }
+                        }
+                    }.fixedSize().accessibilityLabel("筛选项目")
+                }
+                if level.gaps > 0 {
+                    Label("\(level.gaps.formatted()) 处未能读取或位于其他卷", systemImage: "info.circle")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                if rows.isEmpty {
+                    ContentPlaceholder(icon: "folder", title: "当前没有匹配的项目", message: "调整筛选或选择其他目录。")
+                } else if mode == .map && rows.contains(where: { $0.amount > 0 }) {
+                    ProportionalMap(nodes: rows, selected: selection, open: open, clean: clean) {
+                        mode = .grid
+                    }
+                    .frame(height: canvasHeight)
+                    .accessibilityLabel("空间分布")
+                    Text("面积表示已分配空间。").font(.caption).foregroundStyle(.secondary)
+                } else {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 116), spacing: 6)], spacing: 6) {
+                        ForEach(rows.prefix(limit)) { node in
+                            SpaceTileView(node: node, amount: node.amount, name: node.name, selected: selection == node.id,
+                                          size: nil, open: { open(node) }, clean: { clean(node) })
+                                .frame(height: 104)
+                        }
+                    }
+                    if rows.count > limit { Button("显示更多项目") { limit += 72 } }
+                }
+                if let selection, let node = rows.first(where: { $0.id == selection }) {
+                    HStack(spacing: 8) {
+                        Label(node.name, systemImage: node.icon).lineLimit(1).truncationMode(.middle)
+                        Spacer()
+                        Text(bytes(node.amount)).monospacedDigit().foregroundStyle(.secondary)
+                        FinderButton(path: node.id, reveal: true)
+                        CleanupIcon(title: "审阅此文件") { clean(node) }.disabled(!store.busy.isEmpty || node.link)
+                    }.font(.callout).padding(.top, 2)
                 }
             }
-            if rows.count > limit { Button("显示更多") { limit += 80 } }
+            .padding(15).frame(maxWidth: .infinity, alignment: .leading)
+            .background(surface, in: RoundedRectangle(cornerRadius: 14))
+            .disabled(!store.busy.isEmpty)
         }
+        .onChange(of: filter) { _ in limit = 72 }
+        .onChange(of: mode) { _ in limit = 72 }
     }
 
-    private func row(_ node: SpaceNode, total: Int64) -> some View {
-        HStack(spacing: 10) {
-            Button { open(node) } label: {
-                HStack(spacing: 10) {
-                    Image(systemName: node.icon).foregroundStyle(lilac).frame(width: 20)
-                    Text(node.name).font(.callout.weight(.medium)).lineLimit(1).truncationMode(.middle)
-                    Spacer(minLength: 6)
-                    Text(bytes(node.amount) + (node.partial ? "+" : "")).monospacedDigit()
-                    Text((Double(node.amount) / Double(max(1, total))).formatted(.percent.precision(.fractionLength(1))))
-                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary).frame(width: 52, alignment: .trailing)
-                    Image(systemName: node.directory ? "chevron.right" : "circle.dotted")
-                        .font(.caption).foregroundStyle(.secondary).frame(width: 14)
-                }.contentShape(Rectangle())
-            }.buttonStyle(.plain).disabled(node.link || !store.busy.isEmpty).accessibilityLabel(node.name)
-            Divider().frame(height: 20)
-            FinderButton(path: node.id, reveal: true)
-            CleanupIcon(title: node.directory ? "审阅目录内的清理项目" : "审阅此文件") {
-                clean(node)
-            }.disabled(node.link || !store.busy.isEmpty)
-        }
-        .padding(.vertical, 7).padding(.horizontal, 5)
-        .background(selection == node.id ? lilac.opacity(0.07) : .clear, in: RoundedRectangle(cornerRadius: 5))
+    private func directoryRail(_ level: SpaceLevel, folders: [SpaceNode], siblings: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(siblings ? "同级目录" : "目录").font(.callout.weight(.semibold)).padding(.horizontal, 8)
+            if folders.isEmpty {
+                Text("当前没有子目录").font(.caption).foregroundStyle(.secondary).padding(.horizontal, 8)
+            }
+            ScrollView {
+                LazyVStack(spacing: 3) {
+                    ForEach(folders) { folder in
+                        let selected = level.path == folder.id
+                        Button {
+                            if siblings { trail.removeLast() }
+                            navigate(folder)
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: selected ? "folder.fill" : "folder").foregroundStyle(lilac)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(folder.name).font(.callout.weight(.medium)).lineLimit(1).truncationMode(.middle)
+                                    Text(bytes(folder.amount)).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                                }
+                                Spacer(minLength: 0)
+                                Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary)
+                            }
+                            .padding(.vertical, 8).padding(.horizontal, 8)
+                            .background(lilac.opacity(selected ? 0.14 : 0), in: RoundedRectangle(cornerRadius: 7))
+                            .contentShape(Rectangle())
+                        }.buttonStyle(.plain).disabled(selected || !store.busy.isEmpty)
+                            .help(displayPath(folder.id)).accessibilityLabel("浏览目录 \(folder.name)")
+                    }
+                }
+            }.frame(maxHeight: canvasHeight + 40)
+        }.padding(9).padding(.vertical, 5)
+            .background(surface, in: RoundedRectangle(cornerRadius: 12))
     }
 
     private func shortName(_ path: String) -> String {
@@ -213,8 +241,7 @@ struct SpaceBrowser: View {
     private func load(_ path: String?, refresh: Bool = false) {
         guard store.busy.isEmpty else { return }
         selection = nil
-        limit = 80
-        filter = "全部"
+        limit = 72
         if !refresh, let path, let cached = levels[path] {
             current = cached
             return
@@ -257,15 +284,23 @@ struct SpaceBrowser: View {
     }
 }
 
+private enum SpaceDisplay: String, CaseIterable, Identifiable {
+    case map = "占用图"
+    case grid = "网格"
+    var id: Self { self }
+}
+
 private struct ProportionalMap: View {
     let nodes: [SpaceNode]
-    let total: Int64
     let selected: String?
-    let select: (SpaceNode) -> Void
+    let open: (SpaceNode) -> Void
+    let clean: (SpaceNode) -> Void
+    let showGrid: () -> Void
 
     private struct Tile: Identifiable {
         let node: SpaceNode?
         let bytes: Int64
+        let name: String
         var id: String { node?.id ?? "" }
     }
 
@@ -276,69 +311,130 @@ private struct ProportionalMap: View {
     }
 
     var body: some View {
-        let first = nodes.filter { $0.amount > 0 }.prefix(9)
-        let remainder = total - first.reduce(0) { $0 + $1.amount }
-        let tiles = first.map { Tile(node: $0, bytes: $0.amount) } + (remainder > 0 ? [Tile(node: nil, bytes: remainder)] : [])
+        let visible = nodes.lazy.filter { $0.amount > 0 }.prefix(24)
+        let otherAmount = nodes.reduce(0) { $0 + $1.amount } - visible.reduce(0) { $0 + $1.amount }
+        let tiles = Array(visible.map { Tile(node: $0, bytes: $0.amount, name: $0.name) })
+        let displayed = otherAmount > 0
+            ? (tiles + [Tile(node: nil, bytes: otherAmount, name: "其余项目")]).sorted { $0.bytes > $1.bytes }
+            : tiles
         return GeometryReader { proxy in
-            ForEach(layout(tiles[...], in: CGRect(origin: .zero, size: proxy.size))) { piece in
-                let box = piece.rect.insetBy(dx: 2, dy: 2)
-                if box.width > 0 && box.height > 0 {
-                    tile(piece.tile, width: box.width, height: box.height)
+            ForEach(layout(displayed, in: CGRect(origin: .zero, size: proxy.size))) { piece in
+                let box = piece.rect.insetBy(dx: 3, dy: 3)
+                let node = piece.tile.node
+                if box.width >= 10 && box.height >= 10 {
+                    SpaceTileView(node: node, amount: piece.tile.bytes, name: piece.tile.name,
+                                  selected: node?.id == selected && node != nil, size: box.size,
+                                  open: { if let node { open(node) } else { showGrid() } },
+                                  clean: { if let node { clean(node) } })
                         .position(x: box.midX, y: box.midY)
                 }
             }
-        }
+        }.accessibilityElement(children: .contain)
     }
 
-    private func tile(_ tile: Tile, width: CGFloat, height: CGFloat) -> some View {
-        let node = tile.node
-        let name = node?.name ?? "其余项目"
-        let color = node.map { $0.directory ? lilac : Color(red: 0.38, green: 0.79, blue: 0.84) } ?? Color.secondary
-        let shape = RoundedRectangle(cornerRadius: min(10, min(width, height)/4))
-        return Button {
-            if let node { select(node) }
-        } label: {
-            VStack(alignment: .leading, spacing: 5) {
-                if width > 43 && height > 50 {
-                    Image(systemName: node?.icon ?? "square.grid.2x2").foregroundStyle(color)
-                    Text(name).font(.system(size: width < 80 ? 10 : 13, weight: .semibold))
+    // Choose each strip by minimizing its worst rectangle aspect ratio.
+    private func layout(_ tiles: [Tile], in bounds: CGRect) -> [Placed] {
+        let total = tiles.reduce(CGFloat(0)) { $0 + CGFloat($1.bytes) }
+        guard total > 0, bounds.width > 0, bounds.height > 0 else { return [] }
+        let scale = bounds.width * bounds.height / total
+        var remaining = bounds
+        var index = 0
+        var placed: [Placed] = []
+        while index < tiles.count && remaining.width > 0 && remaining.height > 0 {
+            let vertical = remaining.width >= remaining.height
+            let side = vertical ? remaining.height : remaining.width
+            let firstArea = CGFloat(tiles[index].bytes) * scale
+            var lastArea = firstArea
+            var area = firstArea
+            var end = index + 1
+            func worstRatio(total: CGFloat, smallest: CGFloat) -> CGFloat {
+                let square = (total / side) * (total / side)
+                return max(firstArea / square, square / smallest)
+            }
+            while end < tiles.count {
+                let next = CGFloat(tiles[end].bytes) * scale
+                if worstRatio(total: area + next, smallest: next) > worstRatio(total: area, smallest: lastArea) { break }
+                area += next
+                lastArea = next
+                end += 1
+            }
+            let thickness = min(area / side, vertical ? remaining.width : remaining.height)
+            var offset: CGFloat = 0
+            for tile in tiles[index..<end] {
+                let length = CGFloat(tile.bytes) * scale / thickness
+                let start = vertical
+                    ? CGPoint(x: remaining.minX, y: remaining.minY + offset)
+                    : CGPoint(x: remaining.minX + offset, y: remaining.minY)
+                let size = vertical ? CGSize(width: thickness, height: length) : CGSize(width: length, height: thickness)
+                placed.append(Placed(tile: tile, rect: CGRect(origin: start, size: size)))
+                offset += length
+            }
+            if vertical {
+                remaining.origin.x += thickness
+                remaining.size.width -= thickness
+            } else {
+                remaining.origin.y += thickness
+                remaining.size.height -= thickness
+            }
+            index = end
+        }
+        return placed
+    }
+}
+
+private struct SpaceTileView: View {
+    let node: SpaceNode?
+    let amount: Int64
+    let name: String
+    let selected: Bool
+    let size: CGSize?
+    let open: () -> Void
+    let clean: () -> Void
+    @State private var hovered = false
+
+    var body: some View {
+        let compact = (size?.width ?? 120) < 115 || (size?.height ?? 104) < 88
+        let hasLabel = (size?.width ?? 120) >= 45 && (size?.height ?? 104) >= 34
+        let hasIcon = (size?.height ?? 104) >= 66
+        let tint = node.map { $0.directory ? lilac : Color(red: 0.42, green: 0.78, blue: 0.80) } ?? .secondary
+        let shape = RoundedRectangle(cornerRadius: 8)
+        Button(action: open) {
+            VStack(alignment: .leading, spacing: compact ? 3 : 6) {
+                if hasIcon {
+                    if let node, node.application {
+                        Image(nsImage: NSWorkspace.shared.icon(forFile: node.id)).resizable()
+                            .frame(width: compact ? 17 : 28, height: compact ? 17 : 28)
+                    } else {
+                        Image(systemName: node?.icon ?? "square.grid.2x2").font(.system(size: compact ? 12 : 20))
+                            .foregroundStyle(tint)
+                    }
+                }
+                if hasLabel {
+                    Text(name).font(.system(size: compact ? 11 : 13, weight: .semibold))
                         .lineLimit(1).truncationMode(.middle)
-                    if height > 70 && width > 55 {
-                        Text(bytes(tile.bytes)).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                    if (size?.height ?? 104) >= 46 {
+                        Text(bytes(amount) + (node?.partial == true ? "+" : ""))
+                            .font(.caption.monospacedDigit()).foregroundStyle(.secondary).lineLimit(1)
                     }
                 }
             }
-            .padding(width < 80 ? 7 : 10).frame(width: width, height: height, alignment: .bottomLeading)
-            .background(color.opacity(node?.id == selected ? 0.31 : 0.14), in: shape)
-            .contentShape(shape)
+            .padding(compact ? 7 : 12)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+            .frame(width: size?.width, height: size?.height)
+            .background(tint.opacity(selected ? 0.26 : hovered ? 0.18 : 0.10), in: shape)
+            .overlay { shape.strokeBorder(tint.opacity(selected ? 0.75 : hovered ? 0.42 : 0.14)) }
+            .clipShape(shape).contentShape(shape)
         }.buttonStyle(.plain)
-            .disabled(node == nil).help("\(name) · \(bytes(tile.bytes))")
-            .accessibilityLabel("\(name)，\(bytes(tile.bytes))")
-    }
-
-    private func layout(_ tiles: ArraySlice<Tile>, in rect: CGRect) -> [Placed] {
-        guard let first = tiles.first else { return [] }
-        if tiles.count == 1 { return [Placed(tile: first, rect: rect)] }
-        let sum = tiles.reduce(Int64(0)) { $0 + $1.bytes }
-        var count = 0
-        var leading: Int64 = 0
-        for tile in tiles.dropLast() {
-            leading += tile.bytes
-            count += 1
-            if leading >= sum / 2 { break }
-        }
-        let ratio = CGFloat(leading) / CGFloat(sum)
-        var front = rect
-        var end = rect
-        if rect.width >= rect.height {
-            front.size.width *= ratio
-            end.origin.x += front.width
-            end.size.width -= front.width
-        } else {
-            front.size.height *= ratio
-            end.origin.y += front.height
-            end.size.height -= front.height
-        }
-        return layout(tiles.prefix(count), in: front) + layout(tiles.dropFirst(count), in: end)
+            .onHover { hovered = $0 }
+            .help("\(name) · \(bytes(amount))")
+            .accessibilityLabel(name).accessibilityValue(bytes(amount))
+            .contextMenu {
+                if let node {
+                    Button("在 Finder 中显示") {
+                        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: node.id)])
+                    }
+                    Button("审阅清理项目", action: clean).disabled(node.link)
+                }
+            }
     }
 }

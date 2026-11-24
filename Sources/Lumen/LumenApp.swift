@@ -105,49 +105,51 @@ struct Workbench: View {
             }.padding(16).frame(width: 180).background(Color.black.opacity(0.15))
             Divider()
             VStack(alignment: .leading, spacing: 0) {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        HStack {
-                            Text(page == .apps && selectedApplication != nil ? "应用清理详情" : page.rawValue)
-                                .font(.system(size: 32, weight: .semibold))
-                            Spacer()
-                            if page == .home || page == .scopes {
-                                scanControl
-                            }
-                        }
-                        if store.scanning {
+                GeometryReader { viewport in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 16) {
                             HStack {
-                                ProgressView().controlSize(.small)
-                                Text("正在扫描本机位置…")
-                                Button("取消扫描") { store.cancelScan() }.buttonStyle(.link)
-                            }.foregroundStyle(.secondary)
-                        }
-                        switch page {
-                        case .home: home
-                        case .apps:
-                            if let path = selectedApplication,
-                               let app = store.inventory.apps.first(where: { $0.id == path }) {
-                                AppCleanupDetail(store: store, app: app) { selectedApplication = nil }.id(path)
-                            } else {
-                                AppRanking(store: store, drill: { review(owner: $0, verdict: $1) },
-                                           cleanup: { selectedApplication = $0 })
+                                Text(page == .apps && selectedApplication != nil ? "应用清理详情" : page.rawValue)
+                                    .font(.system(size: 32, weight: .semibold))
+                                Spacer()
+                                if page == .home || page == .scopes {
+                                    scanControl
+                                }
                             }
-                        case .agents: WorkspaceView(store: store, drill: { bucket in
-                            review(project: bucket.title)
-                            bucketPaths = bucket.paths
-                        })
-                        case .review: ReviewView(store: store, owner: $owner, project: $project, verdict: $verdict,
-                                                 bucketPaths: $bucketPaths, path: $reviewPath)
-                        case .large:
-                            SpaceBrowser(store: store) { path, enroll in
-                                review()
-                                reviewPath = path
-                                if enroll { store.scan(store.roots + [path], deep: false, renewRoots: [path]) }
+                            if store.scanning {
+                                HStack {
+                                    ProgressView().controlSize(.small)
+                                    Text("正在扫描本机位置…")
+                                    Button("取消扫描") { store.cancelScan() }.buttonStyle(.link)
+                                }.foregroundStyle(.secondary)
                             }
-                        case .history: HistoryView(store: store)
-                        case .scopes: scopes
-                        }
-                    }.padding(26).frame(maxWidth: .infinity, alignment: .leading)
+                            switch page {
+                            case .home: home
+                            case .apps:
+                                if let path = selectedApplication,
+                                   let app = store.inventory.apps.first(where: { $0.id == path }) {
+                                    AppCleanupDetail(store: store, app: app) { selectedApplication = nil }.id(path)
+                                } else {
+                                    AppRanking(store: store, drill: { review(owner: $0, verdict: $1) },
+                                               cleanup: { selectedApplication = $0 })
+                                }
+                            case .agents: WorkspaceView(store: store, drill: { bucket in
+                                review(project: bucket.title)
+                                bucketPaths = bucket.paths
+                            })
+                            case .review: ReviewView(store: store, owner: $owner, project: $project, verdict: $verdict,
+                                                     bucketPaths: $bucketPaths, path: $reviewPath)
+                            case .large:
+                                SpaceBrowser(store: store, canvasHeight: max(320, viewport.size.height - 226)) { path, enroll in
+                                    review()
+                                    reviewPath = path
+                                    if enroll { store.scan(store.roots + [path], deep: false, renewRoots: [path]) }
+                                }
+                            case .history: HistoryView(store: store)
+                            case .scopes: scopes
+                            }
+                        }.padding(26).frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
             }
         }.background(canvas).tint(lilac).preferredColorScheme(.dark)

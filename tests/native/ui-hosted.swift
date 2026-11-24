@@ -56,6 +56,14 @@ private func press(_ name: String, in app: AXUIElement) throws {
     }
 }
 
+private func position(_ element: AXUIElement) -> CGPoint? {
+    guard let raw = attribute(element, kAXPositionAttribute),
+          CFGetTypeID(raw) == AXValueGetTypeID() else { return nil }
+    let value = raw as! AXValue
+    var point = CGPoint.zero
+    return AXValueGetValue(value, .cgPoint, &point) ? point : nil
+}
+
 private func config(_ directory: URL) -> [String: Any]? {
     guard let bytes = try? Data(contentsOf: directory.appendingPathComponent("workspace.json")) else { return nil }
     return (try? JSONSerialization.jsonObject(with: bytes)) as? [String: Any]
@@ -207,12 +215,23 @@ private func fallbackReport(_ pid: pid_t) {
         _ = try eventually("the automatically detected project row") { element("Studio Project", in: ax, button: false) }
         _ = try eventually("the workspace cleanup icon") { element("审阅工程清理项目", in: ax, button: true) }
         try press("大文件清理", in: ax)
-        _ = try eventually("the measured space map") { element("空间分布", in: ax, button: false) }
+        let nodes = ["Documents", "Library", ".cache", "Downloads", "Movies", "Pictures"]
+        _ = try eventually("space map tiles in multiple rows and columns") {
+            let coordinates = nodes.compactMap { element($0, in: ax, button: true).flatMap(position) }
+            guard coordinates.count == nodes.count, let first = coordinates.first,
+                  coordinates.contains(where: { abs($0.y - first.y) > 20 }),
+                  coordinates.contains(where: { abs($0.x - first.x) > 20 }) else { return nil as Bool? }
+            return true
+        }
         captureWindow(pid: pid, lab: lab, filename: "Lumen-large-files.png")
         try press("Documents", in: ax)
         try press("Codex", in: ax)
         try press("Studio Project", in: ax)
+        try press("网格", in: ax)
         _ = try eventually("the nested project's file") { element("notes.txt", in: ax, button: true) }
+        try press("notes.txt", in: ax)
+        _ = try eventually("the selected file's cleanup action") { element("审阅此文件", in: ax, button: true) }
+        print("Space Browser: multi-row map geometry, three directory levels, and grid file selection verified with AX.")
         try press("空间总览", in: ax)
         try press("创建演练样本", in: ax)
         let initial = try eventually("the fixture scan in a separate state directory") { fixtureReport(lab) }

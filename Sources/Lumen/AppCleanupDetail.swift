@@ -8,7 +8,7 @@ struct CleanupIcon: View {
     var body: some View {
         Button(action: action) {
             BroomGlyph().stroke(style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
-                .frame(width: 17, height: 17)
+                .frame(width: 19, height: 19)
                 .frame(width: 25, height: 24)
         }.buttonStyle(.borderless).foregroundStyle(lilac)
             .help(title).accessibilityLabel(title)
@@ -18,21 +18,23 @@ struct CleanupIcon: View {
 private struct BroomGlyph: Shape {
     func path(in rect: CGRect) -> Path {
         let outline = Path { path in
-            path.move(to: CGPoint(x: 18, y: 2))
-            path.addLine(to: CGPoint(x: 11, y: 9))
-            path.move(to: CGPoint(x: 8, y: 8))
-            path.addLine(to: CGPoint(x: 13, y: 13))
-            path.addLine(to: CGPoint(x: 7, y: 19))
-            path.addLine(to: CGPoint(x: 2, y: 14))
+            path.move(to: CGPoint(x: 12, y: 2))
+            path.addLine(to: CGPoint(x: 12, y: 10))
+            path.move(to: CGPoint(x: 9, y: 10))
+            path.addLine(to: CGPoint(x: 15, y: 10))
+            path.addLine(to: CGPoint(x: 15, y: 13))
+            path.addQuadCurve(to: CGPoint(x: 18.5, y: 21), control: CGPoint(x: 15.4, y: 17))
+            path.addLine(to: CGPoint(x: 5.5, y: 21))
+            path.addQuadCurve(to: CGPoint(x: 9, y: 13), control: CGPoint(x: 8.6, y: 17))
             path.closeSubpath()
-            path.move(to: CGPoint(x: 4.5, y: 16.5))
-            path.addLine(to: CGPoint(x: 9, y: 12))
-            path.move(to: CGPoint(x: 2, y: 5))
-            path.addLine(to: CGPoint(x: 6, y: 5))
-            path.move(to: CGPoint(x: 4, y: 3))
-            path.addLine(to: CGPoint(x: 4, y: 7))
+            path.move(to: CGPoint(x: 9, y: 13))
+            path.addLine(to: CGPoint(x: 15, y: 13))
+            path.move(to: CGPoint(x: 10.5, y: 16.5))
+            path.addLine(to: CGPoint(x: 9.75, y: 21))
+            path.move(to: CGPoint(x: 13.5, y: 16.5))
+            path.addLine(to: CGPoint(x: 14.25, y: 21))
         }
-        return outline.applying(CGAffineTransform(scaleX: rect.width / 20, y: rect.height / 20))
+        return outline.applying(CGAffineTransform(scaleX: rect.width / 24, y: rect.height / 24))
     }
 }
 
