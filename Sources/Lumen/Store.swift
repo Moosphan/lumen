@@ -59,6 +59,7 @@ func resource(_ name: String, source: String) -> URL? {
     @Published var generation = 0
     private var process: Process?
     var roots: [String] { data.paths("roots") }
+    var scanning: Bool { busy == "scan" || busy == "scan_local" }
     var projects: [String: [String]] { data["projects"] as? [String: [String]] ?? [:] }
     var duplicates: [String: [String]] { data["duplicates"] as? [String: [String]] ?? [:] }
 
@@ -101,7 +102,7 @@ func resource(_ name: String, source: String) -> URL? {
                     guard self.process === task else { return }
                     self.process = nil
                     self.busy = ""
-                    if command == "scan" && task.terminationReason == .uncaughtSignal {
+                    if ["scan", "scan_local"].contains(command) && task.terminationReason == .uncaughtSignal {
                         self.notice = "扫描已停止，保留上次完成的盘点。"
                         return
                     }
@@ -116,7 +117,7 @@ func resource(_ name: String, source: String) -> URL? {
                         self.generation += 1
                     }
                     if command != "status" && command != "fixture" {
-                        self.notice = command == "scan" ? "扫描完成，共 \(self.files.count) 个文件。" : "已更新本地记录。"
+                        self.notice = ["scan", "scan_local"].contains(command) ? "扫描完成，共 \(self.files.count) 个文件。" : "已更新本地记录。"
                     }
                     if let last = dashboard["last_action"] as? Object {
                         let batches = dashboard.rows("last_actions")
@@ -131,8 +132,12 @@ func resource(_ name: String, source: String) -> URL? {
     func scan(_ scopes: [String], deep: Bool, renewRoots: [String] = []) {
         call("scan", ["roots": Array(Set(scopes)).sorted(), "deep": deep, "renew_roots": renewRoots])
     }
+    func scanLocal(deep: Bool) {
+        if fixtureState != nil { scan(roots, deep: deep) }
+        else { call("scan_local", ["deep": deep]) }
+    }
     func cancelScan() {
-        if busy == "scan", let process, process.isRunning { process.terminate() }
+        if scanning, let process, process.isRunning { process.terminate() }
     }
     func addScope(deep: Bool) {
         guard fixtureState == nil else { return }

@@ -1,47 +1,100 @@
 import SwiftUI
+import AppKit
 
-/// Present known macOS locations without enumerating them before consent.
 struct SuggestedScopes: View {
     @ObservedObject var store: Store
     let deep: Bool
-    @State private var selected = Set<String>()
 
-    private var locations: [(String, String)] {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let userPaths = [
-            ("Claude Code 工程索引", ".claude/projects"), ("Codex 会话索引", ".codex/sessions"),
-            ("下载", "Downloads"), ("用户缓存", "Library/Caches"), ("应用日志", "Library/Logs"),
-            ("应用支持数据", "Library/Application Support"), ("应用容器", "Library/Containers"),
-            ("共享容器", "Library/Group Containers"), ("开发工具", "Library/Developer"),
-            ("模型与工具缓存", ".cache")
-        ]
-        let known = userPaths.map { ($0.0, home.appendingPathComponent($0.1).path) } +
-            [("已安装应用", "/Applications"), ("机器级第三方缓存", "/Library/Caches"),
-             ("机器级第三方日志", "/Library/Logs")]
-        let linked = store.data.paths("suggested_projects").map { ("会话记录提到的工程", $0) }
-        var seen = Set<String>()
-        return (linked + known).filter { seen.insert($0.1).inserted && !store.roots.contains($0.1) }
-    }
+    private let extra = [
+        ("应用支持数据", "Library/Application Support"),
+        ("应用容器", "Library/Containers"),
+        ("共享容器", "Library/Group Containers"),
+        ("已安装应用的管理范围", "/Applications"),
+        ("个人应用的管理范围", "Applications"),
+        ("机器级缓存", "/Library/Caches"),
+        ("机器级日志", "/Library/Logs")
+    ]
 
     var body: some View {
+        let automatic = store.data.rows("local_locations")
+        let excluded = store.data.paths("local_exclude")
+        let groups = ["文件", "资源库", "Agent 工程"]
         Panel {
-            DisclosureGroup("常见位置与已发现工程") {
-                ForEach(locations, id: \.1) { location in
-                    Toggle(isOn: Binding(get: { selected.contains(location.1) }, set: { enabled in
-                        if enabled { selected.insert(location.1) } else { selected.remove(location.1) }
-                    })) {
-                        VStack(alignment: .leading) {
-                            Text(location.0)
-                            Text(location.1).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+            Text("本机自动扫描").font(.headline)
+            Text("标准位置和已识别工程会在打开既白时盘点。").font(.callout).foregroundStyle(.secondary)
+            if automatic.isEmpty && excluded.isEmpty {
+                Text("完成自动扫描后会列出已发现的位置。").font(.callout).foregroundStyle(.secondary)
+            }
+            ForEach(groups, id: \.self) { group in
+                let rows = automatic.filter { $0.string("group") == group }
+                if !rows.isEmpty {
+                    DisclosureGroup {
+                        ForEach(rows, id: \.scopePath) { row in
+                            let path = row.string("path")
+                            location(row.string("title"), path: path,
+                                     icon: group == "Agent 工程" ? "square.3.layers.3d" : "folder") {
+                                FinderButton(path: path)
+                                if group == "Agent 工程" && !store.roots.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) {
+                                    Button("加为清理范围") { store.scan(store.roots + [path], deep: deep, renewRoots: [path]) }
+                                }
+                                Button {
+                                    updateExclusion(excluded + [path])
+                                } label: { Image(systemName: "minus.circle").frame(width: 25, height: 23) }
+                                    .buttonStyle(.borderless).help("排除自动扫描")
+                                    .accessibilityLabel("排除 \(row.string("title"))")
+                            }
+                        }
+                    } label: {
+                        HStack {
+                            Text(group).fontWeight(.medium)
+                            Spacer()
+                            Text(rows.count.formatted()).monospacedDigit().foregroundStyle(.secondary)
                         }
                     }
                 }
-                Button("授权并扫描所选的 \(selected.count) 个位置") {
-                    let additions = Array(selected)
-                    selected.removeAll()
-                    store.scan(store.roots + additions, deep: deep, renewRoots: additions)
-                }.disabled(selected.isEmpty || !store.busy.isEmpty)
             }
-        }
+            if !excluded.isEmpty {
+                DisclosureGroup("已排除的位置（\(excluded.count)）") {
+                    ForEach(excluded, id: \.self) { path in
+                        location(URL(fileURLWithPath: path).lastPathComponent, path: path, icon: "minus.circle") {
+                            Button("重新纳入") { updateExclusion(excluded.filter { $0 != path }) }
+                        }
+                    }
+                }
+            }
+            Divider()
+            DisclosureGroup("添加扩展位置") {
+                let home = FileManager.default.homeDirectoryForCurrentUser
+                let known = extra.map { title, rel in (title, rel.hasPrefix("/") ? rel : home.appendingPathComponent(rel).path) }
+                let discovered = store.data.paths("suggested_projects").map { path in (URL(fileURLWithPath: path).lastPathComponent, path) }
+                ForEach((discovered + known).filter { !store.roots.contains($0.1) && !excluded.contains($0.1) }, id: \.1) { name, path in
+                    location(name, path: path, icon: "folder.badge.plus") {
+                        Button("添加") { store.scan(store.roots + [path], deep: deep, renewRoots: [path]) }
+                    }
+                }
+            }
+        }.disabled(!store.busy.isEmpty)
     }
+
+    private func updateExclusion(_ paths: [String]) {
+        store.call("settings", ["local_exclude": paths])
+    }
+
+    private func location<Trailing: View>(_ name: String, path: String, icon: String,
+                                          @ViewBuilder trailing: () -> Trailing) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon).foregroundStyle(lilac).frame(width: 24)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(name).font(.callout.weight(.medium)).lineLimit(1)
+                Text(displayPath(path)).font(.caption).foregroundStyle(.secondary)
+                    .lineLimit(1).truncationMode(.middle).help(path)
+            }
+            Spacer(minLength: 8)
+            trailing()
+        }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 6).padding(.leading, 8)
+    }
+}
+
+private extension Object {
+    var scopePath: String { string("path") }
 }

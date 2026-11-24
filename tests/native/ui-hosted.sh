@@ -23,6 +23,25 @@ cleanup() {
 trap cleanup EXIT
 mkdir -m 700 "$lab/tmp"
 export LUMEN_STATE_DIR="$lab/workspace-state" TMPDIR="$lab/tmp"
+export LUMEN_INVENTORY_HOME="$lab/home"
+/usr/bin/python3 -B - <<'PY'
+import os
+import plistlib
+from pathlib import Path
+
+home = Path(os.environ["LUMEN_INVENTORY_HOME"])
+contents = home / "Applications/Sample Studio.app/Contents"
+contents.mkdir(parents=True)
+(contents / "Info.plist").write_bytes(plistlib.dumps({
+    "CFBundleIdentifier": "org.lumen.sample-studio", "CFBundleName": "Sample Studio",
+}))
+downloads = home / "Downloads"
+downloads.mkdir()
+(downloads / "archive.zip").write_bytes(b"sample" * 8192)
+project = home / "Documents/Codex/Studio Project"
+project.mkdir(parents=True)
+(project / "notes.txt").write_text("Keep this.")
+PY
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 /usr/bin/xcrun swiftc -parse-as-library -module-cache-path "$lab/modules" \
     tests/native/ui-hosted.swift -o "$lab/check-window"

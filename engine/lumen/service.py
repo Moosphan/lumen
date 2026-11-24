@@ -8,7 +8,7 @@ import time
 import uuid
 from pathlib import Path
 
-from . import actions, integrations, macmanage
+from . import actions, integrations, local, macmanage
 from .fixture import create_fixture
 from .scan import scan
 
@@ -35,7 +35,7 @@ def save_config(state, config):
     fd, tmp = tempfile.mkstemp(dir=state, prefix=".workspace-")
     try:
         with os.fdopen(fd, "w") as stream:
-            json.dump(config, stream, ensure_ascii=False)
+            json.dump({k: value for k, value in config.items() if not k.startswith("_")}, stream, ensure_ascii=False)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(tmp, state / "workspace.json")
@@ -89,6 +89,8 @@ def assign_roots(config, values, state, renew=()):
 
 
 def apply_settings(config, request, state):
+    if "local_exclude" in request:
+        config["local_exclude"] = paths(request["local_exclude"])
     if "roots" in request:
         assign_roots(config, request["roots"], state, request.get("renew_roots", ()))
     def require_scoped(value):
@@ -215,27 +217,49 @@ def inventory(config, state, incremental=False, full=False):
     exclusions = config["exclude"] + [str(state)]
     exclusions.extend(str(Path(r) / name) for r in config["roots"]
                       for name in (".Trash", f".lumen-vault-{os.getuid()}"))
-    report = scan(active_roots(config), deep=full or config["deep"], projects=config["projects"],
+    manual = active_roots(config)
+    locations, detected, installed, discovery_issues, suggestions = [], {}, None, set(), set()
+    if config.get("local_enabled") and config.get("_local_home"):
+        blocked = [Path(p) for p in exclusions + config.get("local_exclude", [])]
+        locations, detected, installed, discovery_issues, suggestions = local.plan(
+            Path(config["_local_home"]), config["_include_system"], blocked)
+        exclusions += config.get("local_exclude", [])
+    projects = {p: list(a) for p, a in config["projects"].items()}
+    for path, agents in detected.items():
+        projects[str(path)] = sorted(set(projects.get(str(path), [])) | agents)
+    automatic = [row["path"] for row in locations]
+    exclusions += [str(Path(r) / name) for r in automatic
+                   for name in (".Trash", f".lumen-vault-{os.getuid()}")]
+    report = scan(manual + automatic, deep=full or config["deep"], projects=projects,
                   keep=sorted(protected), exclude=exclusions,
-                  hash_cache=config.setdefault("hash_cache", {}) if incremental else None)
+                  hash_cache=config.setdefault("hash_cache", {}) if incremental else None, installed=installed)
+    report["issues"].extend(sorted(discovery_issues))
+    report["local_locations"] = locations
+    report["suggested_projects"] = sorted(set(report["suggested_projects"]) | suggestions)
     for lost in sorted(set(config["roots"])-set(active_roots(config))):
         report["issues"].append(lost + " · 授权目录离线或身份变化，请重新选择")
     for app in report["apps"]:
         if app["bundle_id"] in macmanage.SUPPORTED_BUNDLES and not app_protected(config, app, report):
             try:
-                app["uninstall_snapshot"] = macmanage.app_snapshot(app["path"], fixture_roots=[t.parent for t in fixture_trash(config)])
+                proof = macmanage.app_snapshot(app["path"], fixture_roots=[t.parent for t in fixture_trash(config)])
+                app["verified_install"] = True
+                if any(inside(Path(app["path"]), Path(root)) and app["path"] != root for root in manual):
+                    app["uninstall_snapshot"] = proof
             except (OSError, ValueError) as error:
                 app["uninstall_reason"] = str(error)
     report["residuals"] = macmanage.residuals(state, config["roots"], report,
                                               fixture_roots=[t.parent for t in fixture_trash(config)])
     remnants = {item["path"]: item for item in report.get("residuals", [])}
-    verified_apps = {app["path"] for app in report["apps"] if app.get("uninstall_snapshot")}
+    verified_apps = {app["path"] for app in report["apps"] if app.get("verified_install")}
     task_paths = {}
     for task in config["tasks"]:
         for field in ("inputs", "outputs", "temporary"):
             for target in task[field]:
                 task_paths.setdefault(target, []).append(task)
     lab_roots = [t.parent for t in fixture_trash(config)]
+    review_roots = list(map(Path, manual))
+    if installed is not None:
+        review_roots += auto_review_roots(Path(config["_local_home"]))
     for row in report["files"]:
         related = task_paths.get(row["path"], ())
         if related:
@@ -252,7 +276,28 @@ def inventory(config, state, incremental=False, full=False):
             row.update(residual=True, reason=remnants[row["path"]]["reason"])
         if any(inside(Path(row["path"]), Path(p)) for p in protected):
             row.update(decision="keep", reason="用户标记保留或任务正在引用")
+        path = Path(row["path"])
+        if installed is not None and row["decision"] == "review":
+            if not any(inside(path, root) for root in review_roots):
+                row.update(decision="keep", reason="自动发现的位置仅盘点，可在扫描范围添加后审阅")
+    local.summarize(report)
     return report
+
+
+def auto_review_roots(home):
+    return [home / p for p in ("Downloads", "Library/Caches", "Library/Logs", "Library/Developer/Xcode/DerivedData")]
+
+
+def operation_roots(config, report):
+    roots = active_roots(config)
+    if not config.get("local_enabled") or not config.get("_local_home"):
+        return roots
+    home = Path(config["_local_home"])
+    supported = auto_review_roots(home) + [home / "Library/Application Support/Code"]
+    indexed = {row["path"]: row["identity"] for row in report.get("local_locations", [])}
+    return roots + [str(root) for root in supported if str(root) in indexed and
+                    indexed[str(root)] == root_identity(root) and
+                    not any(inside(root, Path(p)) for p in config.get("local_exclude", []))]
 
 
 def refresh(config, state):
@@ -286,11 +331,18 @@ def perform(config, state, request, temporary_task=None, planned_paths=()):
     current = {r["path"]: r for r in fresh["files"]}
     selected, skipped = [], []
     chosen = set(requested).union(planned_paths)
+    manual = list(map(Path, active_roots(config)))
+    manual_or_review = manual + (auto_review_roots(Path(config["_local_home"])) if config.get("_local_home") else [])
+    previous_roots = set(operation_roots(config, config["report"]))
+    roots = [root for root in operation_roots(config, fresh) if root in previous_roots]
     for path in requested:
         old, row = preview.get(path), current.get(path)
         fields = ("dev", "ino", "size", "mtime_ns", "ctime_ns", "decision", "rule_id")
         if not old or not row or any(old.get(f) != row.get(f) for f in fields):
             skipped.append({"path": path, "status": "skipped", "reason": "预演已过期，请重新扫描"})
+            continue
+        if action != "clean" and not any(inside(Path(path), root) for root in manual_or_review):
+            skipped.append({"path": path, "status": "skipped", "reason": "此位置仅支持低影响清理"})
             continue
         if temporary_task and not eligible_temporary(config, temporary_task, row):
             skipped.append({"path": path, "status":"skipped", "reason":"任务登记身份或保护状态已改变"})
@@ -302,10 +354,10 @@ def perform(config, state, request, temporary_task=None, planned_paths=()):
             continue
         selected.append(row)
     if selected and action == "trash":
-        result = actions.execute(state, active_roots(config), selected, action,
+        result = actions.execute(state, roots, selected, action,
                                  trash_override=lambda p: trash_destination(config, p))
     else:
-        result = actions.execute(state, active_roots(config), selected, action) if selected else {"items": []}
+        result = actions.execute(state, roots, selected, action) if selected else {"items": []}
     result.setdefault("items", []).extend(skipped)
     return result
 
@@ -435,9 +487,10 @@ def measure_batch(config, result, before, after):
 
 
 def followup(module, command, state, config, request):
+    roots = active_roots(config) if module is macmanage else operation_roots(config, config["report"])
     if command == "restore" and request.get("beside") is True:
-        return module.restore(state, active_roots(config), request["batch_id"], beside=True)
-    return getattr(module, command)(state, active_roots(config), request["batch_id"])
+        return module.restore(state, roots, request["batch_id"], beside=True)
+    return getattr(module, command)(state, roots, request["batch_id"])
 
 
 def require_preview(config, request):
@@ -446,7 +499,7 @@ def require_preview(config, request):
         raise ValueError("当前清单已改变，请重新扫描并确认")
 
 
-def dispatch(state, request):
+def dispatch(state, request, local_home=None, include_system=False):
     state = Path(state).expanduser().absolute()
     if not isinstance(request, dict):
         raise ValueError("需要 JSON 对象")
@@ -457,6 +510,8 @@ def dispatch(state, request):
     with (state / ".service.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         config = load_config(state)
+        if local_home is not None:
+            config.update(_local_home=str(local_home), _include_system=include_system)
         last = None
         completed_batches = []
         duplicate = False
@@ -469,10 +524,15 @@ def dispatch(state, request):
             save_config(state, config)
             return {"root": str(root)}
         measures_space = cmd in ("run","purge","restore","empty_trash","uninstall")
-        before_space = volume_free(active_roots(config)) if measures_space else {}
+        before_space = volume_free(operation_roots(config, config["report"])) if measures_space else {}
         if cmd in ("run", "uninstall", "empty_trash"):
             require_preview(config, request)
-        if cmd == "scan":
+        if cmd == "scan_local":
+            if not config.get("_local_home") or config.get("labs"):
+                raise ValueError("当前工作区不支持本机盘点")
+            config["local_enabled"] = True
+            config["deep"] = bool(request.get("deep", False))
+        elif cmd == "scan":
             if "roots" in request and (request["roots"] != config["roots"] or request.get("renew_roots")):
                 assign_roots(config, request["roots"], state, request.get("renew_roots", ()))
             config["deep"] = bool(request.get("deep", config["deep"]))
@@ -544,7 +604,7 @@ def dispatch(state, request):
             last = completed_batches[-1]
         if last is not None:
             if not completed_batches:
-                measure_batch(config, last, before_space, volume_free(active_roots(config)))
+                measure_batch(config, last, before_space, volume_free(operation_roots(config, config["report"])))
             if cmd == "empty_trash":
                 import datetime
                 last.update(id="trash-" + uuid.uuid4().hex, action="empty_trash",
@@ -558,6 +618,7 @@ def dispatch(state, request):
             dashboard.setdefault(key, default)
         dashboard.update({k: config[k] for k in ("keep", "exclude", "roots", "tasks", "budget", "deep", "usage")})
         dashboard["configured_projects"] = config["projects"]
+        dashboard["local_exclude"] = config.get("local_exclude", [])
         dashboard["automatic_rules"] = config.get("automatic_rules", [])
         dashboard["trash_volumes"] = config.get("trash_preview", [])
         dashboard["history"] = actions.history(state)

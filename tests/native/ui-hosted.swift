@@ -167,7 +167,15 @@ private func fallbackReport(_ pid: pid_t) {
             FileManager.default.fileExists(atPath: lock) ? true : nil
         }
         guard (config(state)?["roots"] as? [String] ?? []).isEmpty else { throw Failure("Unexpected initial scan roots") }
-        print("Packaged app launch and Python bridge access to the empty temporary workspace: verified.")
+        _ = try eventually("automatic inventory of the isolated Mac") {
+            guard let data = config(state), let report = data["report"] as? [String: Any],
+                  let apps = report["apps"] as? [[String: Any]], apps.contains(where: { $0["name"] as? String == "Sample Studio" }),
+                  let projects = report["projects"] as? [String: [String]], projects.values.contains(["Codex"]),
+                  let categories = report["categories"] as? [[String: Any]], categories.count >= 3,
+                  (data["roots"] as? [String])?.isEmpty == true else { return nil as Bool? }
+            return true
+        }
+        print("Packaged app automatically inventoried an installed app, Codex project and download without a manual directory.")
         guard AXIsProcessTrusted() else {
             fallbackReport(pid)
             return
@@ -180,6 +188,13 @@ private func fallbackReport(_ pid: pid_t) {
             return
         }
         _ = try eventually("the native window title") { window(ax) }
+        _ = try eventually("the storage chart legend") { element("存储构成", in: ax, button: false) }
+        try press("应用排行", in: ax)
+        _ = try eventually("the installed application row") { element("Sample Studio", in: ax, button: false) }
+        _ = try eventually("the application Finder action") { element("打开目录", in: ax, button: true) }
+        try press("Agent 工作区", in: ax)
+        _ = try eventually("the automatically detected project row") { element("Studio Project", in: ax, button: false) }
+        try press("空间总览", in: ax)
         try press("创建演练样本", in: ax)
         let initial = try eventually("the fixture scan in a separate state directory") { fixtureReport(lab) }
         captureOverview(pid: pid, lab: lab, ax: ax)
@@ -191,7 +206,7 @@ private func fallbackReport(_ pid: pid_t) {
             return true
         }
         try press("返回本机工作区", in: ax)
-        _ = try eventually("the empty local workspace home") { element("创建演练样本", in: ax, button: true) }
+        _ = try eventually("the local workspace home") { element("创建演练样本", in: ax, button: true) }
         guard (config(state)?["roots"] as? [String] ?? []).isEmpty else { throw Failure("Fixture changed primary scope") }
         print("Native window title, fixture creation, scope list, rescan, and return to the original workspace: verified with AX.")
     }

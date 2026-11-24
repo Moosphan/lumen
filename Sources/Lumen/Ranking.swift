@@ -26,7 +26,7 @@ func rankedApps(_ apps: [Object], files: [Entry], scanID: String, bySafe: Bool) 
             $0.raw.number("nlink") == 1 && $0.raw.paths("projects").count <= 1 && $0.raw.paths("shared_owners").isEmpty
         }
         let safe = exclusive.filter { $0.decision == "safe" }
-        return RankedApp(app: app, size: exclusive.reduce(0) { $0 + $1.allocated },
+        return RankedApp(app: app, size: app.number("inventory_bytes") + exclusive.reduce(0) { $0 + $1.allocated },
                          safe: safe.reduce(0) { $0 + $1.allocated }, count: safe.count, scanID: scanID)
     }.sorted {
         let a = bySafe ? $0.safe : $0.size, b = bySafe ? $1.safe : $1.size

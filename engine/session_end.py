@@ -12,7 +12,9 @@ from lumen.service import dispatch
 def main():
     event = json.load(sys.stdin)
     state = Path(os.environ.get("LUMEN_STATE_DIR") or Path.home() / "Library/Application Support/org.lumen.cleaner")
-    result = dispatch(state, {"cmd":"session_end", "event":event})
+    fixture_home = os.environ.get("LUMEN_INVENTORY_HOME") if os.environ.get("LUMEN_STATE_DIR") else None
+    home = Path(fixture_home).resolve() if fixture_home else Path.home()
+    result = dispatch(state, {"cmd":"session_end", "event":event}, local_home=home, include_system=fixture_home is None)
     print(json.dumps({"recorded":True, "duplicate":result.get("duplicate", False)}))
 
 

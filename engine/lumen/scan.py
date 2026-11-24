@@ -335,7 +335,7 @@ def _space(files):
                 shared_allocated_bytes=shared, unique_files=len(physical))
 
 
-def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=None):
+def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=None, installed=None):
     root_set, exclusions, kept = _paths(roots), _paths(exclude), _paths(keep)
     issues, files, directories, repositories = set(), {}, set(), set()
     apps, app_ids, duplicates = {}, defaultdict(list), {}
@@ -395,6 +395,8 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
 
     # fwalk uses directory descriptors and does not descend through symlinks.
     for root in sorted(root_set):
+        if any(root == app or app in root.parents for app in (installed or {})):
+            continue
         if root == Path('/') or _under(root, exclusions | SYSTEM_ROOTS) or '.git' in root.parts:
             issue(root, '用户排除或系统保护')
             continue
@@ -417,6 +419,9 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
                 issue(exc.filename or root, str(exc))
             for folder, names, leaves, fd in os.fwalk(root, onerror=walk_error, follow_symlinks=False):
                 directory = Path(folder)
+                if directory in directories:
+                    names.clear()
+                    continue
                 directories.add(directory)
                 if directory.suffix.lower() == '.app' and not any(a.suffix.lower() == '.app' for a in directory.parents):
                     apps[directory] = dict(name=directory.stem, path=str(directory), bundle_id='', version='')
@@ -424,6 +429,10 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
                     repositories.add(directory)
                 for name in sorted(names + leaves):
                     p = directory / name
+                    if installed is not None and p in installed:
+                        if name in names:
+                            names.remove(name)
+                        continue
                     skip = (_under(p, exclusions) or name == '.git' or p in SYSTEM_ROOTS
                             or not deep and directory.name == 'Library' and name in DEEP_DIRS)
                     if skip:
@@ -460,6 +469,13 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
                 app_ids[info['bundle_id']].append(app)
         except (OSError, ValueError, TypeError, AttributeError, OverflowError, ExpatError, plistlib.InvalidFileException) as exc:
             issue(plist, f'应用元数据无法解析：{exc}')
+
+    if installed is not None:
+        # Project builds still contribute file space and retain package protection.
+        apps = installed
+        app_ids.clear()
+        for app, info in apps.items():
+            app_ids[info['bundle_id']].append(app)
 
     for p, row in files.items():
         if row['kind'] == 'symlink':
@@ -527,12 +543,16 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
                 if not preference and (len(parts) < 3 or parts[0] not in {'Logs', 'Caches', 'Containers', 'Application Support'}):
                     continue
                 valid_install_dirs = {lib.parent / 'Applications'}
+                is_vscode = parts[:2] == ('Application Support', 'Code')
+                bundle = 'com.microsoft.VSCode' if is_vscode else (p.stem if preference else parts[1])
                 if lib == Path.home() / 'Library':
                     valid_install_dirs.add(Path('/Applications'))
-                is_vscode = parts[:2] == ('Application Support', 'Code')
-                bundle = p.stem if preference else parts[1]
-                if is_vscode:
-                    bundle = 'com.microsoft.VSCode'
+                    valid_install_dirs.add(Path('/System/Applications'))
+                if installed is not None:
+                    valid_install_dirs.update(a.parent for a in app_ids.get(bundle, [])
+                                              if lib.parent / 'Applications' in a.parents or
+                                              (lib == Path.home() / 'Library' and
+                                               any(p in a.parents for p in (Path('/Applications'), Path('/System/Applications')))))
                 installs = [a for a in app_ids.get(bundle, []) if a.parent in valid_install_dirs]
                 if len(installs) > 1:
                     row['shared_owners'] = sorted(str(a) for a in installs)
