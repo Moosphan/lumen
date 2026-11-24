@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from urllib.parse import unquote, urlsplit
 
 
 ARCHIVE_URL = 'https://update.code.visualstudio.com/1.95.3/darwin-arm64/stable'
@@ -38,7 +39,7 @@ def run(args, env=None, cwd=None, payload=None, timeout=60):
             process.communicate()
             raise RuntimeError(f'{Path(args[0]).name} exceeded {budget:.0f}s')
         if process.returncode:
-            detail = err.decode(errors='replace')[-2000:]
+            detail = (out[-2000:] + b'\n' + err[-2000:]).decode(errors='replace')
             raise RuntimeError(f'{Path(args[0]).name} exited {process.returncode}. {detail}')
         return out
 
@@ -87,13 +88,13 @@ def verify(lab):
     run(['/usr/bin/codesign','--verify','--strict','-R',
          '=anchor apple generic and identifier "com.microsoft.VSCode" and certificate leaf[subject.OU] = "UBF8T346G9"',
          str(app)], env, lab)
-    (work / 'story.txt').write_text('Private sample draft\n')
+    (work / 'draft.txt').write_text('Private sample draft\n')
     (work / '.vscode/settings.json').write_text('{"editor.tabSize":3}')
     (work / 'assets/offline.bin').write_bytes(bytes.fromhex('004c756d656eff'))
     user_settings = profile / 'User/settings.json'
     user_settings.write_text(json.dumps({'editor.insertSpaces':False, 'telemetry.telemetryLevel':'off',
         'update.mode':'none','extensions.autoUpdate':False, 'workbench.localHistory.enabled':True,
-        'git.enabled':False, 'workbench.startupEditor':'none'}))
+        'workbench.localHistory.mergeWindow':0, 'git.enabled':False, 'workbench.startupEditor':'none'}))
     (ext / 'package.json').write_text(json.dumps({'name':'local-proof','publisher':'lumen','version':'0.0.1',
         'engines':{'vscode':'^1.95.0'}, 'main':'./proof.js','activationEvents':['*']}))
     shutil.copyfile(ROOT / 'tests/hosted-vscode.js', ext / 'proof.js')
@@ -148,10 +149,12 @@ def verify(lab):
     history_items = []
     for index in history.rglob('entries.json'):
         entry = json.loads(index.read_text())
-        if entry.get('resource') == (work/'story.txt').as_uri():
+        uri = urlsplit(entry['resource'])
+        if uri.scheme == 'file' and not uri.netloc and Path(unquote(uri.path)).resolve() == work/'story.txt':
             history_items.extend(index.parent/item['id'] for item in entry['entries'])
-    if not history_items or not all(item.is_file() for item in history_items):
-        raise ValueError('No flushed, restorable VS Code local history for the sample document')
+    previous = b'Prior local revision\nPrivate sample draft\n'
+    if not any(item.is_file() and item.read_bytes() == previous for item in history_items):
+        raise ValueError(f'Missing indexed prior document text ({len(history_items)} matching entries)')
     preview = bridge({'cmd':'scan', 'roots':list(map(str,[app,logs,work])), 'deep':True})
     row = next(r for r in preview['files'] if r['path'] == str(target))
     if (row['decision'], row.get('rule_id')) != ('safe','vscode.1.95.3.main-log.v1'):
