@@ -147,3 +147,21 @@ class LocalInventoryTests(unittest.TestCase):
         self.assertEqual(projects["children"][0]["bytes"], os.stat(biggest).st_blocks * 512)
         with self.assertRaises(ValueError):
             self.call("size_tree", path=str(self.home / "cross-link"))
+
+    def test_space_tree_uses_parent_snapshot_for_unvisited_descendants(self):
+        file = self.write("Projects/film/cuts/preview.mov", bytes(16 * 1024))
+        top = self.call("size_tree")
+        read_workspace = patch("engine.lumen.service.load_config", side_effect=AssertionError("read full workspace"))
+        rebuild = patch("engine.lumen.space_tree.build_index", side_effect=AssertionError("walked subtree twice"))
+        with read_workspace, rebuild:
+            for folder in (self.home / "Projects", self.home / "Projects/film", file.parent):
+                cached = self.call("size_tree", path=str(folder))
+                self.assertEqual(cached["indexed_at"], top["indexed_at"])
+                self.assertEqual(cached["bytes"], top["bytes"])
+
+        new_file = self.write("Projects/film/cuts/new.cut", bytes(8192))
+        refreshed = self.call("size_tree", path=str(file.parent), refresh=True)
+        self.assertIn(str(new_file), {item["path"] for item in refreshed["children"]})
+        self.call("settings", local_exclude=[str(new_file)])
+        filtered = self.call("size_tree", path=str(file.parent))
+        self.assertNotIn(str(new_file), {item["path"] for item in filtered["children"]})

@@ -1,80 +1,177 @@
-"""Allocated space for one directory level. Traversal reads metadata only."""
+"""Read-only disk browsing. Index directory totals once and list only a viewed level."""
+import json
 import os
+import sqlite3
 import stat
+from collections import defaultdict
+from contextlib import closing
 from pathlib import Path
 
 from .actions import _directory
 
+INDEX_NAME = "space-index.sqlite3"
+DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 
-def measure(path, excluded=()):
+
+def _hidden():
+    return {".Trash", ".Trashes", f".lumen-vault-{os.getuid()}"}
+
+
+def _identity(info):
+    return info.st_dev, info.st_ino
+
+
+def _sorted_children(rows):
+    return sorted(rows, key=lambda row: (row["link"], -row["bytes"], row["name"].casefold(), row["name"]))
+
+
+def _row(path, size, directory=False, partial=False, link=False):
+    return dict(path=str(path), name=path.name, directory=directory, bytes=size, partial=partial, link=link)
+
+
+def _measure_subtree(fd, path, parent, home_device, blocked, hidden, owners, directories, depth=0):
+    info = os.fstat(fd)
+    total, gaps = 0, 0
+    excluded_names = blocked.get(path, ())
+    try:
+        with os.scandir(fd) as entries:
+            for entry in sorted(entries, key=lambda item: item.name):
+                if entry.name in hidden or entry.name in excluded_names:
+                    continue
+                try:
+                    file = entry.stat(follow_symlinks=False)
+                    if stat.S_ISREG(file.st_mode):
+                        if file.st_nlink > 1:
+                            if _identity(file) in owners:
+                                continue
+                            owners[_identity(file)] = str(path / entry.name)
+                        total += file.st_blocks * 512
+                    elif stat.S_ISDIR(file.st_mode):
+                        if file.st_dev != home_device or depth >= 512:
+                            gaps += 1
+                            continue
+                        subfd = os.open(entry.name, DIRECTORY_FLAGS, dir_fd=fd)
+                        try:
+                            if _identity(os.fstat(subfd)) != _identity(file):
+                                gaps += 1
+                                continue
+                            occupied, missed = _measure_subtree(subfd, path / entry.name, path, home_device, blocked,
+                                                               hidden, owners, directories, depth + 1)
+                            total += occupied
+                            gaps += missed
+                        finally:
+                            os.close(subfd)
+                except OSError:
+                    gaps += 1
+    except OSError:
+        gaps += 1
+    directories.append((str(path), str(parent), *map(str, _identity(info)), info.st_mtime_ns, info.st_ctime_ns, total, gaps))
+    return total, gaps
+
+
+def invalidate(state):
+    (state / INDEX_NAME).unlink(missing_ok=True)
+
+
+def build_index(state, path, excluded=()):
     root = Path(path)
     if not root.is_absolute() or root.resolve(strict=True) != root or not root.is_dir():
         raise ValueError("请选择有效目录")
     blocked = set(map(Path, excluded))
-    hidden = {".Trash", ".Trashes", f".lumen-vault-{os.getuid()}"}
+    hidden = _hidden()
     if any(p in blocked or p.name in hidden for p in (root, *root.parents)):
         raise ValueError("当前目录已排除或受到保护")
-    failures = 0
-    children = []
-    hardlinks = set()
+    excluded_names = defaultdict(set)
+    for item in blocked:
+        excluded_names[item.parent].add(item.name)
 
-    def count(info):
-        if not stat.S_ISREG(info.st_mode):
-            return 0
-        if info.st_nlink > 1:
-            identity = info.st_dev, info.st_ino
-            if identity in hardlinks:
-                return 0
-            hardlinks.add(identity)
-        return info.st_blocks * 512
+    # The completed index is swapped atomically. Cancelled scans leave the old snapshot available.
+    staging = state / ".space-index-building"
+    staging.unlink(missing_ok=True)
+    os.close(os.open(staging, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+    directories, owners = [], {}
+    try:
+        with _directory(root) as fd:
+            _measure_subtree(fd, root, root.parent, os.fstat(fd).st_dev, excluded_names, hidden, owners, directories)
+        with closing(sqlite3.connect(staging)) as db, db:
+            db.execute("PRAGMA journal_mode=OFF")
+            db.executescript("""
+                CREATE TABLE directories(
+                    path TEXT PRIMARY KEY, parent TEXT, device TEXT, inode TEXT, modified INTEGER, changed INTEGER,
+                    occupied INTEGER, gaps INTEGER
+                );
+                CREATE INDEX children ON directories(parent);
+                CREATE TABLE links(device TEXT, inode TEXT, owner TEXT, PRIMARY KEY(device, inode));
+                CREATE TABLE metadata(root TEXT, excluded TEXT);
+            """)
+            db.executemany("INSERT INTO directories VALUES (?, ?, ?, ?, ?, ?, ?, ?)", directories)
+            db.executemany("INSERT INTO links VALUES (?, ?, ?)",
+                           ((str(dev), str(ino), owner) for (dev, ino), owner in owners.items()))
+            db.execute("INSERT INTO metadata VALUES (?, ?)", (str(root), json.dumps(sorted(map(str, blocked)))))
+        os.replace(staging, state / INDEX_NAME)
+    finally:
+        staging.unlink(missing_ok=True)
 
-    def failed(_):
-        nonlocal failures
-        failures += 1
 
-    def subtree(name, parent, device, base):
-        total = 0
-        for folder, dirs, files, fd in os.fwalk(name, onerror=failed, follow_symlinks=False, dir_fd=parent):
-            current = base if folder == name else base.parent / folder
-            dirs[:] = [part for part in sorted(dirs) if part not in hidden and current / part not in blocked]
-            for part in dirs[:]:
-                try:
-                    if os.stat(part, dir_fd=fd, follow_symlinks=False).st_dev != device:
-                        dirs.remove(part)
-                        failed(None)
-                except OSError as error:
-                    dirs.remove(part)
-                    failed(error)
-            for part in sorted(files):
-                if part in hidden or (blocked and current / part in blocked):
-                    continue
-                try:
-                    total += count(os.stat(part, dir_fd=fd, follow_symlinks=False))
-                except OSError as error:
-                    failed(error)
-        return total
-
-    with _directory(root) as fd:
-        device = os.fstat(fd).st_dev
-        with os.scandir(fd) as all_entries:
-            names = sorted(entry.name for entry in all_entries)
-        for name in names:
-            child = root / name
-            if name in hidden or child in blocked:
-                continue
-            previous = failures
-            try:
-                info = os.stat(name, dir_fd=fd, follow_symlinks=False)
-                directory = stat.S_ISDIR(info.st_mode)
-                if directory and info.st_dev == device:
-                    amount = subtree(name, fd, device, child)
-                else:
-                    amount = count(info)
-                    if directory:
-                        failed(None)
-                children.append(dict(path=str(child), name=name, directory=directory, bytes=amount,
-                                     partial=failures > previous, link=stat.S_ISLNK(info.st_mode)))
-            except OSError as error:
-                failed(error)
-    children.sort(key=lambda row: (not row["directory"] and row["link"], -row["bytes"], row["name"].casefold()))
-    return dict(path=str(root), bytes=sum(row["bytes"] for row in children), children=children, gaps=failures)
+def read_level(state, path, *, validate=True):
+    file = state / INDEX_NAME
+    if not file.is_file():
+        return None
+    try:
+        with closing(sqlite3.connect(file.as_uri() + "?mode=ro", uri=True)) as db:
+            stored = db.execute("SELECT root, excluded FROM metadata").fetchone()
+            if stored is None:
+                return None
+            root, exclude = stored
+            target = Path(path)
+            if target != Path(root) and Path(root) not in target.parents:
+                return None
+            row = db.execute(
+                "SELECT device,inode,modified,changed,gaps FROM directories WHERE path=?", (str(target),)
+            ).fetchone()
+            if row is None:
+                return None
+            device, inode, modified, changed, gaps = row
+            child_dirs = {
+                path: (size, misses) for path, size, misses in db.execute(
+                    "SELECT path,occupied,gaps FROM directories WHERE parent=? AND path!=?", (str(target), str(target))
+                )
+            }
+            blocked = set(json.loads(exclude))
+            hidden = _hidden()
+            children = []
+            with _directory(target) as fd:
+                now = os.fstat(fd)
+                if (str(now.st_dev), str(now.st_ino)) != (device, inode):
+                    return None
+                if validate and (now.st_mtime_ns, now.st_ctime_ns) != (modified, changed):
+                    return None
+                with os.scandir(fd) as entries:
+                    for entry in entries:
+                        if entry.name in hidden:
+                            continue
+                        child = target / entry.name
+                        if str(child) in blocked:
+                            continue
+                        try:
+                            info = entry.stat(follow_symlinks=False)
+                        except OSError:
+                            gaps += 1
+                            continue
+                        if stat.S_ISDIR(info.st_mode):
+                            size, missing = child_dirs.get(str(child), (0, 1))
+                            children.append(_row(child, size, directory=True, partial=missing > 0))
+                        elif stat.S_ISREG(info.st_mode):
+                            size = info.st_blocks * 512
+                            if info.st_nlink > 1:
+                                link = db.execute("SELECT owner FROM links WHERE device=? AND inode=?",
+                                                  tuple(map(str, _identity(info)))).fetchone()
+                                if link and link[0] != str(child):
+                                    size = 0
+                            children.append(_row(child, size))
+                        else:
+                            children.append(_row(child, 0, link=stat.S_ISLNK(info.st_mode)))
+            return dict(path=str(target), bytes=sum(row["bytes"] for row in children), children=_sorted_children(children),
+                        gaps=gaps, indexed_at=file.stat().st_mtime)
+    except (OSError, sqlite3.Error, ValueError, TypeError):
+        return None

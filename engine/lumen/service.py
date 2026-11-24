@@ -532,6 +532,10 @@ def dispatch(state, request, local_home=None, include_system=False):
         raise ValueError("状态目录必须为当前用户所有，仅本人可读写")
     with (state / ".service.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
+        if cmd == "size_tree" and request.get("refresh") is not True:
+            cached = space_tree.read_level(state, request.get("path") or local_home or Path.home())
+            if cached is not None:
+                return cached
         config = load_config(state)
         if local_home is not None:
             config.update(_local_home=str(local_home), _include_system=include_system)
@@ -547,8 +551,13 @@ def dispatch(state, request, local_home=None, include_system=False):
                     raise ValueError("演练只读取样本目录")
             else:
                 target = Path(request.get("path") or config.get("_local_home") or Path.home())
-            return space_tree.measure(target, [state, *config["exclude"], *config.get("local_exclude", [])])
+            space_tree.build_index(state, target, [state, *config["exclude"], *config.get("local_exclude", [])])
+            level = space_tree.read_level(state, target, validate=False)
+            if level is None:
+                raise ValueError("目录在盘点时发生变化，请重新盘点")
+            return level
         if cmd == "fixture":
+            space_tree.invalidate(state)
             root = Path(create_fixture())
             (root / ".Trash").mkdir(mode=0o700)
             (root / ".Trash" / "old-fixture.txt").write_text("synthetic trash")
@@ -557,6 +566,9 @@ def dispatch(state, request, local_home=None, include_system=False):
             save_config(state, config)
             return {"root": str(root)}
         measures_space = cmd in ("run","purge","restore","empty_trash","uninstall")
+        if (measures_space or cmd in ("task", "session_end") or
+                any(key in request for key in ("exclude", "local_exclude", "roots"))):
+            space_tree.invalidate(state)
         before_space = volume_free(operation_roots(config, config["report"])) if measures_space else {}
         if cmd in ("run", "uninstall", "empty_trash"):
             require_preview(config, request)

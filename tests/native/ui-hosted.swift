@@ -228,11 +228,14 @@ private func fallbackReport(_ pid: pid_t) {
         try press("Documents", in: ax)
         try press("Codex", in: ax)
         try press("Studio Project", in: ax)
-        try press("网格", in: ax)
+        _ = try eventually("the zero-byte file in the same space distribution") { element("empty-marker", in: ax, button: true) }
+        _ = try eventually("the long-named file in the same space distribution") {
+            element("long-shoot-name-with-color-reference-and-export-notes-2026.txt", in: ax, button: true)
+        }
         _ = try eventually("the nested project's file") { element("notes.txt", in: ax, button: true) }
         try press("notes.txt", in: ax)
         _ = try eventually("the selected file's cleanup action") { element("审阅此文件", in: ax, button: true) }
-        print("Space Browser: multi-row map geometry, three directory levels, and grid file selection verified with AX.")
+        print("Space Browser: multi-row geometry, three directory levels, small and zero-byte files, and file selection verified with AX.")
         try press("空间总览", in: ax)
         try press("创建演练样本", in: ax)
         let initial = try eventually("the fixture scan in a separate state directory") { fixtureReport(lab) }

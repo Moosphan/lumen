@@ -41,6 +41,8 @@ downloads.mkdir()
 project = home / "Documents/Codex/Studio Project"
 project.mkdir(parents=True)
 (project / "notes.txt").write_text("Keep this.")
+(project / "empty-marker").touch()
+(project / "long-shoot-name-with-color-reference-and-export-notes-2026.txt").write_text("Small reference.")
 (project / "render.mov").write_bytes(b"render" * 600_000)
 for folder, name, size in [
     (".cache", "tool-cache.bin", 2_000_000),
