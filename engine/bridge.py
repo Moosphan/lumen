@@ -19,7 +19,7 @@ def main():
         result = {"ok": True, "data": dispatch(state, request, local_home=home, include_system=fixture_home is None)}
     except (ValueError, RuntimeError, KeyError, OSError, TypeError) as error:
         result = {"ok": False, "error": str(error)}
-    json.dump(result, sys.stdout, ensure_ascii=False)
+    sys.stdout.write(json.dumps(result, ensure_ascii=False, separators=(",", ":")))
 
 
 if __name__ == "__main__":

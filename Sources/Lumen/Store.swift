@@ -50,7 +50,7 @@ func resource(_ name: String, source: String) -> URL? {
 
 @MainActor final class Store: ObservableObject {
     @Published var data: Object = [:]
-    @Published var files: [Entry] = []
+    @Published private(set) var inventory = InventoryPresentation()
     @Published var busy = ""
     @Published var notice = ""
     @Published var error: String?
@@ -59,6 +59,7 @@ func resource(_ name: String, source: String) -> URL? {
     @Published var generation = 0
     private var process: Process?
     var roots: [String] { data.paths("roots") }
+    var files: [Entry] { inventory.files }
     var scanning: Bool { busy == "scan" || busy == "scan_local" }
     var projects: [String: [String]] { data["projects"] as? [String: [String]] ?? [:] }
     var duplicates: [String: [String]] { data["duplicates"] as? [String: [String]] ?? [:] }
@@ -98,6 +99,8 @@ func resource(_ name: String, source: String) -> URL? {
                 let reply = output.fileHandleForReading.readDataToEndOfFile()
                 task.waitUntilExit()
                 let envelope = (try? JSONSerialization.jsonObject(with: reply)) as? Object
+                let dashboard = envelope?["data"] as? Object
+                let presentation = command == "fixture" ? nil : dashboard.map(InventoryPresentation.init)
                 DispatchQueue.main.async {
                     guard self.process === task else { return }
                     self.process = nil
@@ -107,13 +110,13 @@ func resource(_ name: String, source: String) -> URL? {
                         return
                     }
                     guard task.terminationStatus == 0, envelope?["ok"] as? Bool == true,
-                          let dashboard = envelope?["data"] as? Object else {
+                          let dashboard else {
                         self.error = envelope?["error"] as? String ?? "本地引擎未能完成操作（退出码 \(task.terminationStatus)）。"
                         return
                     }
-                    if command != "fixture" {
+                    if let presentation {
                         self.data = dashboard
-                        self.files = dashboard.rows("files").map(Entry.init)
+                        self.inventory = presentation
                         self.generation += 1
                     }
                     if command != "status" && command != "fixture" {
@@ -135,6 +138,9 @@ func resource(_ name: String, source: String) -> URL? {
     func scanLocal(deep: Bool) {
         if fixtureState != nil { scan(roots, deep: deep) }
         else { call("scan_local", ["deep": deep]) }
+    }
+    func startInventory(done: @escaping (Object) -> Void) {
+        call("scan_local", ["startup": true], done: done)
     }
     func cancelScan() {
         if scanning, let process, process.isRunning { process.terminate() }
@@ -187,7 +193,7 @@ func resource(_ name: String, source: String) -> URL? {
         guard busy.isEmpty else { return }
         fixtureState = nil
         data = [:]
-        files = []
+        inventory = InventoryPresentation()
         call("status")
     }
 
@@ -198,7 +204,7 @@ func resource(_ name: String, source: String) -> URL? {
         } ?? FileManager.default.temporaryDirectory
         fixtureState = base.appendingPathComponent("Lumen-State-" + UUID().uuidString)
         data = [:]
-        files = []
+        inventory = InventoryPresentation()
         call("fixture") { result in
             if let root = result["root"] as? String { self.scan([root], deep: true) }
         }

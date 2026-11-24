@@ -20,7 +20,7 @@ struct FileIdentity: Hashable {
 
 func rankedApps(_ apps: [Object], files: [Entry], scanID: String, bySafe: Bool) -> [RankedApp] {
     let owners = Dictionary(grouping: files.filter { !$0.raw.string("app_path").isEmpty }) { $0.raw.string("app_path") }
-    return apps.map { app in
+    let ranked = apps.map { app in
         let owned = owners[app.string("path")] ?? []
         let exclusive = owned.filter {
             $0.raw.number("nlink") == 1 && $0.raw.paths("projects").count <= 1 && $0.raw.paths("shared_owners").isEmpty
@@ -28,7 +28,12 @@ func rankedApps(_ apps: [Object], files: [Entry], scanID: String, bySafe: Bool) 
         let safe = exclusive.filter { $0.decision == "safe" }
         return RankedApp(app: app, size: app.number("inventory_bytes") + exclusive.reduce(0) { $0 + $1.allocated },
                          safe: safe.reduce(0) { $0 + $1.allocated }, count: safe.count, scanID: scanID)
-    }.sorted {
+    }
+    return sortedApps(ranked, bySafe: bySafe)
+}
+
+func sortedApps(_ ranked: [RankedApp], bySafe: Bool) -> [RankedApp] {
+    ranked.sorted {
         let a = bySafe ? $0.safe : $0.size, b = bySafe ? $1.safe : $1.size
         return a == b ? $0.id < $1.id : a > b
     }
@@ -113,16 +118,50 @@ func workspacePartitions(projects: [String: [String]], files: [Entry], bySafe: B
         buckets[key, default: ProjectBucket(id: key)].stats.add(amount)
         buckets[key, default: ProjectBucket(id: key)].paths.formUnion(links.map(\.path))
     }
+    let partitions = Dictionary(grouping: buckets.values, by: \.group).map { group, rows in
+        AgentPartition(id: group, buckets: rows, stats: rows.reduce(into: WorkspaceStats()) { $0.add($1.stats) })
+    }
+    return sortedPartitions(partitions, bySafe: bySafe)
+}
+
+func sortedPartitions(_ partitions: [AgentPartition], bySafe: Bool) -> [AgentPartition] {
     func value(_ stats: WorkspaceStats) -> Int64 { bySafe ? stats.safeBytes : stats.bytes }
-    return Dictionary(grouping: buckets.values, by: \.group).map { group, rows in
-        let sorted = rows.sorted {
+    return partitions.map { partition in
+        let sorted = partition.buckets.sorted {
             if value($0.stats) != value($1.stats) { return value($0.stats) > value($1.stats) }
             if $0.title != $1.title { return $0.title < $1.title }
             return $0.id.projects.lexicographicallyPrecedes($1.id.projects)
         }
-        let total = rows.reduce(into: WorkspaceStats()) { $0.add($1.stats) }
-        return AgentPartition(id: group, buckets: sorted, stats: total)
+        return AgentPartition(id: partition.id, buckets: sorted, stats: partition.stats)
     }.sorted {
         value($0.stats) == value($1.stats) ? $0.id.title < $1.id.title : value($0.stats) > value($1.stats)
+    }
+}
+
+struct InventoryPresentation {
+    let files: [Entry]
+    let apps: [RankedApp]
+    let workspaces: [AgentPartition]
+    let safeCount: Int
+    let reviewCount: Int
+    let kinds: [String]
+
+    init(_ dashboard: Object = [:]) {
+        let entries = dashboard.rows("files").map(Entry.init)
+        files = entries
+        apps = rankedApps(dashboard.rows("apps"), files: entries, scanID: dashboard.string("scan_id"), bySafe: false)
+        workspaces = workspacePartitions(projects: dashboard["projects"] as? [String: [String]] ?? [:],
+                                          files: entries, bySafe: false)
+        var safe = 0
+        var review = 0
+        var types = Set<String>()
+        for entry in entries {
+            if entry.decision == "safe" { safe += 1 }
+            if entry.decision == "review" { review += 1 }
+            types.insert(entry.raw.string("kind"))
+        }
+        safeCount = safe
+        reviewCount = review
+        kinds = types.filter { !$0.isEmpty }.sorted()
     }
 }

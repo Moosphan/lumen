@@ -37,7 +37,7 @@ def _paths(values):
 
 
 def _under(path, roots):
-    return any(path == r or r in path.parents for r in roots)
+    return bool(roots) and (path in roots or any(parent in roots for parent in path.parents))
 
 
 def _agent(path):
@@ -197,11 +197,19 @@ class _HTML(HTMLParser):
             self.partial = True
 
 
-def _cwd_records(stream, agent):
+def _cwd_records(stream, agent, max_bytes=None):
     dirs = set()
     # A transcript can be large. Bounded physical lines avoid loading messages
     # wholesale while still reading later records that may change directories.
-    for line in iter(lambda: stream.readline(LIMIT + 1), b''):
+    remaining = max_bytes
+    while remaining is None or remaining > 0:
+        line = stream.readline(LIMIT + 1 if remaining is None else min(LIMIT + 1, remaining + 1))
+        if not line:
+            break
+        if remaining is not None:
+            remaining -= len(line)
+            if remaining < 0:
+                break
         if len(line) > LIMIT:
             raise ValueError('会话记录行超过解析上限')
         if not line.strip():
@@ -382,7 +390,7 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
             defer(p, '可能正在下载，完成后重扫')
         elif kind == 'build':
             files[p]['reason'] = '可能是构建产物，移除后可能需要重新构建'
-        if any(parent.suffix.lower() == '.app' for parent in p.parents) or _under(p, [Path('/Library')]):
+        if any(part.lower().endswith('.app') for part in p.parts[:-1]) or p.parts[:2] == ('/', 'Library'):
             protect(p, '应用本体或机器级资源库，仅盘点')
         protection = _profile_protection(p)
         if protection:
@@ -394,10 +402,11 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
             protect(p, '用户已标记保留')
 
     # fwalk uses directory descriptors and does not descend through symlinks.
+    blocked_roots = exclusions | SYSTEM_ROOTS
     for root in sorted(root_set):
         if any(root == app or app in root.parents for app in (installed or {})):
             continue
-        if root == Path('/') or _under(root, exclusions | SYSTEM_ROOTS) or '.git' in root.parts:
+        if root == Path('/') or _under(root, blocked_roots) or '.git' in root.parts:
             issue(root, '用户排除或系统保护')
             continue
         try:
@@ -433,7 +442,8 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
                         if name in names:
                             names.remove(name)
                         continue
-                    skip = (_under(p, exclusions) or name == '.git' or p in SYSTEM_ROOTS
+                    # Each excluded folder is pruned before its children can be visited.
+                    skip = (p in blocked_roots or name == '.git'
                             or not deep and directory.name == 'Library' and name in DEEP_DIRS)
                     if skip:
                         if name in names:

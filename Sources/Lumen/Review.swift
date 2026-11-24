@@ -44,6 +44,64 @@ struct PreviewSheet: View {
     }
 }
 
+private struct ReviewQuery: Equatable {
+    let generation: Int
+    let owner: String
+    let project: String
+    let bucketPaths: Set<String>?
+    let verdict: String
+    let kind: String
+    let age: String
+    let minimumSize: String
+    let selectedTask: String
+    let sorting: String
+    let duplicatesOnly: Bool
+    let residualsOnly: Bool
+    let query: String
+
+    func matches(files: [Entry], tasks: [Object]) -> ReviewMatches {
+        let days = age == "超过 30 天" ? 30 : 90
+        let cutoff = Int64((Date().timeIntervalSince1970 - Double(days * 86400)) * 1_000_000_000)
+        let minimum: Int64 = minimumSize == "≥ 100 MB" ? 100_000_000 : (minimumSize == "≥ 1 GB" ? 1_000_000_000 : 0)
+        let task = tasks.first { $0.string("id") == selectedTask }
+        let taskPaths = Set(["inputs", "outputs", "temporary"].flatMap { task?.paths($0) ?? [] })
+        let matched = files.filter { f in
+            guard !Task.isCancelled else { return false }
+            return (owner.isEmpty || f.owner == owner || f.raw.string("app_path") == owner)
+            && (bucketPaths?.contains(f.path) ?? (project.isEmpty || f.raw.paths("projects").contains(project)))
+            && (verdict.isEmpty || f.decision == verdict) && (kind.isEmpty || f.raw.string("kind") == kind)
+            && f.size >= minimum && (age == "不限时间" || f.raw.number("mtime_ns") < cutoff)
+            && (selectedTask.isEmpty || taskPaths.contains(f.path))
+            && (!residualsOnly || f.raw["residual"] as? Bool == true)
+            && (!duplicatesOnly || !f.raw.string("duplicate_group").isEmpty)
+            && (query.isEmpty || f.path.localizedCaseInsensitiveContains(query))
+        }.sorted { lhs, rhs in
+            if duplicatesOnly && lhs.raw.string("duplicate_group") != rhs.raw.string("duplicate_group") {
+                return lhs.raw.string("duplicate_group") < rhs.raw.string("duplicate_group")
+            }
+            if sorting == "大小", lhs.size != rhs.size { return lhs.size > rhs.size }
+            if sorting == "修改时间", lhs.raw.number("mtime_ns") != rhs.raw.number("mtime_ns") {
+                return lhs.raw.number("mtime_ns") > rhs.raw.number("mtime_ns")
+            }
+            return lhs.path.localizedStandardCompare(rhs.path) == .orderedAscending
+        }
+        return ReviewMatches(query: self, rows: matched,
+                             offsets: Dictionary(uniqueKeysWithValues: matched.enumerated().map { ($0.element.path, $0.offset) }),
+                             safePaths: Set(matched.lazy.filter { $0.decision == "safe" }.map(\.path)))
+    }
+}
+
+private struct ReviewMatches {
+    let query: ReviewQuery
+    let rows: [Entry]
+    let offsets: [String: Int]
+    let safePaths: Set<String>
+
+    func selected(_ paths: Set<String>) -> [Entry] {
+        paths.compactMap { offsets[$0] }.sorted().map { rows[$0] }
+    }
+}
+
 struct ReviewView: View {
     @ObservedObject var store: Store
     @Binding var owner: String
@@ -63,36 +121,17 @@ struct ReviewView: View {
     @State private var preview: BatchPreview?
     @State private var limit = 100
 
-    var matches: [Entry] {
-        let days = age == "超过 30 天" ? 30 : 90
-        let cutoff = Int64((Date().timeIntervalSince1970 - Double(days * 86400)) * 1_000_000_000)
-        let minimum: Int64 = minimumSize == "≥ 100 MB" ? 100_000_000 : (minimumSize == "≥ 1 GB" ? 1_000_000_000 : 0)
-        let task = store.data.rows("tasks").first { $0.string("id") == selectedTask }
-        let taskPaths = Set(["inputs","outputs","temporary"].flatMap { task?.paths($0) ?? [] })
-        return store.files.filter { f in
-            (owner.isEmpty || f.owner == owner || f.raw.string("app_path") == owner) && (bucketPaths?.contains(f.path) ?? (project.isEmpty || f.raw.paths("projects").contains(project)))
-            && (verdict.isEmpty || f.decision == verdict) && (kind.isEmpty || f.raw.string("kind") == kind)
-            && f.size >= minimum && (age == "不限时间" || f.raw.number("mtime_ns") < cutoff)
-            && (selectedTask.isEmpty || taskPaths.contains(f.path))
-            && (!residualsOnly || f.raw["residual"] as? Bool == true)
-            && (!duplicatesOnly || !f.raw.string("duplicate_group").isEmpty)
-            && (query.isEmpty || f.path.localizedCaseInsensitiveContains(query))
-        }.sorted { lhs, rhs in
-            if duplicatesOnly && lhs.raw.string("duplicate_group") != rhs.raw.string("duplicate_group") {
-                return lhs.raw.string("duplicate_group") < rhs.raw.string("duplicate_group")
-            }
-            if sorting == "大小", lhs.size != rhs.size { return lhs.size > rhs.size }
-            if sorting == "修改时间", lhs.raw.number("mtime_ns") != rhs.raw.number("mtime_ns") {
-                return lhs.raw.number("mtime_ns") > rhs.raw.number("mtime_ns")
-            }
-            return lhs.path.localizedStandardCompare(rhs.path) == .orderedAscending
-        }
-    }
+    @State private var matches: ReviewMatches?
+    @State private var initialSelectionApplied = false
 
     var body: some View {
-        let rows = matches
-        let chosen = rows.filter { selection.contains($0.path) }
-        let markedSafe = rows.filter { $0.decision == "safe" }
+        let filters = ReviewQuery(generation: store.generation, owner: owner, project: project, bucketPaths: bucketPaths,
+                                  verdict: verdict, kind: kind, age: age, minimumSize: minimumSize, selectedTask: selectedTask,
+                                  sorting: sorting, duplicatesOnly: duplicatesOnly, residualsOnly: residualsOnly, query: query)
+        let current = matches?.query == filters ? matches : nil
+        let rows = current?.rows ?? []
+        let chosen = current?.selected(selection) ?? []
+        let markedSafe = current?.safePaths ?? []
         return VStack(alignment: .leading, spacing: 12) {
             Panel {
                 HStack {
@@ -103,7 +142,7 @@ struct ReviewView: View {
                     }
                     Picker("类型", selection: $kind) {
                         Text("全部").tag("")
-                        ForEach(Set(store.files.map { $0.raw.string("kind") }.filter { !$0.isEmpty }).sorted(), id: \.self) { Text($0).tag($0) }
+                        ForEach(store.inventory.kinds, id: \.self) { Text($0).tag($0) }
                     }
                 }
                 HStack {
@@ -111,7 +150,7 @@ struct ReviewView: View {
                     Toggle("卸载残留", isOn: $residualsOnly)
                     Picker("排序", selection: $sorting) { ForEach(["大小","修改时间","路径"], id: \.self) { Text($0) } }.frame(width: 152)
                     Spacer()
-                    Button("选择低影响项") { selection = Set(markedSafe.map(\.path)) }.disabled(markedSafe.isEmpty)
+                    Button("选择低影响项") { selection = markedSafe }.disabled(markedSafe.isEmpty)
                     Button("取消选择") { selection.removeAll() }
                 }
                 DisclosureGroup("更多筛选") {
@@ -140,7 +179,11 @@ struct ReviewView: View {
                             .disabled(chosen.isEmpty || !store.busy.isEmpty || (action == "clean" && chosen.contains { $0.decision != "safe" }))
                     }
                 }
-                if rows.isEmpty { Text("当前条件下没有文件。").foregroundStyle(.secondary) }
+                if current == nil {
+                    ProgressView("正在准备文件清单…").controlSize(.small)
+                } else if rows.isEmpty {
+                    Text("当前条件下没有文件。").foregroundStyle(.secondary)
+                }
                 LazyVStack(alignment: .leading, spacing: 8) {
                     ForEach(rows.prefix(limit)) { file in
                         HStack {
@@ -164,7 +207,22 @@ struct ReviewView: View {
                 if rows.count > limit { Button("显示更多文件") { limit += 100 } }
             }
         }
-        .onAppear { if verdict == "safe" { selection = Set(markedSafe.map(\.path)) } }
+        .task(id: filters) {
+            if !filters.query.isEmpty {
+                try? await Task.sleep(for: .milliseconds(90))
+            }
+            guard !Task.isCancelled else { return }
+            let files = store.files
+            let tasks = store.data.rows("tasks")
+            let worker = Task.detached(priority: .userInitiated) { filters.matches(files: files, tasks: tasks) }
+            let result = await withTaskCancellationHandler { await worker.value } onCancel: { worker.cancel() }
+            guard !Task.isCancelled else { return }
+            matches = result
+            if !initialSelectionApplied {
+                initialSelectionApplied = true
+                if filters.verdict == "safe" { selection = result.safePaths }
+            }
+        }
         .onChange(of: store.generation) { _ in selection.removeAll() }
         .sheet(item: $detail) { file in FileDetail(store: store, file: file) }
         .sheet(item: $preview) { plan in

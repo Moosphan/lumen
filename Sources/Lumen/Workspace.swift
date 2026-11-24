@@ -10,8 +10,7 @@ struct AppRanking: View {
     @State private var uninstall: RankedApp?
 
     var body: some View {
-        let ranking = rankedApps(store.data.rows("apps"), files: store.files,
-                                scanID: store.data.string("scan_id"), bySafe: bySafe)
+        let ranking = bySafe ? sortedApps(store.inventory.apps, bySafe: true) : store.inventory.apps
         let visible = ranking.filter { app in
             (!systemOnly || app.app["system"] as? Bool == true) &&
             (query.isEmpty || app.app.string("name").localizedCaseInsensitiveContains(query) ||
@@ -95,7 +94,7 @@ struct WorkspaceView: View {
     @State var editingTask: Object = [:]
     var growth: [String: NSNumber] { store.data["growth"] as? [String: NSNumber] ?? [:] }
     var body: some View {
-        let groups = workspacePartitions(projects: store.projects, files: store.files, bySafe: bySafe)
+        let groups = bySafe ? sortedPartitions(store.inventory.workspaces, bySafe: true) : store.inventory.workspaces
         return VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 20) {
                 metric("工程占用", bytes(groups.reduce(0) { $0 + $1.stats.bytes }))

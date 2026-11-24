@@ -72,3 +72,20 @@ class LocalInventoryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.call("run", paths=[str(item)], scan_id=first["scan_id"], action="quarantine")
         self.assertTrue(item.exists())
+
+    def test_startup_samples_session_metadata_without_changing_deep_scan_preference(self):
+        early = self.write("Projects/early/notes.txt").parent
+        late = self.write("Projects/late/notes.txt").parent
+        first = {"type": "session_meta", "payload": {"cwd": str(early)}}
+        last = {"type": "turn_context", "payload": {"cwd": str(late)}}
+        long_message = {"type": "response_item", "payload": {"text": "x" * (132 * 1024)}}
+        records = "\n".join(map(json.dumps, (first, long_message, last)))
+        self.write(".codex/sessions/rollout.jsonl", records.encode())
+
+        normal = self.call("scan_local", deep=True)
+        self.assertIn(str(late), normal["projects"])
+        startup = self.call("scan_local", startup=True)
+        self.assertTrue(startup["deep"])
+        self.assertIn(str(early), startup["projects"])
+        self.assertNotIn(str(late), startup["projects"])
+        self.assertTrue(any("后续工作目录" in issue for issue in startup["issues"]))

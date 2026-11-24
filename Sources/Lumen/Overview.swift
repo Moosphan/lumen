@@ -41,8 +41,8 @@ struct SpaceOverview: View {
     var body: some View {
         let categories = store.data.rows("categories").map { InventoryCategory(id: $0.string("id"), amount: $0.number("bytes")) }
         let total = store.data.number("indexed_bytes")
-        let safe = store.files.filter { $0.decision == "safe" }
-        let pending = store.files.filter { $0.decision == "review" }
+        let safe = store.inventory.safeCount
+        let pending = store.inventory.reviewCount
         let current = categories.first { $0.id == highlighted }
         VStack(alignment: .leading, spacing: 20) {
             Panel {
@@ -116,15 +116,15 @@ struct SpaceOverview: View {
                     VStack(alignment: .leading, spacing: 7) {
                         Label("清理建议", systemImage: "sparkles").font(.headline)
                         Text(store.data.string("scan_id").isEmpty ? "完成扫描后会列出可审阅的项目。" :
-                             "\(safe.count.formatted()) 项低影响 · \(pending.count.formatted()) 项待确认")
+                             "\(safe.formatted()) 项低影响 · \(pending.formatted()) 项待确认")
                             .foregroundStyle(.secondary).font(.callout)
                     }
                     Spacer()
-                    if !safe.isEmpty {
+                    if safe > 0 {
                         Button("低影响清理") { review("safe") }.buttonStyle(.bordered)
                     }
-                    Button("审阅清理项目") { review(safe.isEmpty ? "review" : "") }
-                        .buttonStyle(.borderedProminent).disabled(safe.isEmpty && pending.isEmpty)
+                    Button("审阅清理项目") { review(safe == 0 ? "review" : "") }
+                        .buttonStyle(.borderedProminent).disabled(safe == 0 && pending == 0)
                 }
             }
             HStack(spacing: 12) {

@@ -59,15 +59,19 @@ def installed_apps(home, system, excluded):
 
 def bundle_size(root, linked, excluded):
     size, partial = 0, False
+    blocked = set(excluded)
 
     def failed(_):
         nonlocal partial
         partial = True
 
     for folder, names, files, fd in os.fwalk(root, onerror=failed, follow_symlinks=False):
-        names[:] = [name for name in names if not any(within(Path(folder) / name, p) for p in excluded)]
+        directory = Path(folder)
+        included = [name for name in names if directory / name not in blocked]
+        partial |= len(names) != len(included)
+        names[:] = included
         for name in files:
-            if any(within(Path(folder) / name, p) for p in excluded):
+            if directory / name in blocked:
                 partial = True
                 continue
             try:
@@ -86,16 +90,17 @@ def bundle_size(root, linked, excluded):
     return size, partial
 
 
-def project_locations(home, excluded, issues):
+def project_locations(home, excluded, issues, quick=False):
     # Import the existing transcript reader to retain the same metadata semantics.
     from .scan import _cwd_records, _read
 
     projects = defaultdict(set)
     skipped = set()
+    broad_folders = {home / p for p in ('Documents', 'Desktop', 'Downloads', 'Movies', 'Music', 'Pictures')}
 
     def add(path, agent):
         if (path.is_absolute() and path != home and within(path, home)
-                and path not in {home / p for p in ('Documents', 'Desktop', 'Downloads', 'Movies', 'Music', 'Pictures')}
+                and path not in broad_folders
                 and not any(within(path, root) for root in excluded)
                 and not any(p.casefold() in {'library', 'applications', '.git', 'node_modules'} or p.startswith('.')
                             for p in path.relative_to(home).parts)):
@@ -146,22 +151,27 @@ def project_locations(home, excluded, issues):
                         sessions.append((info.st_mtime_ns, path, row))
                 except OSError:
                     continue
+        budget = 128 * 1024 if quick else None
+        sampled = False
         for _, path, row in sorted(sessions, reverse=True)[:120]:
             if row['size'] > 32 * 1024 * 1024:
                 continue
+            sampled |= budget is not None and row['size'] > budget
             try:
-                for cwd in _read(path, row, lambda stream: _cwd_records(stream, agent)):
+                for cwd in _read(path, row, lambda stream: _cwd_records(stream, agent, max_bytes=budget)):
                     candidate = Path(cwd)
                     if candidate.is_absolute() and '..' not in candidate.parts:
                         add(candidate, agent)
             except (OSError, ValueError, RecursionError):
                 issues.add(str(index) + ' · 部分会话位置未能读取')
+        if sampled:
+            issues.add(str(index) + ' · 快速扫描读取会话开头，可用深度扫描查找后续工作目录')
     return projects, skipped
 
 
-def plan(home, system, excluded):
+def plan(home, system, excluded, quick=False):
     issues = set()
-    projects, suggested = project_locations(home, excluded, issues)
+    projects, suggested = project_locations(home, excluded, issues, quick=quick)
     common = {
         'Downloads': ('下载', '文件'),
         'Library/Caches': ('用户缓存', '资源库'),

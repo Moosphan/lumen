@@ -6,6 +6,7 @@ from tempfile import TemporaryDirectory
 from time import monotonic
 
 from engine.lumen.scan import scan
+from engine.lumen.service import dispatch
 
 
 def measure(root, name, deep, cache):
@@ -33,6 +34,21 @@ def main():
         measure(root, "quick", False, cache)
         measure(root, "deep-first", True, cache)
         measure(root, "deep-repeat", True, cache)
+    with TemporaryDirectory(prefix="lumen-startup-benchmark-") as directory:
+        root = Path(directory).resolve()
+        home = root / "home"
+        for group in range(72):
+            project = home / "Documents/Codex" / f"Project-{group}"
+            for name in ("src", "build", "media", "node_modules"):
+                folder = project / name
+                folder.mkdir(parents=True)
+                for item in range(64):
+                    (folder / f"{item:03d}.bin").write_bytes(bytes([item]) * 128)
+        started = monotonic()
+        report = dispatch(root / "state", {"cmd": "scan_local", "startup": True}, local_home=home)
+        if len(report["files"]) != 18_432 or len(report["projects"]) != 72:
+            raise RuntimeError("Incomplete automatic inventory")
+        print(f"startup: 18,432 files, 72 projects, {monotonic() - started:.2f}s")
 
 
 if __name__ == "__main__":

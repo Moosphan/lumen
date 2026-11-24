@@ -132,9 +132,8 @@ struct Workbench: View {
             }
         }.background(canvas).tint(lilac).preferredColorScheme(.dark)
         .task {
-            store.call("status") { data in
+            store.startInventory { data in
                 deep = data["deep"] as? Bool ?? false
-                store.scanLocal(deep: false)
             }
         }
         .onReceive(ticker) { now in
