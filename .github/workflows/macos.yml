@@ -1,0 +1,22 @@
+name: macOS isolated verification
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run isolated filesystem scenarios
+        run: ./scripts/test-isolated.sh
+      - name: Exercise Swift to Python workflow in isolation
+        run: ./tests/native/smoke.sh
+      - name: Package and verify the local app
+        run: /usr/bin/python3 scripts/package.py
+      - name: Archive application
+        run: ditto -c -k --keepParent dist/Lumen.app dist/Lumen.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Lumen-macOS-development
+          path: dist/Lumen.zip
