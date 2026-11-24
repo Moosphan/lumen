@@ -183,8 +183,21 @@ def inventory(config, state, incremental=False, full=False):
     report["residuals"] = macmanage.residuals(state, config["roots"], report,
                                               fixture_roots=[t.parent for t in fixture_trash(config)])
     remnants = {item["path"]: item for item in report.get("residuals", [])}
+    verified_apps = {app["path"] for app in report["apps"] if app.get("uninstall_snapshot")}
+    task_paths = {}
+    for task in config["tasks"]:
+        for field in ("inputs", "outputs", "temporary"):
+            for target in task[field]:
+                task_paths.setdefault(target, []).append(task)
     lab_roots = [t.parent for t in fixture_trash(config)]
     for row in report["files"]:
+        related = task_paths.get(row["path"], ())
+        if related:
+            row["projects"] = sorted(set(row["projects"]).union(t["root"] for t in related))
+            row["agents"] = sorted(set(row["agents"]).union(t["agent"] for t in related))
+            row["task_ids"] = sorted(t["id"] for t in related)
+        if row.get("rule_id") == "vscode.1.95.3.main-log.v1" and row["app_path"] not in verified_apps:
+            row.update(decision="review", reason="当前安装的版本和发行方未通过完整校验")
         if row.get("rule_id") == "fixture.rotated-log.v1" and not any(inside(Path(row["path"]), lab) for lab in lab_roots):
             row.update(decision="review", reason="演练规则仅在本应用生成的样本目录内生效")
         if row["path"] in remnants and row["decision"] == "review":
@@ -197,16 +210,15 @@ def inventory(config, state, incremental=False, full=False):
 def refresh(config, state):
     report = inventory(config, state, incremental=True)
     usage = {}
-    seen = set()
+    identities = {}
     for item in report["files"]:
         identity = (item["dev"], item["ino"])
-        if identity in seen:
-            continue
-        seen.add(identity)
-        projects = item.get("projects") or []
-        if projects:
-            key = projects[0] if len(projects) == 1 else "共享工作区"
-            usage[key] = usage.get(key, 0) + item["size"]
+        memberships, _ = identities.setdefault(identity, (set(), item.get("allocated_bytes", item["size"])))
+        memberships.update(item.get("projects", []))
+    for memberships, size in identities.values():
+        if memberships:
+            key = next(iter(memberships)) if len(memberships) == 1 else "共享工作区"
+            usage[key] = usage.get(key, 0) + size
     baseline = config.get("usage", {})
     report["growth"] = {p: value - baseline[p] for p, value in usage.items() if p in baseline}
     report["scan_id"] = uuid.uuid4().hex

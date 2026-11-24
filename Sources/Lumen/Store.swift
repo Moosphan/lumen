@@ -30,6 +30,7 @@ struct Entry: Identifiable {
     var id: String { path }
     var name: String { URL(fileURLWithPath: path).lastPathComponent }
     var size: Int64 { raw.number("size") }
+    var allocated: Int64 { (raw["allocated_bytes"] as? NSNumber)?.int64Value ?? size }
     var decision: String { raw.string("decision") }
     var owner: String { raw.string("owner") }
     var reason: String { raw.string("reason") }

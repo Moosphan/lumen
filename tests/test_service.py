@@ -153,3 +153,20 @@ class Workflow(unittest.TestCase):
         self.assertEqual(done['tasks'][-1]['inputs'],[file])
         row = next(r for r in done['files'] if r['path']==file)
         self.assertEqual(row['decision'],'keep')
+
+    def test_session_dirs_can_be_suggested_without_access(self):
+        outside = str(self.root / 'unselected-project')
+        trace = self.root/'.codex/sessions/2026/11/24/rollout-sample.jsonl'
+        trace.write_text(json.dumps({'type':'session_meta','payload':{'cwd':outside}}))
+        scanned = self.cmd('scan',roots=[str(self.root/'.codex')])
+        self.assertEqual(scanned['suggested_projects'],[outside])
+        self.assertNotIn(outside,scanned['roots'])
+
+    def test_manual_task_assigns_assets_outside_project(self):
+        self.scan()
+        file = str(self.root/'Downloads/draft-a.zip')
+        project = str(self.root/'Projects/Trailer')
+        report = self.cmd('task',root=project,agent='Codex',inputs=[file])
+        row = next(r for r in report['files'] if r['path']==file)
+        self.assertIn(project,row['projects'])
+        self.assertIn('Codex',row['agents'])

@@ -106,7 +106,7 @@ struct WorkspaceView: View {
                         HStack {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(group.id.title).font(.headline)
-                                Text("可回收 \(group.stats.safe) 项 · \(bytes(group.stats.safeBytes))    待确认 \(group.stats.review) 项")
+                                Text("可回收 \(group.stats.safe) 项 · \(bytes(group.stats.safeBytes))    待确认 \(group.stats.review) 项 · \(bytes(group.stats.reviewBytes))")
                                     .font(.caption).foregroundStyle(.secondary)
                             }; Spacer()
                             Text(bytes(group.stats.bytes)).monospacedDigit()

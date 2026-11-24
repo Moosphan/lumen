@@ -195,6 +195,7 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
     apps, app_ids, duplicates = {}, defaultdict(list), {}
     link_targets, volumes = {}, {}
     static_refs = set()
+    suggested_projects = set()
     project_agents = {Path(os.path.abspath(p)): set([a] if isinstance(a, str) else a)
                       for p, a in (projects or {}).items()}
 
@@ -319,6 +320,8 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
                     if proj in directories:
                         project_agents.setdefault(proj, set()).add(agent)
                     else:
+                        if proj.is_absolute() and proj != Path('/') and '..' not in proj.parts:
+                            suggested_projects.add(str(proj))
                         issue(p, f'会话工程未覆盖：{cwd}')
             except (OSError, ValueError, RecursionError) as exc:
                 issue(p, f'会话记录未完整解析：{exc}')
@@ -541,7 +544,7 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
         hash_cache.update(scope=scope, digests=next_digests)
     references = [dict(source=source, target=target, location=location)
                   for source, target, location in sorted(static_refs)]
-    return dict(hash_reads=hash_reads, hash_hits=hash_hits, files=[files[p] for p in sorted(files)],
+    return dict(suggested_projects=sorted(suggested_projects), hash_reads=hash_reads, hash_hits=hash_hits, files=[files[p] for p in sorted(files)],
                 issues=sorted(issues), static_refs=references,
                 projects={str(p): sorted(a) for p,a in sorted(project_agents.items())},
                 apps=[apps[p] for p in sorted(apps)], duplicates=duplicates,

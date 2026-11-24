@@ -174,7 +174,7 @@ struct Workbench: View {
                 }
                 VStack(alignment: .leading, spacing: 10) {
                     Label("预计可低影响清理", systemImage: "sparkles").foregroundStyle(lilac)
-                    Text(bytes(safe.reduce(0) { $0 + $1.size })).font(.system(size: 42, weight: .semibold, design: .rounded))
+                    Text(bytes(safe.reduce(0) { $0 + $1.allocated })).font(.system(size: 42, weight: .semibold, design: .rounded))
                     Text("\(safe.count) 个候选文件 · \(store.roots.count) 个扫描目录").foregroundStyle(.secondary)
                     Button("审阅清理项目") { review(verdict: "safe") }.buttonStyle(.borderedProminent).disabled(safe.isEmpty)
                 }.padding(22)
@@ -226,6 +226,7 @@ struct Workbench: View {
 
     var scopes: some View {
         VStack(alignment: .leading, spacing: 14) {
+            if store.fixtureState == nil { SuggestedScopes(store: store, deep: deep) }
             Panel {
                 Text("已授权目录").font(.headline)
                 if store.roots.isEmpty { Text("尚未选择目录").foregroundStyle(.secondary) }

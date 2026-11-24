@@ -26,8 +26,8 @@ func rankedApps(_ apps: [Object], files: [Entry], scanID: String, bySafe: Bool) 
             $0.raw.number("nlink") == 1 && $0.raw.paths("projects").count <= 1 && $0.raw.paths("shared_owners").isEmpty
         }
         let safe = exclusive.filter { $0.decision == "safe" }
-        return RankedApp(app: app, size: exclusive.reduce(0) { $0 + $1.size },
-                         safe: safe.reduce(0) { $0 + $1.size }, count: safe.count, scanID: scanID)
+        return RankedApp(app: app, size: exclusive.reduce(0) { $0 + $1.allocated },
+                         safe: safe.reduce(0) { $0 + $1.allocated }, count: safe.count, scanID: scanID)
     }.sorted {
         let a = bySafe ? $0.safe : $0.size, b = bySafe ? $1.safe : $1.size
         return a == b ? $0.id < $1.id : a > b
@@ -39,12 +39,14 @@ struct WorkspaceStats {
     var safeBytes: Int64 = 0
     var safe = 0
     var review = 0
+    var reviewBytes: Int64 = 0
 
     mutating func add(_ other: WorkspaceStats) {
         bytes += other.bytes
         safeBytes += other.safeBytes
         safe += other.safe
         review += other.review
+        reviewBytes += other.reviewBytes
     }
 }
 
@@ -106,8 +108,8 @@ func workspacePartitions(projects: [String: [String]], files: [Entry], bySafe: B
         let decisions = Set(links.map(\.decision))
         let safe = decisions == ["safe"]
         let review = decisions == ["review"]
-        let amount = WorkspaceStats(bytes: first.size, safeBytes: safe ? first.size : 0,
-                                    safe: safe ? 1 : 0, review: review ? 1 : 0)
+        let amount = WorkspaceStats(bytes: first.allocated, safeBytes: safe ? first.allocated : 0,
+                                    safe: safe ? 1 : 0, review: review ? 1 : 0, reviewBytes: review ? first.allocated : 0)
         buckets[key, default: ProjectBucket(id: key)].stats.add(amount)
         buckets[key, default: ProjectBucket(id: key)].paths.formUnion(links.map(\.path))
     }
