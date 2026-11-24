@@ -500,7 +500,7 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
     # VS Code keeps its current session and nine previous sessions:
     # https://github.com/microsoft/vscode/blob/1.95.3/src/vs/code/electron-utility/sharedProcess/contrib/logsDataCleaner.ts#L27-L40
     # Scope is narrower here (main.log only, idle editor, aged regular file).
-    # The adapter has synthetic fixture coverage, no live application regression.
+    # The hosted editor regression exercises this rule against the signed release.
     session_names = defaultdict(list)
     for directory in directories:
         if (directory.parent.parts[-3:] == ('Application Support', 'Code', 'logs') and
