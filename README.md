@@ -4,7 +4,7 @@
 
 *Agents build. Lumen tidies up.*
 
-面向 macOS 的本地磁盘清理器与 Agent 工作区管理工具。既白把应用占用、项目归属、共享素材和清理依据放在一起，帮你判断清掉一个文件会影响什么。[下载 Apple Silicon 开发预览版](https://github.com/Moosphan/lumen/releases/tag/v0.1.0-dev.1)
+面向 macOS 的本地磁盘清理器与 Agent 工作区管理工具。既白把应用占用、项目归属、共享素材和清理依据放在一起，帮你判断清掉一个文件会影响什么。[下载 Apple Silicon 开发预览版](https://github.com/Moosphan/lumen/releases/tag/v0.1.0-dev.2)
 
 ![既白原生 Mac 应用的空间总览，展示隔离演练的真实扫描结果](设计稿/Lumen-overview.png)
 
