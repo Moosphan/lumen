@@ -299,15 +299,16 @@ private struct ProportionalMap: View {
             if let node { select(node) }
         } label: {
             VStack(alignment: .leading, spacing: 5) {
-                if width > 76 && height > 50 {
+                if width > 43 && height > 50 {
                     Image(systemName: node?.icon ?? "square.grid.2x2").foregroundStyle(color)
-                    Text(name).font(.callout.weight(.semibold)).lineLimit(1).truncationMode(.middle)
-                    if height > 70 {
+                    Text(name).font(.system(size: width < 80 ? 10 : 13, weight: .semibold))
+                        .lineLimit(1).truncationMode(.middle)
+                    if height > 70 && width > 55 {
                         Text(bytes(tile.bytes)).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                     }
                 }
             }
-            .padding(10).frame(width: width, height: height, alignment: .bottomLeading)
+            .padding(width < 80 ? 7 : 10).frame(width: width, height: height, alignment: .bottomLeading)
             .background(color.opacity(node?.id == selected ? 0.31 : 0.14), in: shape)
             .contentShape(shape)
         }.buttonStyle(.plain)

@@ -7,10 +7,32 @@ struct CleanupIcon: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: "broom").font(.system(size: 15))
+            BroomGlyph().stroke(style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+                .frame(width: 17, height: 17)
                 .frame(width: 25, height: 24)
         }.buttonStyle(.borderless).foregroundStyle(lilac)
             .help(title).accessibilityLabel(title)
+    }
+}
+
+private struct BroomGlyph: Shape {
+    func path(in rect: CGRect) -> Path {
+        let outline = Path { path in
+            path.move(to: CGPoint(x: 18, y: 2))
+            path.addLine(to: CGPoint(x: 11, y: 9))
+            path.move(to: CGPoint(x: 8, y: 8))
+            path.addLine(to: CGPoint(x: 13, y: 13))
+            path.addLine(to: CGPoint(x: 7, y: 19))
+            path.addLine(to: CGPoint(x: 2, y: 14))
+            path.closeSubpath()
+            path.move(to: CGPoint(x: 4.5, y: 16.5))
+            path.addLine(to: CGPoint(x: 9, y: 12))
+            path.move(to: CGPoint(x: 2, y: 5))
+            path.addLine(to: CGPoint(x: 6, y: 5))
+            path.move(to: CGPoint(x: 4, y: 3))
+            path.addLine(to: CGPoint(x: 4, y: 7))
+        }
+        return outline.applying(CGAffineTransform(scaleX: rect.width / 20, y: rect.height / 20))
     }
 }
 
@@ -103,7 +125,7 @@ struct AppCleanupDetail: View {
                 ProgressView("正在分析 Cache、日志和应用容器…").controlSize(.small)
             }
             if !loaded || rows.isEmpty {
-                ContentPlaceholder(icon: "broom", title: !loaded ? "正在整理文件" : emptyTitle,
+                ContentPlaceholder(icon: "sparkles", title: !loaded ? "正在整理文件" : emptyTitle,
                                    message: emptyMessage)
             } else {
                 Panel {
