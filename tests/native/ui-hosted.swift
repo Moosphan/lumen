@@ -327,9 +327,11 @@ private func fallbackReport(_ pid: pid_t) {
         try press("完成", in: ax)
         let outcome = try mcpCall(bundle: bundle, tool: "lumen_draft_status",
                                   arguments: ["draft_id": draftID, "status_token": token])
+        let download = lab.appendingPathComponent("home/Downloads/archive.zip")
         guard outcome["status"] as? String == "completed",
-              (outcome["result"] as? [String: Any])?["quarantined"] as? Int == 1 else {
-            throw Failure("Native MCP approval did not quarantine exactly one synthetic file")
+              outcome["quarantined"] as? Int == 1, outcome["skipped"] as? Int == 0,
+              !FileManager.default.fileExists(atPath: download.path) else {
+            throw Failure("Native MCP approval did not quarantine exactly one synthetic file: \(outcome)")
         }
         print("MCP draft: opaque alias, native approval of the exact file, and token-scoped quarantine outcome verified.")
         try press("空间总览", in: ax)
