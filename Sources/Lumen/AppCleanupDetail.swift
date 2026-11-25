@@ -185,7 +185,7 @@ struct AppCleanupDetail: View {
         if loadedGeneration != store.generation { return "正在按用途归类已索引的文件。" }
         switch filtered {
         case .safe: return "可以查看待确认项目。匹配应用版本及占用检查的文件才会列为低影响。"
-        case .review: return "可通过「分析应用缓存」检查当前应用的沙盒缓存与临时目录。"
+        case .review: return "可通过「分析应用缓存」检查该应用支持的缓存与临时目录。"
         case .protected: return "已识别的配置、用户数据和使用中的文件会在这里显示。"
         }
     }
@@ -213,9 +213,12 @@ struct AppCleanupDetail: View {
             }.buttonStyle(.plain)
             VStack(alignment: .trailing, spacing: 3) {
                 Text(bytes(row.allocated)).monospacedDigit().font(.callout)
-                if let type = ["cache": "缓存", "logs": "日志", "temporary": "临时文件", "build": "构建缓存"][row.raw.string("cleanup_kind")] {
+                if let type = ["cache": "缓存", "logs": "日志", "temporary": "临时文件", "build": "构建缓存",
+                               "compiled_code": "生成代码缓存"][row.raw.string("cleanup_kind")] {
                     Text(type).font(.caption).foregroundStyle(.secondary)
                 }
+                let profile = row.raw.string("cache_profile")
+                if !profile.isEmpty { Text(profile).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
             }
             FinderButton(path: row.path, reveal: true)
         }.padding(.vertical, 9)

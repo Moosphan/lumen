@@ -2,6 +2,7 @@ import json
 import hashlib
 import os
 import plistlib
+import struct
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -474,6 +475,64 @@ class LocalInventoryTests(unittest.TestCase):
         self.assertEqual(credential.read_bytes(), b"session")
         self.call("restore", batch_id=moved["last_action"]["id"])
         self.assertEqual(cache.read_bytes(), b"rebuild")
+
+    def test_chromium_code_cache_uses_profile_and_format_evidence_with_reversible_review(self):
+        app = self.write("Applications/Chrome.app/Contents/Info.plist", plistlib.dumps({
+            "CFBundleIdentifier": "com.google.Chrome", "CFBundleName": "Google Chrome",
+        })).parents[1]
+        root = "Library/Caches/Google/Chrome/Profile 1/Code Cache/"
+        entry = (struct.pack("<QIIII", 0xfcfb6d1ba7725c30, 5, 3, 0, 0) + b"key-bytecode" +
+                 struct.pack("<QIIII", 0xf4fa6f45970d41d8, 0, 0, 0, 0) * 2)
+        js = self.write(root + "js/ab1234567890cdef_0", entry)
+        wasm = self.write(root + "wasm/ef1234567890abcd_0", entry)
+        paired = self.write(root + "js/ab1234567890dead_0", entry)
+        companion = self.write(root + "js/ab1234567890dead_1", b"dependent stream")
+        forged = self.write(root + "js/cd1234567890abef_0", entry[:-8])
+        index = self.write(root + "js/index-dir/the-real-index", b"cache index")
+        credentials = self.write(root + "js/Cookies", b"session")
+        offline = self.write("Library/Application Support/Google/Chrome/Profile 1/Service Worker/CacheStorage/offline")
+        first = self.call("scan_local", startup=True)
+        self.assertEqual(next(row for row in first["files"] if row["path"] == str(js))["decision"], "keep")
+        self.assertNotIn(str(offline), {row["path"] for row in first["files"]})
+
+        report = self.call("scan_app", path=str(app))
+        files = {row["path"]: row for row in report["files"]}
+        self.assertEqual([files[str(path)]["decision"] for path in (js, wasm)], ["review", "review"])
+        self.assertEqual(files[str(js)]["cleanup_kind"], "compiled_code")
+        self.assertEqual(files[str(js)]["app_path"], str(app))
+        self.assertEqual(files[str(wasm)]["cache_profile"], "Profile 1")
+        for path in (paired, companion, forged, index, credentials):
+            self.assertEqual(files[str(path)]["decision"], "keep", path)
+        self.assertNotIn(str(offline), files)
+
+        with patch("engine.lumen.scan._registered_code", return_value=(True, [app])):
+            busy = self.call("run", paths=[str(js)], scan_id=report["scan_id"], action="quarantine")
+        self.assertEqual(busy["last_action"]["items"][0]["status"], "skipped")
+        with patch("engine.lumen.scan._registered_code", return_value=(False, [])):
+            unregistered = self.call("run", paths=[str(js)], scan_id=busy["scan_id"], action="quarantine")
+            self.assertEqual(unregistered["last_action"]["items"][0]["status"], "skipped")
+        with patch("engine.lumen.scan._registered_code", return_value=(False, [app])):
+            direct = self.call("run", paths=[str(js)], scan_id=unregistered["scan_id"], action="clean")
+            self.assertEqual(direct["last_action"]["items"][0]["status"], "skipped")
+            moved = self.call("run", paths=[str(js)], scan_id=direct["scan_id"], action="quarantine")
+        self.assertFalse(js.exists())
+        self.assertEqual(offline.read_bytes(), b"data")
+        self.assertEqual(credentials.read_bytes(), b"session")
+        self.call("restore", batch_id=moved["last_action"]["id"])
+        self.assertEqual(js.read_bytes(), entry)
+
+    def test_chromium_entries_remain_protected_without_unambiguous_selected_app(self):
+        root = "Library/Caches/Chromium/Default/Code Cache/js"
+        item = self.write(root + "/ab1234567890cdef_0", b"unverified raw data")
+        manual = self.call("scan", roots=[str(item.parent)], deep=False)
+        row, = manual["files"]
+        self.assertEqual(row["decision"], "keep")
+        for name in ("Chromium", "Other Chromium"):
+            self.write(f"Applications/{name}.app/Contents/Info.plist",
+                       plistlib.dumps({"CFBundleIdentifier": "org.chromium.Chromium"}))
+        self.call("scan_local", startup=True)
+        report = self.call("scan_app", path=str(self.home / "Applications/Chromium.app"))
+        self.assertEqual(next(row for row in report["files"] if row["path"] == str(item))["decision"], "keep")
 
     def test_xcode_candidates_exclude_compiled_deliverables_and_sources(self):
         self.write("Applications/Xcode.app/Contents/Info.plist",

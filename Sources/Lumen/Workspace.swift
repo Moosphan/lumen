@@ -58,7 +58,7 @@ struct AppRanking: View {
                                 if item.count > 0 { Text(bytes(item.safe) + " 可清理").font(.caption).foregroundStyle(lilac) }
                             }.frame(width: 126)
                             HStack(spacing: 4) {
-                                CleanupIcon(title: "应用清理详情") { cleanup(item.id) }
+                                CleanupIcon(title: item.app.string("name") + " 清理详情") { cleanup(item.id) }
                                 FinderButton(path: item.id, reveal: true)
                                 FinderButton(path: URL(fileURLWithPath: item.id).deletingLastPathComponent().path)
                                 Menu {

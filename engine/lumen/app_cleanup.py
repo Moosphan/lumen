@@ -25,13 +25,14 @@ def _personal_data(parts):
     return False
 
 
-def available(identifier):
+def available(identifier, expected_path=None):
     from .scan import _registered_code
 
     try:
-        active, _ = _registered_code(identifier)
-        return not active
-    except (OSError, ValueError, AttributeError):
+        active, registered = _registered_code(identifier)
+        return not active and (expected_path is None or
+                               {p.resolve(strict=True) for p in registered} == {Path(expected_path).resolve(strict=True)})
+    except (OSError, ValueError, AttributeError, RuntimeError):
         return False
 
 

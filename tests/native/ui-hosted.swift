@@ -259,11 +259,25 @@ private func fallbackReport(_ pid: pid_t) {
         try press("应用排行", in: ax)
         _ = try eventually("the installed application row") { element("Sample Studio", in: ax, button: false) }
         _ = try eventually("the application Finder action") { element("打开目录", in: ax, button: true) }
-        try press("应用清理详情", in: ax)
+        try press("Sample Studio 清理详情", in: ax)
         _ = try eventually("the selected application's analysis action") { element("分析应用缓存", in: ax, button: true) }
         try press("分析应用缓存", in: ax)
         _ = try eventually("an analyzed sandbox cache candidate") { element("preview-cache.bin", in: ax, button: false) }
         captureWindow(pid: pid, lab: lab, filename: "Lumen-app-cleanup.png")
+        try press("返回应用排行", in: ax)
+        try press("Chromium Fixture 清理详情", in: ax)
+        try press("分析应用缓存", in: ax)
+        _ = try eventually("only the verified generated-code entry to enter review") {
+            guard let report = config(state)?["report"] as? [String: Any],
+                  let scanned = report["files"] as? [[String: Any]] else { return nil as Bool? }
+            let browser = scanned.filter { ($0["path"] as? String)?.contains("/Chromium/Default/Code Cache/") == true }
+            return browser.count == 2 && browser.contains(where: { $0["cleanup_kind"] as? String == "compiled_code" && $0["decision"] as? String == "review" })
+                && browser.contains(where: { ($0["path"] as? String)?.hasSuffix("/index") == true && $0["decision"] as? String == "keep" }) ? true : nil
+        }
+        _ = try eventually("the generated-code cache candidate in the Chromium detail") {
+            element("ab1234567890cdef_0", in: ax, button: false)
+        }
+        print("Chromium cleanup detail: a verified generated-code entry is reviewable and the cache index is protected.")
         try press("返回应用排行", in: ax)
         try press("Agent 工作区", in: ax)
         _ = try eventually("the automatically detected project row") { element("Studio Project", in: ax, button: false) }

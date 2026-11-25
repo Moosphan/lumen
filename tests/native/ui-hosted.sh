@@ -29,6 +29,7 @@ import os
 import json
 import hashlib
 import plistlib
+import struct
 from pathlib import Path
 
 home = Path(os.environ["LUMEN_INVENTORY_HOME"])
@@ -37,6 +38,17 @@ contents.mkdir(parents=True)
 (contents / "Info.plist").write_bytes(plistlib.dumps({
     "CFBundleIdentifier": "org.lumen.sample-studio", "CFBundleName": "Sample Studio",
 }))
+chromium = home / "Applications/Chromium Fixture.app/Contents"
+chromium.mkdir(parents=True)
+(chromium / "Info.plist").write_bytes(plistlib.dumps({
+    "CFBundleIdentifier": "org.chromium.Chromium", "CFBundleName": "Chromium Fixture",
+}))
+code_cache = home / "Library/Caches/Chromium/Default/Code Cache/js"
+code_cache.mkdir(parents=True)
+format_header = struct.pack("<QIIII", 0xfcfb6d1ba7725c30, 5, 3, 0, 0)
+format_footer = struct.pack("<QIIII", 0xf4fa6f45970d41d8, 0, 0, 0, 0)
+(code_cache / "ab1234567890cdef_0").write_bytes(format_header + b"key-fixture-code" + format_footer * 2)
+(code_cache / "index").write_bytes(b"fixture index")
 downloads = home / "Downloads"
 downloads.mkdir()
 (downloads / "archive.zip").write_bytes(b"sample" * 8192)

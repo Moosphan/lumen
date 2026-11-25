@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from . import actions, agent_events, app_cleanup, developer_caches, docker_cache, integrations, local, macmanage
-from . import mcp_review, model_inventory, model_recovery, model_runtime, space_tree, task_closeout
+from . import chromium_cache, mcp_review, model_inventory, model_recovery, model_runtime, space_tree, task_closeout
 from .fixture import create_fixture
 from .scan import SYSTEM_ROOTS, _under, scan
 
@@ -306,11 +306,13 @@ def inventory(config, state, incremental=False, full=False, quick=False):
                   metadata_only_roots=[path for row in cache_locations if row["cache_layout"] != "xcode"
                                        for path in (row["path"], *row["aliases"])],
                   metadata_only_file_ids={tuple(row["identity"]) for row in cache_locations
-                                          if not row["directory"]})
+                                          if not row["directory"]},
+                  browser_cache_home=Path(config["_local_home"]) if config.get("_local_home") else None)
     report["issues"].extend(sorted(discovery_issues))
     report["local_locations"] = locations
     if installed is not None:
         app_cleanup.classify(report, Path(config["_local_home"]))
+    chromium_cache.classify(report, config.get("app_analysis", ()) if installed is not None else ())
     report["developer_caches"] = developer_caches.classify(
         report, config["_local_home"], discovered=cache_locations) if cache_locations else []
     report["suggested_projects"] = sorted(set(report["suggested_projects"]) | suggestions)
@@ -448,6 +450,9 @@ def perform(config, state, request, temporary_task=None, planned_paths=(), *, cl
                 and not (row.get("cleanup_kind") or row.get("developer_cache_review"))):
             skipped.append({"path": path, "status": "skipped", "reason": "此位置仅支持低影响清理"})
             continue
+        if row.get("cleanup_kind") == "compiled_code" and action != "quarantine":
+            skipped.append({"path": path, "status": "skipped", "reason": "生成代码缓存仅支持可恢复隔离"})
+            continue
         if require_all and not mcp_candidate(row, scoped_roots, state):
             skipped.append({"path": path, "status": "skipped", "reason": "草案的引用或保留状态发生变化"})
             continue
@@ -456,9 +461,11 @@ def perform(config, state, request, temporary_task=None, planned_paths=(), *, cl
             continue
         if row.get("cleanup_kind") and row["decision"] == "review":
             identifier = row["bundle_id"]
-            if identifier not in idle_apps:
-                idle_apps[identifier] = app_cleanup.available(identifier)
-            if not idle_apps[identifier]:
+            expected = row['app_path'] if row['cleanup_kind'] == 'compiled_code' else None
+            identity = identifier, expected
+            if identity not in idle_apps:
+                idle_apps[identity] = app_cleanup.available(identifier, expected)
+            if not idle_apps[identity]:
                 skipped.append({"path": path, "status": "skipped", "reason": "请先退出应用，既白需要确认它已停止运行"})
                 continue
         group = row.get("duplicate_group")

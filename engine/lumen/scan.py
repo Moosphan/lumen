@@ -15,7 +15,7 @@ from urllib.parse import unquote, urljoin, urlsplit
 from xml.parsers.expat import ExpatError
 from xml.etree.ElementTree import ParseError
 
-from . import aider, integrations
+from . import aider, chromium_cache, integrations
 
 
 MODELS = {'.gguf', '.safetensors', '.ckpt', '.onnx', '.pt', '.pth', '.ggml'}
@@ -238,7 +238,7 @@ def _idle(path):
 
 
 def _registered_code(identifier='com.microsoft.VSCode'):
-    """Ask AppKit about stable Code bundle IDs only, without reading process arguments."""
+    """Ask AppKit about known bundle IDs without reading process arguments."""
     ctypes.CDLL('/System/Library/Frameworks/AppKit.framework/AppKit')
     objc = ctypes.CDLL('/usr/lib/libobjc.A.dylib')
     ptr = ctypes.c_void_p
@@ -260,19 +260,22 @@ def _registered_code(identifier='com.microsoft.VSCode'):
         if not workspace or not runner:
             raise ValueError('AppKit 注册服务不可用')
         bundle_id = None
-        for suffix in ('', '.helper', '.helper.GPU', '.helper.Plugin', '.helper.Renderer'):
+        suffixes = ('', '.helper', '.helper.GPU', '.helper.Plugin', '.helper.Renderer')
+        if identifier in chromium_cache.PRODUCTS:
+            suffixes += ('.helper.gpu', '.helper.plugin', '.helper.renderer')
+        for suffix in suffixes:
             name = ctypes.c_char_p((identifier + suffix).encode())
             string = send_arg(objc.objc_getClass(b'NSString'), selector(b'stringWithUTF8String:'), name)
             running = send_arg(runner, selector(b'runningApplicationsWithBundleIdentifier:'), string)
             if not running:
-                raise ValueError('无法查询 VS Code 应用或辅助进程')
+                raise ValueError('无法查询应用或辅助进程')
             if count(running, selector(b'count')):
                 return True, []
             if not suffix:
                 bundle_id = string
         urls = send_arg(workspace, selector(b'URLsForApplicationsWithBundleIdentifier:'), bundle_id)
         if not urls:
-            raise ValueError('无法查询 VS Code 安装位置')
+            raise ValueError('无法查询应用安装位置')
         apps = []
         for index in range(count(urls, selector(b'count'))):
             url = at(urls, selector(b'objectAtIndex:'), index)
@@ -345,7 +348,7 @@ def _space(files):
 
 
 def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=None, installed=None,
-         agent_stores=None, metadata_only_roots=(), metadata_only_file_ids=frozenset()):
+         agent_stores=None, metadata_only_roots=(), metadata_only_file_ids=frozenset(), browser_cache_home=None):
     root_set, exclusions, kept = _paths(roots), _paths(exclude), _paths(keep)
     metadata_roots = _paths(metadata_only_roots)
     metadata_files = set()
@@ -383,8 +386,12 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
             issue(p, '特殊文件，仅跳过')
             return
         kind = 'symlink' if link else _kind(p)
-        aider_data = '.aider' in str(p).casefold() and aider.protected_artifact(p.parts)
-        if aider_data or (s.st_dev, s.st_ino) in metadata_only_file_ids or metadata_roots and _under(p, metadata_roots):
+        folded_path = str(p).casefold()
+        aider_data = '.aider' in folded_path and aider.protected_artifact(p.parts)
+        browser_code = (chromium_cache.identify(p, browser_cache_home)
+                        if browser_cache_home is not None and '/code cache' in folded_path else None)
+        if (aider_data or browser_code or (s.st_dev, s.st_ino) in metadata_only_file_ids
+                or metadata_roots and _under(p, metadata_roots)):
             metadata_files.add(p)
         store = store_for(p.parent) if agent_stores else None
         owner_agent = agent_stores[store] if store else 'Aider' if aider_data else _agent(p)
@@ -394,6 +401,8 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
                         agents=[owner_agent] if owner_agent else [], projects=[], refs=[],
                         location='Library' if 'Library' in p.parts else '其他位置',
                         decision='review', reason='需要核对用途，当前证据不足以直接清理')
+        if browser_code is not None:
+            files[p]['browser_code_cache'] = browser_code
         if store:
             files[p]['agent_store_path'] = str(store)
         if link or s.st_nlink > 1:
