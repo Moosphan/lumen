@@ -77,6 +77,21 @@ function prepareBrowser() {
   console.log(`Verified and registered the official Chromium snapshot at revision ${snapshotBuild}.`);
 }
 
+async function waitForBrowserRegistration() {
+  const python = [
+    'import json, sys',
+    'from engine.lumen.scan import _registered_code',
+    'active, apps = _registered_code(sys.argv[1])',
+    'print(json.dumps([active, [str(path.resolve()) for path in apps]]))',
+  ].join('\n');
+  await eventually(`${browserName} to exit with a unique LaunchServices registration`, () => {
+    const reply = run('/usr/bin/python3', ['-B', '-c', python, 'org.chromium.Chromium']).trim();
+    const [active, apps] = JSON.parse(reply);
+    if (active || apps.length !== 1 || apps[0] !== app) throw new Error(reply);
+    return true;
+  });
+}
+
 function digest(path) {
   return createHash('sha256').update(readFileSync(path)).digest('hex');
 }
@@ -272,8 +287,19 @@ try {
     const systemExclusions = readdirSync('/Applications').map((name) => join('/Applications', name))
       .filter((path) => path !== app);
     engine('settings', { local_exclude: [...systemExclusions, '/System/Applications'] });
+  } else {
+    await waitForBrowserRegistration();
   }
   engine('scan_local', { startup: true });
+  if (snapshot) {
+    const scoped = engine('scan', { roots: [defaultProfile], deep: false });
+    const sqlite = join(defaultProfile, 'LocalStorage');
+    assert(scoped.files.some((file) => file.path === sqlite && file.browser_data && file.decision === 'keep'),
+      'The real SQLite DOM storage database should be protected in an explicitly added profile');
+    const attempted = engine('run', { scan_id: scoped.scan_id, paths: [sqlite], action: 'quarantine' });
+    assert.deepEqual(attempted.last_action.items.map((entry) => entry.status), ['skipped']);
+    assert.deepEqual(protectedPaths.flatMap(contents), protectedBefore);
+  }
   const scan = engine('scan_app', { path: app });
   if (backend === 'persistent') {
     const directory = join(cache, 'Default/Code Cache/pc');

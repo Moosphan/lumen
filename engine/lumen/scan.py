@@ -79,6 +79,7 @@ PROFILE_FILES = {
     'bookmarks', 'reading list', 'login data', 'login data for account', 'web data', 'account web data',
     'cookies', 'bound session cookies', 'network persistent state', 'history', 'last session', 'current session', 'last tabs', 'current tabs',
     'preferences', 'secure preferences', 'favicons', 'top sites', 'affiliation database',
+    'localstorage', 'sessionstorage',
 }
 PROFILE_STORES = {
     'sessions', 'local storage', 'session storage', 'indexeddb', 'service worker', 'file system',
