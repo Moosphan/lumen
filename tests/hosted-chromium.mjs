@@ -1,11 +1,11 @@
-// Real Chrome exercise restricted to a disposable GitHub-hosted Mac.
+// Real Chrome and Chromium exercises restricted to disposable GitHub-hosted Macs.
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 if (process.env.GITHUB_ACTIONS !== 'true' || process.env.RUNNER_ENVIRONMENT !== 'github-hosted' ||
@@ -13,16 +13,26 @@ if (process.env.GITHUB_ACTIONS !== 'true' || process.env.RUNNER_ENVIRONMENT !== 
   throw new Error('Requires an ARM64 GitHub-hosted macOS runner');
 }
 
-const app = '/Applications/Google Chrome.app';
 const backend = process.argv[2] ?? 'simple';
+const product = process.argv[3] ?? 'chrome';
 assert(['simple', 'persistent'].includes(backend), 'Unknown Chromium code cache backend');
-const executable = join(app, 'Contents/MacOS/Google Chrome');
-const lab = mkdtempSync('/private/tmp/lumen-chrome-');
+assert(['chrome', 'chromium'].includes(product), 'Unknown browser fixture');
+const snapshot = product === 'chromium';
+const browserName = snapshot ? 'Chromium' : 'Google Chrome';
+const browserData = snapshot ? 'Chromium' : 'Google/Chrome';
+const lab = mkdtempSync('/private/tmp/lumen-browser-');
 const home = join(lab, 'fixture-home');
 const state = join(lab, 'state');
-const profile = join(home, 'Library/Application Support/Google/Chrome');
-const cache = join(home, 'Library/Caches/Google/Chrome');
+const app = join(snapshot ? join(home, 'Applications') : '/Applications', `${browserName}.app`);
+const executable = join(app, 'Contents/MacOS', browserName);
+const appInfo = join(app, 'Contents/Info');
+const profile = join(home, 'Library/Application Support', browserData);
+const cache = join(home, 'Library/Caches', browserData);
 const credential = 'isolated-browser-fixture';
+const lsregister = '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister';
+const snapshotBuild = '1754458';
+const snapshotGeneration = '1795610528154606';
+const snapshotDigest = Buffer.from('seA8w09+IDpjntLgUgbUsg==', 'base64').toString('hex');
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { encoding: 'utf8', timeout: 60_000, ...options });
@@ -36,11 +46,36 @@ function engine(cmd, args = {}) {
   const invoke = [
     'import json, sys',
     'from engine.lumen.service import dispatch',
-    'print(json.dumps(dispatch(sys.argv[1], json.load(sys.stdin), local_home=sys.argv[2], include_system=True)))',
+    'print(json.dumps(dispatch(sys.argv[1], json.load(sys.stdin), local_home=sys.argv[2], include_system=sys.argv[3] == "chrome")))',
   ].join('\n');
-  return JSON.parse(run('/usr/bin/python3', ['-B', '-c', invoke, state, home], {
+  return JSON.parse(run('/usr/bin/python3', ['-B', '-c', invoke, state, home, product], {
     label: cmd, input: JSON.stringify({ cmd, ...args }), maxBuffer: 64 * 1024 * 1024,
   }));
+}
+
+function prepareBrowser() {
+  if (!snapshot) {
+    // Hosted images can add Finder attributes. Check the signed publisher
+    // without imposing Lumen's release archive attribute policy on Chrome.
+    run('/usr/bin/codesign', ['--verify', '-R',
+      '=anchor apple generic and identifier "com.google.Chrome" and certificate leaf[subject.OU] = "EQHXZ8M8AV"', app]);
+    return;
+  }
+  const archive = join(lab, 'snapshot.zip');
+  const extracted = join(lab, 'snapshot');
+  const url = `https://storage.googleapis.com/chromium-browser-snapshots/Mac_Arm/${snapshotBuild}/chrome-mac.zip?generation=${snapshotGeneration}`;
+  run('/usr/bin/curl', ['-q', '--fail', '--silent', '--show-error', '--proto', '=https',
+    '--connect-timeout', '12', '--max-time', '75', '-o', archive, url], { timeout: 80_000 });
+  assert.equal(run('/sbin/md5', ['-q', archive]).trim(), snapshotDigest, 'Official Chromium archive checksum mismatch');
+  const checksum = run('/usr/bin/shasum', ['-a', '256', archive], { env: { LC_ALL: 'C', PATH: '/usr/bin:/bin' } });
+  console.log(`Chromium snapshot SHA-256: ${checksum.split(/\s+/)[0]}`);
+  run('/usr/bin/ditto', ['-x', '-k', archive, extracted]);
+  mkdirSync(dirname(app), { recursive: true });
+  renameSync(join(extracted, 'chrome-mac/Chromium.app'), app);
+  assert.equal(run('/usr/bin/defaults', ['read', appInfo, 'CFBundleIdentifier']).trim(), 'org.chromium.Chromium');
+  run('/usr/bin/lipo', [executable, '-verify_arch', 'arm64']);
+  run(lsregister, ['-f', app]);
+  console.log(`Verified and registered the official Chromium snapshot at revision ${snapshotBuild}.`);
 }
 
 function digest(path) {
@@ -72,7 +107,7 @@ function command(socket, method, params = {}, sessionId) {
       const message = JSON.parse(event.data);
       if (message.id === id) finish(message.error && new Error(`${method}: ${message.error.message}`), message.result);
     }
-    function closed() { finish(new Error(`Chrome closed during ${method}`)); }
+    function closed() { finish(new Error(`${browserName} closed during ${method}`)); }
     const timer = setTimeout(() => finish(new Error(`${method} timed out`)), 6000);
     socket.addEventListener('message', receive);
     socket.addEventListener('close', closed);
@@ -109,7 +144,8 @@ async function session(origin, count, verifyContent) {
     '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0',
     `--user-data-dir=${profile}`, `--disk-cache-dir=${cache}`, `--crash-dumps-dir=${lab}`, 'about:blank'], {
     cwd: lab, detached: true, stdio: ['ignore', 'ignore', 'pipe'],
-    env: { ...process.env, HOME: home, CFFIXED_USER_HOME: home, TMPDIR: lab, MAC_CHROMIUM_TMPDIR: lab },
+    env: { PATH: '/usr/bin:/bin:/usr/sbin:/sbin', LANG: 'en_US.UTF-8',
+      HOME: home, CFFIXED_USER_HOME: home, TMPDIR: lab, MAC_CHROMIUM_TMPDIR: lab },
   });
   const exited = once(browser, 'exit');
   let diagnostics = '';
@@ -117,7 +153,7 @@ async function session(origin, count, verifyContent) {
   browser.stderr.on('data', (text) => { diagnostics = (diagnostics + text).slice(-3500); });
   let socket;
   try {
-    const url = await eventually('isolated Chrome DevTools endpoint', () => {
+    const url = await eventually(`isolated ${browserName} DevTools endpoint`, () => {
       if (browser.exitCode !== null || browser.signalCode !== null) throw new Error(diagnostics);
       const [port, route] = readFileSync(marker, 'utf8').trim().split('\n');
       return /^\d+$/.test(port) && /^\/devtools\/browser\/[\w-]+$/.test(route)
@@ -143,7 +179,7 @@ async function session(origin, count, verifyContent) {
     await verifyContent(evaluate);
     await command(socket, 'Browser.close').catch(() => {});
     const [code, signal] = await Promise.race([exited, sleep(8000, undefined, { ref: false }).then(() => [null, 'timeout'])]);
-    assert.equal(code, 0, `Chrome did not exit normally (${signal}): ${diagnostics}`);
+    assert.equal(code, 0, `${browserName} did not exit normally (${signal}): ${diagnostics}`);
   } finally {
     socket?.close();
     if (browser.exitCode === null && browser.signalCode === null) {
@@ -184,12 +220,9 @@ const server = createServer((request, response) => {
 });
 
 try {
-  // The hosted image can add Finder attributes to the framework. Verify the
-  // signed software and publisher without imposing the package's own xattr policy.
-  run('/usr/bin/codesign', ['--verify', '-R',
-    '=anchor apple generic and identifier "com.google.Chrome" and certificate leaf[subject.OU] = "EQHXZ8M8AV"', app]);
-  const version = run('/usr/bin/defaults', ['read', join(app, 'Contents/Info'), 'CFBundleShortVersionString']).trim();
-  console.log(`Testing signed Google Chrome ${version} with the ${backend} code cache backend.`);
+  prepareBrowser();
+  const version = run('/usr/bin/defaults', ['read', appInfo, 'CFBundleShortVersionString']).trim();
+  console.log(`Testing ${browserName} ${version} with the ${backend} code cache backend.`);
   mkdirSync(profile, { recursive: true });
   mkdirSync(cache, { recursive: true });
   writeFileSync(join(lab, 'chrome.sb'), `(version 1)
@@ -213,7 +246,7 @@ try {
       return true;
     })()`));
     if (backend === 'simple') {
-      await eventually('Chrome to write the WebAssembly cache', () =>
+      await eventually(`${browserName} to write the WebAssembly cache`, () =>
         readdirSync(join(cache, 'Default/Code Cache/wasm')).some((name) => /^[0-9a-f]{16}_0$/.test(name)));
     }
   });
@@ -223,10 +256,12 @@ try {
   protectedPaths.push(...['Default/Cookies', 'Default/Network/Cookies']
     .map((name) => join(profile, name)).filter(existsSync));
   const protectedBefore = protectedPaths.flatMap(contents);
-  assert(protectedBefore.some(([path]) => path.endsWith('/Cookies')), 'Chrome did not create a cookies database');
-  const systemExclusions = readdirSync('/Applications').map((name) => join('/Applications', name))
-    .filter((path) => path !== app);
-  engine('settings', { local_exclude: [...systemExclusions, '/System/Applications'] });
+  assert(protectedBefore.some(([path]) => path.endsWith('/Cookies')), 'The browser did not create a cookies database');
+  if (!snapshot) {
+    const systemExclusions = readdirSync('/Applications').map((name) => join('/Applications', name))
+      .filter((path) => path !== app);
+    engine('settings', { local_exclude: [...systemExclusions, '/System/Applications'] });
+  }
   engine('scan_local', { startup: true });
   const scan = engine('scan_app', { path: app });
   if (backend === 'persistent') {
@@ -255,12 +290,13 @@ try {
     assert.deepEqual(reopened, [credential, true, credential]);
   });
   if (backend === 'persistent') {
-    console.log(`Real Google Chrome ${version}: Persistent Cache files were attributed, excluded from isolation and byte-identical; restart preserved WebAssembly execution and site data.`);
+    console.log(`Real ${browserName} ${version}: Persistent Cache files were attributed, excluded from isolation and byte-identical; restart preserved WebAssembly execution and site data.`);
   } else {
-    console.log(`Real Google Chrome ${version}: JavaScript and WebAssembly caches quarantined and restored byte-for-byte; after restart, WebAssembly executed and cookies, local storage and offline Cache Storage remained readable.`);
+    console.log(`Real ${browserName} ${version}: JavaScript and WebAssembly caches quarantined and restored byte-for-byte; after restart, WebAssembly executed and cookies, local storage and offline Cache Storage remained readable.`);
   }
 } finally {
   server.close();
+  if (snapshot && existsSync(app)) spawnSync(lsregister, ['-u', app], { timeout: 5000 });
   rmSync(lab, { recursive: true, force: true });
 }
 
