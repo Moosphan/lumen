@@ -100,7 +100,7 @@ async function session(origin, count, verifyContent) {
     '--headless', '--no-sandbox', '--disable-gpu', '--disable-background-networking', '--disable-component-update',
     '--disable-sync', '--disable-crash-reporter', '--no-first-run', '--no-default-browser-check', '--use-mock-keychain',
     '--disable-features=PersistentCacheForCodeCache', '--v8-cache-options=code',
-    '--js-flags=--no-liftoff --no-wasm-lazy-compilation --wasm-caching-threshold=1 --wasm-caching-timeout-ms=0',
+    '--js-flags=--wasm-tiering-budget=100 --wasm-caching-threshold=1 --wasm-caching-timeout-ms=0',
     '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0',
     `--user-data-dir=${profile}`, `--disk-cache-dir=${cache}`, `--crash-dumps-dir=${lab}`, 'about:blank'], {
     cwd: lab, detached: true, stdio: ['ignore', 'ignore', 'pipe'],
@@ -149,8 +149,12 @@ async function session(origin, count, verifyContent) {
 }
 
 const script = `let counter = 0;\n${'counter += 1;\n'.repeat(1800)}
-window.lumenWasm = WebAssembly.instantiateStreaming(fetch('/fixture.wasm'))
-  .then(({ instance }) => instance.exports.add(19, 23));
+window.lumenWasm = WebAssembly.instantiateStreaming(fetch('/fixture.wasm')).then(({ instance }) => {
+  window.lumenWasmInstance = instance;
+  let sum = 0;
+  for (let call = 0; call < 10000; call++) sum = instance.exports.add(19, 23);
+  return sum;
+});
 window.lumenResult = counter;\n`;
 // (module (func (export "add") (param i32 i32) (result i32)
 //   local.get 0 local.get 1 i32.add))
@@ -203,6 +207,8 @@ try {
       await store.put('/local-only', new Response(${saved}));
       return true;
     })()`));
+    await eventually('Chrome to write the WebAssembly cache', () =>
+      readdirSync(join(cache, 'Default/Code Cache/wasm')).some((name) => /^[0-9a-f]{16}_0$/.test(name)));
   });
 
   const protectedPaths = ['Default/Local Storage', 'Default/Service Worker/CacheStorage']
@@ -220,7 +226,8 @@ try {
     file.cleanup_kind === 'compiled_code' && file.decision === 'review' && file.app_path === app);
   const inventory = scan.files.filter((file) => file.path.includes('/Code Cache/'))
     .map((file) => [file.path.slice(cache.length + 1), file.size, file.reason]);
-  const jsEntry = entries.find((file) => file.cache_language === 'JavaScript');
+  const jsEntry = entries.find((file) => file.cache_language === 'JavaScript' && file.size > 1024 &&
+    readFileSync(file.path).includes(`${origin}/fixture.js`));
   const wasmEntry = entries.find((file) => file.cache_language === 'WebAssembly' &&
     readFileSync(file.path).includes(`${origin}/fixture.wasm`));
   assert(jsEntry && wasmEntry, `Expected real JavaScript and WebAssembly entries: ${JSON.stringify(inventory.slice(0, 25))}`);
