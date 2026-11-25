@@ -224,7 +224,9 @@ private func fallbackReport(_ pid: pid_t) {
         _ = try eventually("automatic inventory of the isolated Mac") {
             guard let data = config(state), let report = data["report"] as? [String: Any],
                   let apps = report["apps"] as? [[String: Any]], apps.contains(where: { $0["name"] as? String == "Sample Studio" }),
-                  let projects = report["projects"] as? [String: [String]], projects.values.contains(["Codex"]),
+                  let projects = report["projects"] as? [String: [String]], projects.contains(where: {
+                      $0.key.hasSuffix("/Studio Project") && $0.value == ["Codex", "Windsurf"]
+                  }),
                   projects.values.contains(["Gemini CLI"]),
                   projects.values.contains(["Continue"]),
                   projects.values.contains(["Aider"]),
@@ -233,9 +235,6 @@ private func fallbackReport(_ pid: pid_t) {
                       $0.key.hasSuffix("/Harness CLI Project") && $0.value == ["DeepSeek Harness"]
                   }),
                   projects.values.contains(["Pi"]),
-                  projects.contains(where: {
-                      $0.key.hasSuffix("/Windsurf Project") && $0.value == ["Windsurf"]
-                  }),
                   let agents = report["agent_inventory"] as? [[String: Any]],
                   agents.contains(where: { row in
                       row["name"] as? String == "Gemini CLI" &&
@@ -312,11 +311,11 @@ private func fallbackReport(_ pid: pid_t) {
             element("Harness CLI Project", in: ax, button: false)
         }
         _ = try eventually("the Pi workspace") { element("Pi Project", in: ax, button: false) }
-        _ = try eventually("the Windsurf workspace from Devin Desktop") {
-            element("Windsurf Project", in: ax, button: false)
-        }
         _ = try eventually("the workspace cleanup icon") { element("审阅工程清理项目", in: ax, button: true) }
         try press("Studio Project", in: ax)
+        _ = try eventually("two agents sharing the same native workspace") {
+            element("关联 Agent（2）", in: ax, button: false)
+        }
         _ = try eventually("the expanded project storage categories") { element("数据类别", in: ax, button: false) }
         captureWindow(pid: pid, lab: lab, filename: "Lumen-agent-sweep.png")
         try press("模型存储", in: ax)

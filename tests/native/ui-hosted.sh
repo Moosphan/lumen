@@ -125,12 +125,9 @@ devin.mkdir(parents=True)
     "CFBundleIdentifier": "com.exafunction.windsurf", "CFBundleName": "Devin",
     "CFBundleShortVersionString": "3.14.30833",
 }))
-windsurf_project = home / "Projects/Windsurf Project"
-windsurf_project.mkdir()
-(windsurf_project / "notes.txt").write_bytes(b"workspace sources" * 1024)
 windsurf_state = home / "Library/Application Support/Devin/User/workspaceStorage/fixture"
 windsurf_state.mkdir(parents=True)
-(windsurf_state / "workspace.json").write_text(json.dumps({"folder": windsurf_project.as_uri()}))
+(windsurf_state / "workspace.json").write_text(json.dumps({"folder": project.as_uri()}))
 (windsurf_state / "state.vscdb").write_bytes(b"protected editor state")
 kiro = home / ".kiro/sessions"
 kiro.mkdir(parents=True)
