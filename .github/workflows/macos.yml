@@ -71,6 +71,12 @@ jobs:
         env:
           LUMEN_RUNNER_ENVIRONMENT: ${{ runner.environment }}
         run: /usr/bin/python3 -B tests/hosted-vscode.py
+
+  chrome-regression:
+    runs-on: macos-15
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
       - name: Verify generated-code cleanup across real Chrome restarts
         timeout-minutes: 4
         env:

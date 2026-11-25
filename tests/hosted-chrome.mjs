@@ -157,7 +157,10 @@ const server = createServer((request, response) => {
 });
 
 try {
-  run('/usr/bin/codesign', ['--verify', '--strict', '-R', '=anchor apple generic and identifier "com.google.Chrome"', app]);
+  // The hosted image can add Finder attributes to the framework. Verify the
+  // signed software and publisher without imposing the package's own xattr policy.
+  run('/usr/bin/codesign', ['--verify', '-R',
+    '=anchor apple generic and identifier "com.google.Chrome" and certificate leaf[subject.OU] = "EQHXZ8M8AV"', app]);
   const version = run('/usr/bin/defaults', ['read', join(app, 'Contents/Info'), 'CFBundleShortVersionString']).trim();
   console.log(`Testing signed Google Chrome ${version} with the Chromium Simple backend.`);
   mkdirSync(profile, { recursive: true });
