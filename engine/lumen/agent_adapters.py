@@ -20,7 +20,7 @@ from .integrations import recorded_path
 
 _MIB = 1024 * 1024
 _SLUG = re.compile(r'[a-z0-9-]+')
-_CACHE_SCHEMA = 2
+_CACHE_SCHEMA = 3
 EXTENSIONS = {
     ('saoudrizwan', 'claude-dev'): 'Cline',
     ('github', 'copilot-chat'): 'GitHub Copilot VS Code',

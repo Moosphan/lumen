@@ -413,7 +413,8 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
             parts = p.parts
             version = parts.index('snapshots') + 1 if 'snapshots' in parts else len(parts)
             files[p]['model_version'] = parts[version] if version < len(parts)-1 else ''
-        elif owner_agent or p.suffix.lower() in ('.sqlite', '.sqlite3', '.db', '.plist', '.keychain-db') or '.git' in p.parts:
+        elif (owner_agent or p.suffix.lower() in ('.sqlite', '.sqlite3', '.db', '.plist', '.keychain-db', '.code-workspace')
+              or '.git' in p.parts):
             protect(p, '配置、会话或数据库需要保留')
         elif p.suffix.lower() in {'.part', '.download', '.crdownload', '.partial'}:
             defer(p, '可能正在下载，完成后重扫')

@@ -127,6 +127,46 @@ class AgentIDEAdapterTests(unittest.TestCase):
         self.assertEqual(self.scan(cache=cache)[1], {replacement: {'Windsurf'}, next_project: {'Windsurf'}})
         self.assertEqual(self.scan(cache=cache, excluded=(local.parent,))[1], {next_project: {'Windsurf'}})
 
+    def test_windsurf_reads_saved_jsonc_workspace_folders_and_refreshes_edits(self):
+        records = 'Library/Application Support/Devin/User/workspaceStorage'
+        local = self.home / '另一个项目'
+        manifest = self.write('Workspaces/电影.code-workspace', (
+            '\ufeff{ // saved workspace\n'
+            '  "folders": [\n'
+            '    /* production */ { "path": "../Projects/电影 Project" },\n'
+            '    {"path": ' + json.dumps(str(local)) + '},\n'
+            '    {"uri": ' + json.dumps(local.as_uri()) + ', "name": "notes /* text */ // ,}"},\n'
+            '    {"uri": "vscode-remote://ssh-remote+host/repo"},\n'
+            '    {"path": "//server/project"},\n'
+            '    {"path": "C:/remote/project"},\n'
+            '  ],\n'
+            '  "settings": { "private": "sample settings are not indexed" },\n'
+            '}\n').encode())
+        self.write(f'{records}/local/workspace.json', {'workspace': manifest.as_uri()})
+        remote = self.write('remote.code-workspace', {'remoteAuthority': 'ssh-remote+host',
+                            'folders': [{'path': str(self.home / 'Remote')}]})
+        self.write(f'{records}/remote/workspace.json', {'workspace': remote.as_uri()})
+        malformed = self.write('invalid.code-workspace', b'{"folders":[,]}')
+        self.write(f'{records}/invalid/workspace.json', {'workspace': malformed.as_uri()})
+        cache, issues = {}, set()
+        self.assertEqual(self.scan(cache=cache, issues=issues)[1], {self.project: {'Windsurf'}, local: {'Windsurf'}})
+        self.assertNotIn('sample settings are not indexed', json.dumps(cache))
+        self.assertTrue(any(str(malformed) in issue for issue in issues))
+        self.write(manifest, {'folders': [{'path': str(local)}]})
+        self.assertEqual(self.scan(cache=cache)[1], {local: {'Windsurf'}})
+        self.assertEqual(self.scan(cache=cache, excluded=(manifest,))[1], {})
+
+    def test_windsurf_workspace_file_must_be_authorized_and_cannot_be_a_link(self):
+        root = 'Library/Application Support/Windsurf/User/workspaceStorage'
+        external = self.write(self.base / 'outside/shared.code-workspace', {'folders': [{'path': str(self.project)}]})
+        self.write(f'{root}/external/workspace.json', {'workspace': external.as_uri()})
+        target = self.write('Workspaces/control.code-workspace', {'folders': [{'path': './Ignored'}]})
+        link = target.with_name('link.code-workspace')
+        link.symlink_to(target)
+        self.write(f'{root}/link/workspace.json', {'workspace': link.as_uri()})
+        self.assertEqual(self.scan()[1], {})
+        self.assertEqual(self.scan(authorized=(external.parent,))[1], {self.project: {'Windsurf'}})
+
     def test_roo_uses_per_task_workspace_and_ignores_stale_index_and_messages(self):
         root = 'Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline'
         item = self.write(f'{root}/tasks/owned/history_item.json', {

@@ -127,7 +127,15 @@ devin.mkdir(parents=True)
 }))
 windsurf_state = home / "Library/Application Support/Devin/User/workspaceStorage/fixture"
 windsurf_state.mkdir(parents=True)
-(windsurf_state / "workspace.json").write_text(json.dumps({"folder": project.as_uri()}))
+windsurf_manifest = home / "Documents/Editing.code-workspace"
+windsurf_manifest.write_text('''{
+    // A saved workspace can include projects already associated with other tools.
+    "folders": [
+        {"path": "Codex/Studio Project"},
+        {"path": "../Projects/Gemini Project"},
+    ],
+}''')
+(windsurf_state / "workspace.json").write_text(json.dumps({"workspace": windsurf_manifest.as_uri()}))
 (windsurf_state / "state.vscdb").write_bytes(b"protected editor state")
 kiro = home / ".kiro/sessions"
 kiro.mkdir(parents=True)

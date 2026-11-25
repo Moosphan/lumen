@@ -227,7 +227,9 @@ private func fallbackReport(_ pid: pid_t) {
                   let projects = report["projects"] as? [String: [String]], projects.contains(where: {
                       $0.key.hasSuffix("/Studio Project") && $0.value == ["Codex", "Windsurf"]
                   }),
-                  projects.values.contains(["Gemini CLI"]),
+                  projects.contains(where: {
+                      $0.key.hasSuffix("/Gemini Project") && $0.value == ["Gemini CLI", "Windsurf"]
+                  }),
                   projects.values.contains(["Continue"]),
                   projects.values.contains(["Aider"]),
                   projects.values.contains(["DeepSeek Harness"]),

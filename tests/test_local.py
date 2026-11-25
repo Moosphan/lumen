@@ -495,6 +495,23 @@ class LocalInventoryTests(unittest.TestCase):
         self.assertTrue(all(row['status'] == 'skipped' for row in outcome['last_action']['items']))
         self.assertTrue(all(path.is_file() for path in protected))
 
+    def test_shared_windsurf_workspace_lists_two_projects_and_protects_its_config(self):
+        first = self.write('Projects/One/source.txt').parent
+        second = self.write('Projects/Two/source.txt').parent
+        manifest = self.write('Projects/One/build/edit.code-workspace', json.dumps({
+            'folders': [{'path': '..'}, {'uri': second.as_uri()}],
+        }).encode())
+        self.write('Library/Application Support/Windsurf/User/workspaceStorage/saved/workspace.json',
+                   json.dumps({'workspace': manifest.as_uri()}).encode())
+
+        report = self.call('scan_local', startup=True)
+        self.assertEqual(report['projects'], {str(first): ['Windsurf'], str(second): ['Windsurf']})
+        row = next(row for row in report['files'] if row['path'] == str(manifest))
+        self.assertEqual(row['decision'], 'keep')
+        result = self.call('run', paths=[str(manifest)], scan_id=report['scan_id'], action='quarantine')
+        self.assertEqual(result['last_action']['items'][0]['status'], 'skipped')
+        self.assertTrue(manifest.is_file())
+
     def test_deep_inventory_does_not_analyze_agent_store_payloads(self):
         source = self.write(".codex/sessions/capture.html", b'<img src="image.png">')
         copy = self.write(".codex/sessions/capture-copy.html", source.read_bytes())

@@ -1,12 +1,19 @@
 """Read local IDE and extension metadata within the inventory's scan scope."""
 import json
+import os
 import re
 from itertools import islice
 from urllib.parse import unquote, urlsplit
 
+from .integrations import recorded_path
+
 
 _VSCODE_EDITORS = ('Code', 'Code - Insiders')
 _WORKSPACE_HASH = re.compile(r'[0-9a-f]{16}')
+_JSON_STRING = r'"(?:[^"\\]|\\.)*"'
+_JSONC_COMMENTS = re.compile(rf'({_JSON_STRING})|//[^\r\n]*|/\*[\s\S]*?\*/')
+_JSONC_TRAILING_COMMAS = re.compile(rf'{_JSON_STRING}|,(?=[ \t\r\n]*[\]}}])')
+_FOREIGN_PATH = re.compile(r'[a-zA-Z][a-zA-Z0-9+.-]*:')
 
 
 def _copilot_cwd(metadata, path, session_id):
@@ -69,6 +76,58 @@ def _local_folder_uri(uri):
         return None
 
 
+def _workspace_jsonc(payload):
+    source = _JSONC_COMMENTS.sub(lambda token: token[1] or ' ', payload.decode('utf-8-sig'))
+
+    def without_trailing_comma(token):
+        if token[0] == ',':
+            preceding = token.start() - 1
+            while preceding >= 0 and source[preceding] in ' \t\r\n':
+                preceding -= 1
+            if preceding >= 0 and source[preceding] not in '{[,:':
+                return ''
+        return token[0]
+
+    return json.loads(_JSONC_TRAILING_COMMAS.sub(without_trailing_comma, source))
+
+
+def _workspace_folder(record, parent):
+    if not isinstance(record, dict) or ('path' in record and 'uri' in record):
+        return None
+    if 'uri' in record:
+        return _local_folder_uri(record['uri'])
+    path = record.get('path')
+    if (isinstance(path, str) and 0 < len(path) <= 4096 and '\\' not in path
+            and not path.startswith('//') and not _FOREIGN_PATH.match(path)):
+        return os.path.normpath(parent / path)
+    return None
+
+
+def _saved_workspace_folders(metadata, uri):
+    # https://code.visualstudio.com/docs/editing/workspaces/multi-root-workspaces#_workspace-file-schema
+    path = recorded_path(_local_folder_uri(uri))
+    if (path is None or path.suffix.casefold() != '.code-workspace'
+            or {'.ssh', '.aws', '.gnupg', '.kube', 'Keychains'}.intersection(path.parts)):
+        return
+    payload = metadata.read(path, 64 * 1024)
+    if payload is None:
+        return
+    try:
+        workspace = _workspace_jsonc(payload)
+        if not isinstance(workspace, dict) or not isinstance(workspace.get('folders'), list):
+            raise ValueError('invalid workspace folders')
+    except (ValueError, RecursionError):
+        metadata.issue(path, 'IDE 工作区配置损坏或格式未受支持')
+        return
+    if workspace.get('remoteAuthority') is not None:
+        return
+    folders = workspace['folders']
+    if len(folders) > metadata.limit:
+        metadata.issue(path, 'IDE 工作区目录数超过本次读取上限')
+    for record in islice(folders, metadata.limit):
+        yield _workspace_folder(record, path.parent)
+
+
 def _copilot_vscode(metadata, store, add):
     # https://github.com/microsoft/vscode/blob/main/src/vs/workbench/api/common/extHostStoragePaths.ts
     # https://github.com/microsoft/vscode/blob/main/src/vs/platform/storage/electron-main/storageMain.ts
@@ -99,8 +158,13 @@ def _windsurf(metadata, store, add):
         if store(agent, workspaces, f'{editor} 工作区存储'):
             for workspace in metadata.children(workspaces, directories=True):
                 value = metadata.read_json(workspace / 'workspace.json', dict)
-                if value is not None and 'workspace' not in value:
+                if value is None:
+                    continue
+                if 'workspace' not in value:
                     add(_local_folder_uri(value.get('folder')), agent)
+                elif 'folder' not in value:
+                    for path in _saved_workspace_folders(metadata, value['workspace']):
+                        add(path, agent)
 
 
 def _roo_code(metadata, store, add):
