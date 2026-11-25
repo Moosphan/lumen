@@ -46,10 +46,11 @@ def main():
         request = json.load(sys.stdin)
         if isinstance(request, dict) and (
                 request.get("cmd") in ("mcp_pending", "mcp_decline", "mcp_approve",
-                                       "model_pin", "model_recover", "model_forget", "model_recovery_options")
+                                       "model_pin", "model_recover", "model_forget", "model_recovery_options",
+                                       "docker_cache_usage")
                 or request.get("cmd") == "settings" and "mcp_enabled" in request):
             if not native_caller():
-                raise ValueError("请在既白窗口管理草案或模型恢复")
+                raise ValueError("请在既白窗口执行此操作")
         if isinstance(request, dict) and request.get("cmd") == "model_recover":
             signal.signal(signal.SIGTERM, cancel_recovery)
             signal.signal(signal.SIGINT, cancel_recovery)

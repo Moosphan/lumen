@@ -1,14 +1,10 @@
 """Read-only runtime checks for explicitly selected local model tools."""
 
 import http.client
-import json
 import re
-import socket
 from collections import Counter, defaultdict
-from contextlib import closing, suppress
-from threading import Event, Timer
-from time import monotonic
 
+from .local_http import fetch_json
 from .model_inventory import LM_STUDIO, OLLAMA
 
 
@@ -24,36 +20,8 @@ _OLLAMA_HOST = re.compile(r'[a-z0-9][a-z0-9.-]*(?::[0-9]+)?', re.I | re.ASCII)
 
 
 def _fetch(port, path):
-    deadline = monotonic() + _TIMEOUT_SECONDS
-    with closing(http.client.HTTPConnection('127.0.0.1', port, timeout=_TIMEOUT_SECONDS)) as connection:
-        connection.connect()
-        stream = connection.sock
-        expired = Event()
-
-        def stop_reading():
-            expired.set()
-            with suppress(OSError):
-                stream.shutdown(socket.SHUT_RDWR)
-
-        # A socket timeout alone can restart when a peer slowly streams headers or body.
-        watchdog = Timer(max(0, deadline - monotonic()), stop_reading)
-        watchdog.daemon = True
-        watchdog.start()
-        try:
-            connection.request('GET', path, headers={'Accept': 'application/json', 'Connection': 'close'})
-            with connection.getresponse() as response:
-                if response.status != 200:
-                    raise ConnectionError('Runtime endpoint returned a non-200 response')
-                if response.length is not None and response.length > _MAX_RESPONSE_BYTES:
-                    raise ValueError('Runtime response exceeds the size limit')
-                data = response.read(_MAX_RESPONSE_BYTES + 1)
-                if expired.is_set() or monotonic() >= deadline:
-                    raise TimeoutError('Runtime check reached its deadline')
-                if len(data) > _MAX_RESPONSE_BYTES or response.length not in (None, 0):
-                    raise ValueError('Runtime response is over the size limit or incomplete')
-                return json.loads(data)
-        finally:
-            watchdog.cancel()
+    connection = http.client.HTTPConnection('127.0.0.1', port, timeout=_TIMEOUT_SECONDS)
+    return fetch_json(connection, path, timeout=_TIMEOUT_SECONDS, limit=_MAX_RESPONSE_BYTES)
 
 
 def _ollama_name(value):

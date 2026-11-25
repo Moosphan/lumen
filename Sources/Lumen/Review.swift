@@ -247,6 +247,7 @@ struct ReviewView: View {
                     LazyVStack(alignment: .leading, spacing: 10) {
                         ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
                             let paths = group.paths("review_paths")
+                            let isDockerDisk = group.string("sizing") == "vm_image"
                             HStack(spacing: 10) {
                                 Image(systemName: "terminal").foregroundStyle(lilac).frame(width: 24)
                                 VStack(alignment: .leading, spacing: 4) {
@@ -258,18 +259,21 @@ struct ReviewView: View {
                                 Spacer(minLength: 8)
                                 VStack(alignment: .trailing, spacing: 4) {
                                     Text(bytes(group.number("allocated_bytes"))).monospacedDigit()
-                                    if group.string("sizing") == "vm_image" {
+                                    if isDockerDisk {
                                         Text("虚拟磁盘占用").font(.caption).foregroundStyle(.secondary)
                                     } else if !paths.isEmpty {
                                         Text("\(paths.count) 项待审阅").font(.caption).foregroundStyle(.secondary)
                                     }
                                 }
-                                FinderButton(path: group.string("path"), reveal: group.string("sizing") == "vm_image")
+                                FinderButton(path: group.string("path"), reveal: isDockerDisk)
                                 if !paths.isEmpty {
                                     CleanupIcon(title: "审阅\(group.string("tool"))缓存") {
                                         showDeveloperCache(group)
                                     }.disabled(!store.busy.isEmpty)
                                 }
+                            }
+                            if isDockerDisk && store.fixtureState == nil {
+                                DockerCacheUsage(store: store, groupID: group.string("id"))
                             }
                         }
                     }.padding(.top, 8)
@@ -292,6 +296,46 @@ struct ReviewView: View {
         selection.removeAll()
         project = group.string("tool") + " 缓存"
         bucketPaths = Set(group.paths("review_paths"))
+    }
+}
+
+private struct DockerCacheUsage: View {
+    @ObservedObject var store: Store
+    let groupID: String
+    @State private var summary: Object = [:]
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Docker 构建缓存").font(.callout.weight(.medium))
+                if store.busy == "docker_cache_usage" {
+                    ProgressView("正在读取本机 Docker…").controlSize(.small)
+                } else {
+                    switch summary.string("status") {
+                    case "ok":
+                        let total = bytes(summary.number("reported_bytes"))
+                        let shared = bytes(summary.number("shared_bytes"))
+                        let unused = bytes(summary.number("unused_unshared_bytes"))
+                        Text("\(summary.number("entries").formatted()) 项 · 引擎报告 \(total) · 共享 \(shared) · 未使用且未共享 \(unused)")
+                        Text("统计 Docker 内置构建器。虚拟磁盘的实际释放量需单独核对。")
+                    case "invalid_response":
+                        Text("Docker 返回的缓存数据不完整，暂无法统计。")
+                    case "unavailable":
+                        Text("本机 Docker Desktop 未响应。可在它运行后重试。")
+                    default:
+                        Text("读取正在运行的 Docker Desktop，查看内置构建器的用量。")
+                    }
+                }
+            }.font(.caption).foregroundStyle(.secondary)
+            Spacer(minLength: 8)
+            Button(summary.isEmpty ? "读取构建缓存" : "刷新构建缓存") {
+                store.call("docker_cache_usage", ["scan_id": store.data.string("scan_id"), "group_id": groupID]) {
+                    summary = $0
+                }
+            }.fixedSize().disabled(!store.busy.isEmpty)
+        }
+        .padding(.vertical, 8).padding(.leading, 34)
+        .onChange(of: store.generation) { _ in summary = [:] }
     }
 }
 

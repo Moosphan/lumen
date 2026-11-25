@@ -100,7 +100,7 @@ func resource(_ name: String, source: String) -> URL? {
                 task.waitUntilExit()
                 let envelope = (try? JSONSerialization.jsonObject(with: reply)) as? Object
                 let dashboard = envelope?["data"] as? Object
-                let standalone = ["fixture", "size_tree", "model_runtime", "model_recovery_options", "model_recover",
+                let standalone = ["fixture", "size_tree", "docker_cache_usage", "model_runtime", "model_recovery_options", "model_recover",
                                   "model_pin", "model_forget",
                                   "mcp_pending", "mcp_decline"].contains(command)
                 let presentation = standalone

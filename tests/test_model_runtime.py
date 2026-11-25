@@ -173,7 +173,7 @@ class ModelRuntimeTests(unittest.TestCase):
         self.assert_states(result, {'present': 'unknown'}, status='invalid_response')
 
     def test_total_deadline_interrupts_the_active_socket(self):
-        with patch.object(model_runtime, 'Timer') as timer:
+        with patch('engine.lumen.local_http.Timer') as timer:
             watchdog = timer.return_value
             watchdog.start.side_effect = lambda: timer.call_args.args[1]()
             result, _, connection = self.check([_ollama('present')], 'ollama', [])

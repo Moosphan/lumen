@@ -11,7 +11,7 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
-from . import actions, agent_events, app_cleanup, developer_caches, integrations, local, macmanage
+from . import actions, agent_events, app_cleanup, developer_caches, docker_cache, integrations, local, macmanage
 from . import mcp_review, model_inventory, model_recovery, model_runtime, space_tree, task_closeout
 from .fixture import create_fixture
 from .scan import SYSTEM_ROOTS, _under, scan
@@ -783,6 +783,19 @@ def dispatch(state, request, local_home=None, include_system=False, *, cancel=No
         if cmd == "model_runtime":
             models = config["report"].get("model_inventory", {}).get("models", [])
             return model_runtime.check(models, request.get("tool"))
+        if cmd == "docker_cache_usage":
+            require_preview(config, request)
+            selected = request.get("group_id")
+            groups = config["report"].get("developer_caches", ())
+            if (local_home is None or config.get("labs") or
+                    not any(row['id'] == selected and row.get('sizing') == 'vm_image' for row in groups)):
+                raise ValueError("请先盘点 Docker Desktop 的虚拟磁盘")
+            socket_path = Path(local_home) / docker_cache.SOCKET_PATH
+            excluded = config['exclude'] + config.get('local_exclude', [])
+            if any(inside(Path(str(socket_path).casefold()), Path(path.casefold())) for path in excluded):
+                return {'status': 'unavailable'}
+            fcntl.flock(lock, fcntl.LOCK_UN)
+            return docker_cache.check(Path(local_home))
         if cmd == "model_recovery_options":
             return {"options": [item.details() for item in model_recovery_options(config, request)]}
         if cmd == "model_pin":

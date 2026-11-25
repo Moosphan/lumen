@@ -31,7 +31,7 @@ CACHE_TYPES = {
     'homebrew': ('Homebrew', 'Homebrew 下载目录', '只审阅超过 120 天且符合下载命名的归档。'),
     'xcode': ('Xcode', 'Xcode DerivedData 的生成文件', '仅审阅已归属的索引、模块缓存和编译中间文件。'),
     'docker': ('Docker', 'Docker Desktop 默认虚拟磁盘 Docker.raw',
-               '虚拟磁盘包含构建缓存、镜像、容器和卷，构建缓存的独立大小未知。'),
+               '虚拟磁盘包含镜像、容器、卷和构建缓存。可向本机 Docker 查询构建缓存用量。'),
 }
 
 OVERRIDES = (

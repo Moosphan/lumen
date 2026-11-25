@@ -9,6 +9,23 @@ concurrency:
 permissions:
   contents: read
 jobs:
+  vendor-integration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify integrated builder accounting against a real Docker engine
+        timeout-minutes: 2
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
+        run: python3 -B tests/hosted-integrations.py docker
+      - name: Reacquire a pinned public Hugging Face artifact
+        if: always() && !cancelled()
+        timeout-minutes: 2
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
+        run: python3 -B tests/hosted-integrations.py hugging-face
+
   verify:
     runs-on: macos-15
     timeout-minutes: 20
