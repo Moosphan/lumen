@@ -100,6 +100,7 @@ async function session(origin, count, verifyContent) {
     '--headless', '--no-sandbox', '--disable-gpu', '--disable-background-networking', '--disable-component-update',
     '--disable-sync', '--disable-crash-reporter', '--no-first-run', '--no-default-browser-check', '--use-mock-keychain',
     '--disable-features=PersistentCacheForCodeCache', '--v8-cache-options=code',
+    '--js-flags=--no-liftoff --no-wasm-lazy-compilation --wasm-caching-threshold=1 --wasm-caching-timeout-ms=0',
     '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0',
     `--user-data-dir=${profile}`, `--disk-cache-dir=${cache}`, `--crash-dumps-dir=${lab}`, 'about:blank'], {
     cwd: lab, detached: true, stdio: ['ignore', 'ignore', 'pipe'],
@@ -131,6 +132,7 @@ async function session(origin, count, verifyContent) {
       const navigation = await command(socket, 'Page.navigate', { url }, sessionId);
       assert(!navigation.errorText, navigation.errorText);
       await eventually('fixture script to execute', () => evaluate(`location.href === ${JSON.stringify(url)} && window.lumenResult === 1800`));
+      assert.equal(await evaluate('window.lumenWasm'), 42);
       await sleep(300);
     }
     await verifyContent(evaluate);
@@ -146,11 +148,26 @@ async function session(origin, count, verifyContent) {
   }
 }
 
-const script = `let counter = 0;\n${'counter += 1;\n'.repeat(1800)}window.lumenResult = counter;\n`;
+const script = `let counter = 0;\n${'counter += 1;\n'.repeat(1800)}
+window.lumenWasm = WebAssembly.instantiateStreaming(fetch('/fixture.wasm'))
+  .then(({ instance }) => instance.exports.add(19, 23));
+window.lumenResult = counter;\n`;
+// (module (func (export "add") (param i32 i32) (result i32)
+//   local.get 0 local.get 1 i32.add))
+const wasm = Buffer.concat([
+  Buffer.from('0061736d0100000001070160027f7f017f030201000707010361646400000a09010700200020016a0b', 'hex'),
+  // A custom section keeps the wire payload above historical cache thresholds
+  // without making the compiled function or its cache entry large.
+  Buffer.from([0, 0x81, 0x80, 0x08, 0]),
+  Buffer.alloc(128 * 1024),
+]);
 const server = createServer((request, response) => {
   if (request.url === '/fixture.js') {
     response.writeHead(200, { 'Content-Type': 'application/javascript', 'Cache-Control': 'public, max-age=3600' });
     response.end(script);
+  } else if (request.url === '/fixture.wasm') {
+    response.writeHead(200, { 'Content-Type': 'application/wasm', 'Cache-Control': 'public, max-age=3600' });
+    response.end(wasm);
   } else if (request.url?.startsWith('/fixture?')) {
     response.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
     response.end('<!doctype html><title>Lumen fixture</title><script src="/fixture.js"></script><p>Browser fixture</p>');
@@ -199,23 +216,27 @@ try {
   engine('settings', { local_exclude: [...systemExclusions, '/System/Applications'] });
   engine('scan_local', { startup: true });
   let scan = engine('scan_app', { path: app });
-  const item = scan.files.find((file) => file.cleanup_kind === 'compiled_code' && file.decision === 'review' && file.app_path === app);
-  if (!item) {
-    const candidates = scan.files.filter((file) => file.path.includes('/Code Cache/')).map((file) => [file.path, file.reason]);
-    throw new Error(`No real Chromium Simple generated-code entry passed verification: ${JSON.stringify(candidates.slice(0, 15))}`);
-  }
-  const target = item.path;
-  const prior = digest(target);
+  const entries = scan.files.filter((file) =>
+    file.cleanup_kind === 'compiled_code' && file.decision === 'review' && file.app_path === app);
+  const inventory = scan.files.filter((file) => file.path.includes('/Code Cache/'))
+    .map((file) => [file.path.slice(cache.length + 1), file.size, file.reason]);
+  const jsEntry = entries.find((file) => file.cache_language === 'JavaScript');
+  const wasmEntry = entries.find((file) => file.cache_language === 'WebAssembly' &&
+    readFileSync(file.path).includes(`${origin}/fixture.wasm`));
+  assert(jsEntry && wasmEntry, `Expected real JavaScript and WebAssembly entries: ${JSON.stringify(inventory.slice(0, 25))}`);
+  const targets = [jsEntry.path, wasmEntry.path];
+  const prior = targets.map(digest);
   function quarantine(snapshot) {
-    const result = engine('run', { scan_id: snapshot.scan_id, paths: [target], action: 'quarantine' });
-    assert.deepEqual(result.last_action.items.map((entry) => entry.status), ['quarantined'], JSON.stringify(result.last_action.items));
-    assert(!existsSync(target));
+    const result = engine('run', { scan_id: snapshot.scan_id, paths: targets, action: 'quarantine' });
+    assert.deepEqual(result.last_action.items.map((entry) => entry.status), ['quarantined', 'quarantined'],
+      JSON.stringify(result.last_action.items));
+    assert(targets.every((path) => !existsSync(path)));
     assert.deepEqual(protectedPaths.flatMap(contents), protectedBefore);
     return result.last_action.id;
   }
   const batch = quarantine(scan);
   engine('restore', { batch_id: batch });
-  assert.equal(digest(target), prior);
+  assert.deepEqual(targets.map(digest), prior);
   scan = engine('scan_app', { path: app });
   quarantine(scan);
   await session(origin, 1, async (evaluate) => {
@@ -225,7 +246,7 @@ try {
     })()`);
     assert.deepEqual(reopened, [credential, true, credential]);
   });
-  console.log(`Real Google Chrome ${version}: generated cache quarantined and restored byte-for-byte; restart preserved cookies, local storage and offline Cache Storage.`);
+  console.log(`Real Google Chrome ${version}: JavaScript and WebAssembly caches quarantined and restored byte-for-byte; after restart, WebAssembly executed and cookies, local storage and offline Cache Storage remained readable.`);
 } finally {
   server.close();
   rmSync(lab, { recursive: true, force: true });
