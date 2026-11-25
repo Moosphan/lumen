@@ -56,6 +56,39 @@ private func press(_ name: String, in app: AXUIElement) throws {
     }
 }
 
+private func mcpCall(bundle: URL, tool: String, arguments: [String: Any] = [:]) throws -> [String: Any] {
+    let messages: [[String: Any]] = [
+        ["jsonrpc": "2.0", "id": 1, "method": "initialize", "params": ["protocolVersion": "2025-11-25"]],
+        ["jsonrpc": "2.0", "method": "notifications/initialized"],
+        ["jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": ["name": tool, "arguments": arguments]],
+    ]
+    let script = bundle.appendingPathComponent("Contents/Resources/engine/mcp_server.py")
+    let input = Pipe(), output = Pipe()
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+    process.arguments = ["-I", "-B", script.path]
+    process.standardInput = input
+    process.standardOutput = output
+    process.standardError = FileHandle.nullDevice
+    try process.run()
+    for message in messages {
+        try input.fileHandleForWriting.write(contentsOf: JSONSerialization.data(withJSONObject: message))
+        try input.fileHandleForWriting.write(contentsOf: Data([10]))
+    }
+    try input.fileHandleForWriting.close()
+    let outputData = output.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    guard process.terminationStatus == 0,
+          let line = outputData.split(separator: 10).last,
+          let reply = try JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
+          let result = reply["result"] as? [String: Any], result["isError"] as? Bool == false,
+          let blocks = result["content"] as? [[String: Any]], let text = blocks.first?["text"] as? String,
+          let response = try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else {
+        throw Failure("MCP did not return a usable response for \(tool)")
+    }
+    return response
+}
+
 private func position(_ element: AXUIElement) -> CGPoint? {
     guard let raw = attribute(element, kAXPositionAttribute),
           CFGetTypeID(raw) == AXValueGetTypeID() else { return nil }
@@ -233,6 +266,14 @@ private func fallbackReport(_ pid: pid_t) {
         try press("模型详情", in: ax)
         _ = try eventually("the model preservation verdict") { element("保留模型", in: ax, button: false) }
         try press("完成", in: ax)
+        try press("fixture/managed", in: ax)
+        try press("检查固定修订", in: ax)
+        try press("保存恢复凭据", in: ax)
+        _ = try eventually("the saved pinned model in the isolated state") {
+            let rows = config(state)?["model_recovery_recipes"] as? [String: [String: Any]]
+            return rows?.values.contains(where: { $0["filename"] as? String == "example.safetensors" }) == true ? true : nil
+        }
+        try press("完成", in: ax)
         captureWindow(pid: pid, lab: lab, filename: "Lumen-model-inventory.png")
         try press("大文件清理", in: ax)
         let nodes = ["Documents", "Library", ".cache", "Downloads", "Movies", "Pictures"]
@@ -255,6 +296,34 @@ private func fallbackReport(_ pid: pid_t) {
         try press("notes.txt", in: ax)
         _ = try eventually("the selected file's cleanup action") { element("审阅此文件", in: ax, button: true) }
         print("Space Browser: multi-row geometry, three directory levels, small and zero-byte files, and file selection verified with AX.")
+        try press("扫描范围", in: ax)
+        try press("允许本地 MCP", in: ax)
+        _ = try eventually("MCP opt-in saved to the isolated workspace") {
+            config(state)?["mcp_enabled"] as? Bool == true ? true : nil
+        }
+        let summary = try mcpCall(bundle: bundle, tool: "lumen_summary")
+        guard let snapshot = summary["snapshot"] as? String,
+              let candidates = summary["candidates"] as? [[String: Any]],
+              let alias = candidates.first(where: { ($0["size"] as? NSNumber)?.intValue == 49_152 })?["alias"] as? String else {
+            throw Failure("No opaque MCP alias for the isolated download")
+        }
+        let draft = try mcpCall(bundle: bundle, tool: "lumen_create_draft",
+                                arguments: ["snapshot": snapshot, "aliases": [alias]])
+        guard let draftID = draft["draft_id"] as? String, let token = draft["status_token"] as? String else {
+            throw Failure("MCP draft had no status credentials")
+        }
+        try press("刷新 MCP 草案", in: ax)
+        try press("审阅 MCP 草案", in: ax)
+        _ = try eventually("the original filename in the native approval sheet") { element("archive.zip", in: ax, button: false) }
+        try press("批准并隔离", in: ax)
+        try press("完成", in: ax)
+        let outcome = try mcpCall(bundle: bundle, tool: "lumen_draft_status",
+                                  arguments: ["draft_id": draftID, "status_token": token])
+        guard outcome["status"] as? String == "completed",
+              (outcome["result"] as? [String: Any])?["quarantined"] as? Int == 1 else {
+            throw Failure("Native MCP approval did not quarantine exactly one synthetic file")
+        }
+        print("MCP draft: opaque alias, native approval of the exact file, and token-scoped quarantine outcome verified.")
         try press("空间总览", in: ax)
         try press("创建演练样本", in: ax)
         let initial = try eventually("the fixture scan in a separate state directory") { fixtureReport(lab) }

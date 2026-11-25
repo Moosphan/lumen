@@ -20,7 +20,7 @@ struct SuggestedScopes: View {
         let excluded = store.data.paths("local_exclude")
         let groups = [("文件", "folder"), ("资源库", "folder"),
                       ("Agent 工程", "square.3.layers.3d"), ("Agent 数据", "externaldrive"),
-                      ("模型存储", "cpu")]
+                      ("模型存储", "cpu"), ("开发缓存", "terminal")]
         Panel {
             Text("本机自动扫描").font(.headline)
             Text("标准位置和已识别工程会在打开既白时盘点。").font(.callout).foregroundStyle(.secondary)

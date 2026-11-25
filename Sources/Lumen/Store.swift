@@ -100,7 +100,10 @@ func resource(_ name: String, source: String) -> URL? {
                 task.waitUntilExit()
                 let envelope = (try? JSONSerialization.jsonObject(with: reply)) as? Object
                 let dashboard = envelope?["data"] as? Object
-                let presentation = ["fixture", "size_tree", "model_runtime"].contains(command)
+                let standalone = ["fixture", "size_tree", "model_runtime", "model_recovery_options", "model_recover",
+                                  "model_pin", "model_forget",
+                                  "mcp_pending", "mcp_decline"].contains(command)
+                let presentation = standalone
                     ? nil : dashboard.map(InventoryPresentation.init)
                 DispatchQueue.main.async {
                     guard self.process === task else { return }
@@ -120,8 +123,13 @@ func resource(_ name: String, source: String) -> URL? {
                         self.inventory = presentation
                         self.generation += 1
                     }
-                    if !["status", "fixture", "model_runtime"].contains(command) {
-                        self.notice = ["scan", "scan_local"].contains(command) ? "扫描完成，共 \(self.files.count) 个文件。" : "已更新本地记录。"
+                    if !standalone && command != "status" {
+                        if dashboard["mcp_startup_deferred"] as? Bool == true {
+                            self.notice = "保留了待处理 MCP 草案关联的扫描结果。"
+                        } else {
+                            self.notice = ["scan", "scan_local"].contains(command)
+                                ? "扫描完成，共 \(self.files.count) 个文件。" : "已更新本地记录。"
+                        }
                     }
                     if let last = dashboard["last_action"] as? Object {
                         let batches = dashboard.rows("last_actions")
@@ -148,6 +156,9 @@ func resource(_ name: String, source: String) -> URL? {
     }
     func cancelSpaceAnalysis() {
         if busy == "size_tree", let process, process.isRunning { process.terminate() }
+    }
+    func cancelModelRecovery() {
+        if busy == "model_recover", let process, process.isRunning { process.terminate() }
     }
     func addScope(deep: Bool) {
         guard fixtureState == nil else { return }

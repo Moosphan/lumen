@@ -56,6 +56,8 @@ import Foundation
             "files": files, "agent_inventory": agents
         ]
         let inventory = InventoryPresentation(report)
+        let images = inventory.mediaGroups.first { $0.id == "image" }
+        precondition(images?.allocated == 40 && images?.identities == 1 && images?.referenced == 1)
         let project = inventory.workspaceProjects["/projects/shared"]!
         precondition(project.agents == ["Codex", "Cursor"])
         precondition(project.detail.stats.bytes == 60 && project.detail.stats.sharedBytes == 40)

@@ -83,6 +83,16 @@ Copilot CLI 与 VS Code 分行展示，工具总数按家族合并。以上是�
 
 本分支的模型页使用已盘点的本地文件。Ollama 显示清单和 tag，Hugging Face 显示修订及共享权重，LM Studio 区分已知量化或分片，ComfyUI 识别内置加载节点的静态引用。支持已授权的自定义目录，并可手动核验 Ollama 或 LM Studio 本机服务的加载状态。结果缺乏证据时显示未知，模型全部保留。任务收尾单显示生命周期和批次，OpenTimelineIO 的本地源素材与代理引用也参与保护。增量扫描复用未变化的 Agent 归属摘要，缓存仅持久化证据字段、工程路径和文件状态戳。
 
+#### 第三批开发分支覆盖
+
+| 工单 | 当前覆盖 | 后续验收 |
+| --- | --- | --- |
+| [#19 模型重新获取](https://github.com/Moosphan/lumen/issues/19) | 保存公开 Hugging Face 模型的文件级恢复凭据；固定修订、文件大小和 SHA-256 复核；支持下载中断与同名冲突 | 在实际工具中核验重新导入后的可见性；扩展 Ollama、LM Studio 和 ComfyUI 的可重建来源与整组权重验证 |
+| [#20 本地 MCP](https://github.com/Moosphan/lumen/issues/20) | stdio 脱敏汇总、限时草案和状态查询；原生窗口展示实际路径并批准，复核通过后可恢复隔离 | 与实际 Agent 客户端做配置和协议联调，核对加载、刷新、过期及批次查询 |
+| [#21 通用清理](https://github.com/Moosphan/lumen/issues/21) | 七类开发缓存盘点；按规则审阅 npm、旧版 pip、Homebrew 与 Xcode 的部分文件；按已索引的媒体类型、已知跨工程引用和内容重复项审阅 | 核对 Docker 独立构建缓存，验证原生工具清理与恢复，扩充应用低影响规则和残留归属 |
+
+pnpm 内容存储、pip `http-v2`、uv 缓存与 Docker 虚拟磁盘只做盘点。Docker 行显示整个本地虚拟磁盘的已分配空间，独立构建缓存大小显示未知。媒体内容重复依据深度扫描的哈希结果，跨工程引用依赖已识别的格式。[pip 缓存布局](https://pip.pypa.io/en/stable/topics/caching/) · [uv 缓存链接模式](https://docs.astral.sh/uv/reference/settings/#link-mode) · [Docker Desktop 数据与恢复](https://docs.docker.com/desktop/settings-and-maintenance/backup-and-restore/)
+
 通用功能对照表持续追踪模拟器运行时、相似照片视频、厂商原生包管理、可恢复卸载和内存压力／交换空间展示。先在磁盘清理范围内逐项验收，内存指标作为后续独立功能评估。[Latent 功能概览](https://latentmac.com/) · [Latent 帮助](https://latentmac.com/help)
 
 ## 怎样证明做到更好

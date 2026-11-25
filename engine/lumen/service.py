@@ -1,17 +1,20 @@
 """Authorize scopes, persist local state and revalidate previews before actions."""
 import fcntl
+import hashlib
 import json
 import os
 import stat
 import tempfile
 import time
+import unicodedata
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
-from . import actions, agent_events, app_cleanup, integrations, local, macmanage
-from . import model_inventory, model_runtime, space_tree, task_closeout
+from . import actions, agent_events, app_cleanup, developer_caches, integrations, local, macmanage
+from . import mcp_review, model_inventory, model_recovery, model_runtime, space_tree, task_closeout
 from .fixture import create_fixture
-from .scan import _under, scan
+from .scan import SYSTEM_ROOTS, _under, scan
 
 
 def inside(path, root):
@@ -99,6 +102,12 @@ def assign_roots(config, values, state, renew=()):
 
 
 def apply_settings(config, request, state):
+    if "mcp_enabled" in request:
+        if not isinstance(request["mcp_enabled"], bool):
+            raise ValueError("MCP 设置需要布尔值")
+        config["mcp_enabled"] = request["mcp_enabled"]
+        if not config["mcp_enabled"]:
+            mcp_review.disable(config)
     if "local_exclude" in request:
         config["local_exclude"] = paths(request["local_exclude"])
         blocked = set(map(Path, config["local_exclude"]))
@@ -263,6 +272,7 @@ def inventory(config, state, incremental=False, full=False, quick=False):
                       if _under(Path(item["path"]), manual_paths)]
     locations, detected, installed, discovery_issues, suggestions = [], {}, None, set(), set()
     extensions = []
+    cache_locations = []
     if config.get("local_enabled") and config.get("_local_home"):
         blocked = [Path(p) for p in exclusions + config.get("local_exclude", [])]
         locations, detected, installed, discovery_issues, suggestions, extensions = local.plan(
@@ -273,6 +283,14 @@ def inventory(config, state, incremental=False, full=False, quick=False):
         locations += app_cleanup.extensions(Path(config["_local_home"]), installed,
                                             config.get("app_analysis", ()), set(blocked))
         exclusions += config.get("local_exclude", [])
+    if config.get("_local_home"):
+        cache_locations = developer_caches.locations(
+            config["_local_home"], exclusions, authorized=manual, env=os.environ, scoped_only=installed is None)
+        if installed is not None and cache_locations:
+            automatic_locations = {row["path"]: row for row in locations}
+            for row in cache_locations:
+                automatic_locations[row["path"]] = {**automatic_locations.get(row["path"], {}), **row}
+            locations = list(automatic_locations.values())
     projects = {p: list(a) for p, a in config["projects"].items()}
     for path, agents in detected.items():
         projects[str(path)] = sorted(set(projects.get(str(path), [])) | agents)
@@ -284,11 +302,17 @@ def inventory(config, state, incremental=False, full=False, quick=False):
     report = scan(manual + automatic, deep=deep, projects=projects,
                   keep=sorted(protected | model_scopes), exclude=exclusions,
                   hash_cache=config.setdefault("hash_cache", {}) if incremental else None, installed=installed,
-                  agent_stores={Path(row["path"]): row["agent_store"] for row in locations if row.get("agent_store")})
+                  agent_stores={Path(row["path"]): row["agent_store"] for row in locations if row.get("agent_store")},
+                  metadata_only_roots=[path for row in cache_locations if row["cache_layout"] != "xcode"
+                                       for path in (row["path"], *row["aliases"])],
+                  metadata_only_file_ids={tuple(row["identity"]) for row in cache_locations
+                                          if not row["directory"]})
     report["issues"].extend(sorted(discovery_issues))
     report["local_locations"] = locations
     if installed is not None:
         app_cleanup.classify(report, Path(config["_local_home"]))
+    report["developer_caches"] = developer_caches.classify(
+        report, config["_local_home"], discovered=cache_locations) if cache_locations else []
     report["suggested_projects"] = sorted(set(report["suggested_projects"]) | suggestions)
     for lost in sorted(set(config["roots"])-set(active_roots(config))):
         report["issues"].append(lost + " · 授权目录离线或身份变化，请重新选择")
@@ -338,7 +362,7 @@ def inventory(config, state, incremental=False, full=False, quick=False):
         if _under(path, protected_paths):
             row.update(decision="keep", reason="用户标记保留或任务正在引用")
         if (installed is not None and row["decision"] == "review" and not _under(path, review_roots)
-                and not row.get("cleanup_kind")):
+                and not (row.get("cleanup_kind") or row.get("developer_cache_review"))):
             row.update(decision="keep", reason="自动发现的位置仅盘点，可在扫描范围添加后审阅")
     report["model_inventory"] = {"models": [], "issues": [], "physical_bytes": 0, "unique_bytes": 0, "shared_bytes": 0}
     model_kinds = ("model", "symlink")
@@ -368,7 +392,8 @@ def operation_roots(config, report):
         return roots
     home = Path(config["_local_home"])
     supported = auto_review_roots(home) + [home / "Library/Application Support/Code"]
-    supported += [Path(row["path"]) for row in report.get("local_locations", []) if row.get("app_cleanup")]
+    supported += [Path(row["path"]) for row in report.get("local_locations", [])
+                  if row.get("app_cleanup") or row.get("cache_review_root")]
     indexed = {row["path"]: row["identity"] for row in report.get("local_locations", [])}
     return roots + [str(root) for root in supported if str(root) in indexed and
                     indexed[str(root)] == root_identity(root) and
@@ -396,7 +421,7 @@ def refresh(config, state, quick=False):
     return report
 
 
-def perform(config, state, request, temporary_task=None, planned_paths=(), *, closeout_id=None):
+def perform(config, state, request, temporary_task=None, planned_paths=(), *, closeout_id=None, require_all=False):
     requested = paths(request.get("paths", []))
     action = request.get("action")
     if not requested or action not in ("quarantine", "clean", "trash"):
@@ -410,16 +435,21 @@ def perform(config, state, request, temporary_task=None, planned_paths=(), *, cl
     manual_or_review = manual + (auto_review_roots(Path(config["_local_home"])) if config.get("_local_home") else [])
     previous_roots = set(operation_roots(config, config["report"]))
     roots = [root for root in operation_roots(config, fresh) if root in previous_roots]
+    scoped_roots = tuple(map(Path, roots))
     idle_apps = {}
     for path in requested:
         old, row = preview.get(path), current.get(path)
-        fields = ("dev", "ino", "size", "mtime_ns", "ctime_ns", "decision", "rule_id", "cleanup_kind", "app_path")
+        fields = ("dev", "ino", "size", "mtime_ns", "ctime_ns", "decision", "rule_id", "cleanup_kind", "app_path",
+                  "developer_cache_review")
         if not old or not row or any(old.get(f) != row.get(f) for f in fields):
             skipped.append({"path": path, "status": "skipped", "reason": "预演已过期，请重新扫描"})
             continue
         if (action != "clean" and not any(inside(Path(path), root) for root in manual_or_review)
-                and not row.get("cleanup_kind")):
+                and not (row.get("cleanup_kind") or row.get("developer_cache_review"))):
             skipped.append({"path": path, "status": "skipped", "reason": "此位置仅支持低影响清理"})
+            continue
+        if require_all and not mcp_candidate(row, scoped_roots, state):
+            skipped.append({"path": path, "status": "skipped", "reason": "草案的引用或保留状态发生变化"})
             continue
         if temporary_task and not eligible_temporary(config, temporary_task, row):
             skipped.append({"path": path, "status":"skipped", "reason":"任务登记身份或保护状态已改变"})
@@ -437,6 +467,10 @@ def perform(config, state, request, temporary_task=None, planned_paths=(), *, cl
             skipped.append({"path": path, "status": "skipped", "reason": "重复组必须保留至少一份"})
             continue
         selected.append(row)
+    if require_all and skipped:
+        return {"action": action, "items": skipped + [
+            {"path": row["path"], "status": "skipped", "reason": "草案已变化，整批等待重新审批"}
+            for row in selected]}
     if selected and action == "trash":
         result = actions.execute(state, roots, selected, action,
                                  trash_override=lambda p: trash_destination(config, p))
@@ -602,7 +636,132 @@ def observe_agent(config, state, request):
     return {"event": event, "duplicate": duplicate}
 
 
-def dispatch(state, request, local_home=None, include_system=False):
+def mcp_candidate(row, roots, state):
+    if (row["decision"] not in ("safe", "review") or row["kind"] in ("symlink", "model") or row["nlink"] != 1
+            or row.get("refs") or row.get("shared_container") or row.get("shared_owners")
+            or len(row.get("projects", [])) > 1):
+        return False
+    try:
+        actions._eligible(Path(row["path"]), roots, state)
+    except ValueError:
+        return False
+    return True
+
+
+def mcp_candidates(config, state):
+    if config.get("mcp_enabled") is not True:
+        return []
+    report = config["report"]
+    roots = tuple(map(Path, operation_roots(config, report)))
+    if not roots:
+        return []
+    return [row for row in report.get("files", []) if mcp_candidate(row, roots, state)]
+
+
+def recover_mcp_result(config, state, draft_id):
+    draft = config.get("mcp_drafts", {}).get(draft_id) if isinstance(draft_id, str) else None
+    if not draft or draft["status"] not in ("processing", "interrupted"):
+        return
+    batch = next((item for item in actions.history(state) if item.get("closeout_id") == f"mcp:{draft_id}"), None)
+    if batch:
+        mcp_review.finish(config, draft_id, batch)
+        save_config(state, config)
+
+
+def model_recovery_options(config, request):
+    require_preview(config, request)
+    report = config["report"]
+    model = next((item for item in report.get("model_inventory", {}).get("models", [])
+                  if item["id"] == request.get("model_id")), None)
+    if model is None:
+        raise ValueError("当前扫描没有这项模型，请重新盘点")
+    return model_recovery.describe(model, report)
+
+
+def selected_recovery_proof(config, request):
+    options = model_recovery_options(config, request)
+    proof = next((item for item in options if item.filename == request.get("filename")), None)
+    if proof is None or any(key in request and request[key] != proof.details()[key]
+                            for key in ("digest", "revision", "bytes")):
+        raise ValueError("当前清单缺少与所选版本一致的模型恢复来源")
+    return proof
+
+
+def pin_recovery_recipe(config, state, request):
+    proof = selected_recovery_proof(config, request)
+    recipe = model_recovery.save_recipe(proof)
+    identity = hashlib.sha256(json.dumps(recipe, sort_keys=True).encode()).hexdigest()
+    recipes = config.setdefault("model_recovery_recipes", {})
+    if identity not in recipes and len(recipes) >= 100:
+        raise ValueError("已保存 100 条恢复凭据，请先移除不需要的记录")
+    recipes[identity] = recipe
+    save_config(state, config)
+    return {"recipe": dict(proof.details(), id=identity)}
+
+
+def model_destination(config, state, local_home, raw):
+    path = integrations.recorded_path(raw)
+    grants = set(map(Path, active_roots(config)))
+    if local_home is not None and not config.get("labs"):
+        grants.add(Path(local_home) / "Downloads")
+    excluded = {state, *SYSTEM_ROOTS, Path("/Library"), Path("/Applications")}
+    excluded.update(map(Path, config["exclude"] + config.get("local_exclude", [])))
+    excluded.update(Path(row["path"]) for row in config["report"].get("local_locations", [])
+                    if row.get("model_store") or row.get("agent_store") or row.get("developer_cache"))
+    excluded.update(Path(row["path"]) for row in config.get("model_roots", []))
+    if local_home is not None:
+        excluded.add(Path(local_home) / ".cache/huggingface")
+        excluded.update(root for root, _ in model_inventory.locations(local_home, os.environ))
+    def folded(value):
+        return Path(unicodedata.normalize("NFC", str(value)).casefold())
+
+    if (path is None or not _under(path, grants) or _under(folded(path), {folded(root) for root in excluded})
+            or {part.casefold() for part in local.HIDDEN_SCOPE_NAMES}.intersection(part.casefold() for part in path.parts)):
+        raise ValueError("请选择下载目录或已授权的普通文件夹")
+    identity = root_identity(path)
+    if not identity:
+        raise ValueError("无法核对目标目录，请重新选取")
+    return path, identity, excluded
+
+
+def recover_model(config, state, lock, local_home, request, cancel):
+    recipe_id = request.get("recipe_id")
+    pinned = None
+    if isinstance(recipe_id, str):
+        pinned = config.get("model_recovery_recipes", {}).get(recipe_id)
+        proof = model_recovery.read_recipe(pinned)
+    else:
+        proof = selected_recovery_proof(config, request)
+    destination, identity, excluded = model_destination(config, state, local_home, request.get("destination"))
+
+    @contextmanager
+    def precommit():
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            current = load_config(state)
+            if pinned is not None:
+                if current.get("model_recovery_recipes", {}).get(recipe_id) != pinned:
+                    raise ValueError("恢复凭据已移除，请重新选取")
+            else:
+                require_preview(current, request)
+            fresh, current_identity, _ = model_destination(current, state, local_home, str(destination))
+            if fresh != destination or current_identity != identity:
+                raise ValueError("目标目录已变化，请重新选取")
+            yield
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+    fcntl.flock(lock, fcntl.LOCK_UN)
+    try:
+        return model_recovery.recover(proof, destination, cancel=cancel, excluded_roots=excluded,
+                                      precommit=precommit)
+    except (OSError, ValueError):
+        if cancel is not None and cancel():
+            return {"status": "cancelled"}
+        raise
+
+
+def dispatch(state, request, local_home=None, include_system=False, *, cancel=None):
     state = Path(state).expanduser().absolute()
     if not isinstance(request, dict):
         raise ValueError("需要 JSON 对象")
@@ -624,10 +783,54 @@ def dispatch(state, request, local_home=None, include_system=False):
         if cmd == "model_runtime":
             models = config["report"].get("model_inventory", {}).get("models", [])
             return model_runtime.check(models, request.get("tool"))
+        if cmd == "model_recovery_options":
+            return {"options": [item.details() for item in model_recovery_options(config, request)]}
+        if cmd == "model_pin":
+            return pin_recovery_recipe(config, state, request)
+        if cmd == "model_forget":
+            recipe_id = request.get("recipe_id")
+            if isinstance(recipe_id, str):
+                config.get("model_recovery_recipes", {}).pop(recipe_id, None)
+                save_config(state, config)
+            return {"status": "removed"}
+        if cmd == "model_recover":
+            return recover_model(config, state, lock, local_home, request, cancel)
+        if cmd == "mcp_summary":
+            return mcp_review.summary(config, mcp_candidates(config, state))
+        if cmd == "mcp_draft":
+            draft = mcp_review.create_draft(config, mcp_candidates(config, state),
+                                            request.get("snapshot"), request.get("aliases"))
+            save_config(state, config)
+            return draft
+        if cmd == "mcp_status":
+            draft_id, token = request.get("draft_id"), request.get("status_token")
+            status = mcp_review.status(config, draft_id, token)
+            if status["status"] == "interrupted":
+                recover_mcp_result(config, state, draft_id)
+                status = mcp_review.status(config, draft_id, token)
+            if status["status"] == "pending" and not any(
+                    item["draft_id"] == draft_id for item in mcp_review.pending(config, mcp_candidates(config, state))):
+                draft = config["mcp_drafts"][draft_id]
+                draft["status"] = "stale"
+                draft.pop("items", None)
+                save_config(state, config)
+                status = mcp_review.status(config, draft_id, token)
+            return status
+        if cmd == "mcp_pending":
+            drafts = mcp_review.pending(config, mcp_candidates(config, state)) if config.get("mcp_drafts") else []
+            return {"drafts": drafts}
+        if cmd == "mcp_decline":
+            mcp_review.discard(config, request.get("draft_id"))
+            save_config(state, config)
+            return {"status": "rejected"}
         last = None
         completed_batches = []
         duplicate = False
         startup = cmd == "scan_local" and request.get("startup") is True
+        pending_on_launch = startup and config.get("mcp_enabled") is True and config.get("mcp_drafts") and bool(
+            mcp_review.pending(config, mcp_candidates(config, state)))
+        if pending_on_launch:
+            cmd = "status"
         if cmd == "size_tree":
             labs = list(map(Path, config.get("labs", {})))
             if labs:
@@ -650,7 +853,7 @@ def dispatch(state, request, local_home=None, include_system=False):
             config.setdefault("labs", {})[str(root)] = [st.st_dev, st.st_ino]
             save_config(state, config)
             return {"root": str(root)}
-        measures_space = cmd in ("run","purge","restore","empty_trash","uninstall")
+        measures_space = cmd in ("run","purge","restore","empty_trash","uninstall","mcp_approve")
         if (measures_space or cmd in ("task", "session_end") or
                 any(key in request for key in ("exclude", "local_exclude", "roots"))):
             space_tree.invalidate(state)
@@ -695,6 +898,19 @@ def dispatch(state, request, local_home=None, include_system=False):
                 remember_task(config, request)
         elif cmd == "run":
             last = perform(config, state, request)
+        elif cmd == "mcp_approve":
+            draft_id = request.get("draft_id")
+            approved = mcp_review.take(config, mcp_candidates(config, state), draft_id, request.get("paths"))
+            save_config(state, config)
+            try:
+                last = perform(config, state, {"paths": approved, "action": "quarantine"},
+                               closeout_id=f"mcp:{draft_id}", require_all=True)
+            except (OSError, ValueError, RuntimeError):
+                mcp_review.finish(config, draft_id, None)
+                save_config(state, config)
+                raise
+            mcp_review.finish(config, draft_id, last)
+            save_config(state, config)
         elif cmd == "session_end":
             task = integrations.claude_session_end(request["event"], active_roots(config))
             prior = next((t for t in config["tasks"] if t["id"] == task["id"]), None)
@@ -758,6 +974,12 @@ def dispatch(state, request, local_home=None, include_system=False):
         dashboard["configured_projects"] = config["projects"]
         dashboard["local_exclude"] = config.get("local_exclude", [])
         dashboard["model_roots"] = config.get("model_roots", [])
+        dashboard["model_recovery_recipes"] = [
+            dict(model_recovery.read_recipe(value).details(), id=key)
+            for key, value in config.get("model_recovery_recipes", {}).items()
+        ]
+        dashboard["mcp_enabled"] = config.get("mcp_enabled", False)
+        dashboard["mcp_startup_deferred"] = bool(pending_on_launch)
         dashboard["automatic_rules"] = config.get("automatic_rules", [])
         dashboard["trash_volumes"] = config.get("trash_preview", [])
         dashboard["history"] = actions.history(state)

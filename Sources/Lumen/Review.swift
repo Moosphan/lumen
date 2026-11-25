@@ -136,6 +136,7 @@ struct ReviewView: View {
         let chosen = current?.selected(selection) ?? []
         let markedSafe = current?.safePaths ?? []
         return VStack(alignment: .leading, spacing: 12) {
+            developerCaches
             Panel {
                 HStack {
                     TextField("搜索文件名或路径", text: $query).textFieldStyle(.roundedBorder)
@@ -236,6 +237,61 @@ struct ReviewView: View {
                 store.call("run", ["action": plan.action, "paths": plan.files.map(\.path), "scan_id": plan.scanID])
             }
         }
+    }
+    @ViewBuilder
+    private var developerCaches: some View {
+        let groups = store.data.rows("developer_caches")
+        if !groups.isEmpty {
+            Panel {
+                DisclosureGroup("开发工具缓存（\(groups.count)）") {
+                    LazyVStack(alignment: .leading, spacing: 10) {
+                        ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
+                            let paths = group.paths("review_paths")
+                            HStack(spacing: 10) {
+                                Image(systemName: "terminal").foregroundStyle(lilac).frame(width: 24)
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(group.string("evidence")).font(.callout.weight(.medium))
+                                        .lineLimit(2)
+                                    Text(group.string("reason")).font(.caption).foregroundStyle(.secondary)
+                                        .lineLimit(2).help(group.string("reason"))
+                                }
+                                Spacer(minLength: 8)
+                                VStack(alignment: .trailing, spacing: 4) {
+                                    Text(bytes(group.number("allocated_bytes"))).monospacedDigit()
+                                    if group.string("sizing") == "vm_image" {
+                                        Text("虚拟磁盘占用").font(.caption).foregroundStyle(.secondary)
+                                    } else if !paths.isEmpty {
+                                        Text("\(paths.count) 项待审阅").font(.caption).foregroundStyle(.secondary)
+                                    }
+                                }
+                                FinderButton(path: group.string("path"), reveal: group.string("sizing") == "vm_image")
+                                if !paths.isEmpty {
+                                    CleanupIcon(title: "审阅\(group.string("tool"))缓存") {
+                                        showDeveloperCache(group)
+                                    }.disabled(!store.busy.isEmpty)
+                                }
+                            }
+                        }
+                    }.padding(.top, 8)
+                }
+            }
+        }
+    }
+
+    private func showDeveloperCache(_ group: Object) {
+        owner = ""
+        path = ""
+        verdict = ""
+        query = ""
+        kind = ""
+        age = "不限时间"
+        minimumSize = "不限大小"
+        duplicatesOnly = false
+        residualsOnly = false
+        selectedTask = ""
+        selection.removeAll()
+        project = group.string("tool") + " 缓存"
+        bucketPaths = Set(group.paths("review_paths"))
     }
 }
 

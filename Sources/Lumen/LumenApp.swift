@@ -145,7 +145,11 @@ struct Workbench: View {
                                                          bucketPaths: $bucketPaths, path: $reviewPath)
                                 case .large:
                                     SpaceBrowser(store: store, canvasHeight: max(320, viewport.size.height - 226),
-                                                 didOpenLevel: { scroll.scrollTo("workspace-heading", anchor: .top) }) { path, enroll in
+                                                 didOpenLevel: { scroll.scrollTo("workspace-heading", anchor: .top) },
+                                                 reviewMedia: { group in
+                                        review(project: MediaReviewGroup.titles[group.id] ?? group.id)
+                                        bucketPaths = group.paths
+                                    }) { path, enroll in
                                         review()
                                         reviewPath = path
                                         if enroll { store.scan(store.roots + [path], deep: false, renewRoots: [path]) }
@@ -258,6 +262,7 @@ struct Workbench: View {
             } message: {
                 Text("导入结束事件后，引擎可直接移除授权目录内符合该版本规则且经复核的旧日志，无法通过既白恢复。")
             }
+            MCPCleanupPanel(store: store)
             ForEach(["keep", "exclude"], id: \.self) { key in
                 Panel {
                     HStack {

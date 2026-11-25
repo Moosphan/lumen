@@ -75,6 +75,7 @@ struct ModelInventoryView: View {
             if !runtimeMessage.isEmpty {
                 Text(runtimeMessage).font(.caption).foregroundStyle(.secondary)
             }
+            SavedModelRecoveryPanel(store: store)
             if filtered.isEmpty {
                 ContentPlaceholder(icon: "cpu", title: store.scanning ? "正在盘点模型" : "未找到匹配的模型",
                     message: models.isEmpty ? "模型盘点覆盖已识别的本地存储。自定义目录可从扫描范围添加。" : "试试模型名称、量化或工具名称。")
@@ -104,7 +105,7 @@ struct ModelInventoryView: View {
             runtimeStates = [:]
             runtimeMessage = ""
         }.sheet(item: $selected) { model in
-            ModelDetailView(model: model)
+            ModelDetailView(store: store, model: model)
         }
     }
 
@@ -168,6 +169,7 @@ struct ModelInventoryView: View {
 }
 
 private struct ModelDetailView: View {
+    @ObservedObject var store: Store
     let model: IndexedModel
     @Environment(\.dismiss) private var dismiss
 
@@ -180,7 +182,7 @@ private struct ModelDetailView: View {
                         .font(.callout).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button("完成") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("完成") { dismiss() }.keyboardShortcut(.cancelAction).disabled(store.busy == "model_recover")
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 15) {
@@ -199,6 +201,9 @@ private struct ModelDetailView: View {
                         if !digest.isEmpty {
                             Text(digest).font(.caption.monospaced()).textSelection(.enabled)
                         }
+                    }
+                    if model.tool == "Hugging Face" {
+                        ModelRecoveryPanel(store: store, modelID: model.id)
                     }
                     records("模型文件", values: model.raw.paths("files"), finder: true)
                     records("共享权重", values: model.raw.paths("shared_files"), finder: true)

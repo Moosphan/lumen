@@ -345,6 +345,35 @@ func sortedPartitions(_ partitions: [AgentPartition], bySafe: Bool) -> [AgentPar
     }
 }
 
+struct MediaReviewGroup: Identifiable {
+    static let titles = ["video": "视频", "image": "图片", "audio": "音频"]
+    static let icons = ["video": "film", "image": "photo", "audio": "waveform"]
+    let id: String
+    let paths: Set<String>
+    let identities: Int
+    let allocated: Int64
+    let referenced: Int
+    let exactCopies: Int
+
+    init(kind: String, entries: [Entry]) {
+        id = kind
+        paths = Set(entries.map(\.path))
+        let groups = Dictionary(grouping: entries, by: FileIdentity.init)
+        identities = groups.count
+        allocated = groups.values.reduce(0) { $0 + ($1.first?.allocated ?? 0) }
+        referenced = groups.values.lazy.filter { rows in
+            rows.contains { !$0.raw.paths("refs").isEmpty || $0.raw.paths("projects").count > 1 }
+                || Set(rows.flatMap { $0.raw.paths("projects") }).count > 1
+        }.count
+        var copies: [String: Set<FileIdentity>] = [:]
+        for entry in entries {
+            let group = entry.raw.string("duplicate_group")
+            if !group.isEmpty { copies[group, default: []].insert(FileIdentity(entry)) }
+        }
+        exactCopies = copies.values.lazy.filter { $0.count > 1 }.count
+    }
+}
+
 struct InventoryPresentation {
     let files: [Entry]
     let apps: [RankedApp]
@@ -355,6 +384,7 @@ struct InventoryPresentation {
     let reviewCount: Int
     let kinds: [String]
     let appFiles: [String: [Entry]]
+    let mediaGroups: [MediaReviewGroup]
 
     init(_ dashboard: Object = [:]) {
         let entries = dashboard.rows("files").map(Entry.init)
@@ -381,13 +411,18 @@ struct InventoryPresentation {
         var safe = 0
         var review = 0
         var types = Set<String>()
+        var media: [String: [Entry]] = [:]
         for entry in entries {
             if entry.decision == "safe" { safe += 1 }
             if entry.decision == "review" { review += 1 }
-            types.insert(entry.raw.string("kind"))
+            let kind = entry.raw.string("kind")
+            types.insert(kind)
+            if MediaReviewGroup.titles[kind] != nil { media[kind, default: []].append(entry) }
         }
         safeCount = safe
         reviewCount = review
         kinds = types.filter { !$0.isEmpty }.sorted()
+        mediaGroups = media.map { MediaReviewGroup(kind: $0.key, entries: $0.value) }
+            .sorted { $0.allocated == $1.allocated ? $0.id < $1.id : $0.allocated > $1.allocated }
     }
 }

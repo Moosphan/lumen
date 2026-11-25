@@ -1,4 +1,5 @@
 import json
+import hashlib
 import os
 import plistlib
 import tempfile
@@ -221,6 +222,66 @@ class LocalInventoryTests(unittest.TestCase):
         source = next(row for row in report["files"] if row["path"] == str(asset))
         self.assertEqual(source["decision"], "keep")
         self.assertTrue(source["refs"])
+
+    def test_developer_cache_candidates_use_scoped_quarantine_and_preserve_vm_images(self):
+        npm = self.write(".npm/_cacache/content-v2/sha512/aa/bb/" + "c" * 124, b"cache bytes")
+        docker = self.write("Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw", b"VM bytes")
+        report = self.call("scan_local", startup=True)
+        groups = {row["tool"]: row for row in report["developer_caches"]}
+        self.assertEqual(groups["npm"]["review_paths"], [str(npm)])
+        self.assertEqual(groups["Docker"]["review_paths"], [])
+        self.assertIsNone(groups["Docker"]["isolated_build_cache_bytes"])
+        result = self.call("run", paths=[str(npm), str(docker)], scan_id=report["scan_id"], action="quarantine")
+        status = {row["path"]: row["status"] for row in result["last_action"]["items"]}
+        self.assertEqual(status, {str(npm): "quarantined", str(docker): "skipped"})
+        self.call("restore", batch_id=result["last_action"]["id"])
+        self.assertEqual(npm.read_bytes(), b"cache bytes")
+        self.assertEqual(docker.read_bytes(), b"VM bytes")
+
+    def test_manual_case_alias_cannot_quarantine_docker_vm(self):
+        docker = self.write("Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw", b"VM bytes")
+        alias = self.home / "library/containers/com.docker.docker/data/vms/0/data"
+        if not alias.is_dir():
+            self.skipTest("requires a case-insensitive fixture volume")
+        report = self.call("scan", roots=[str(alias)], deep=True)
+        row, = [entry for entry in report["files"] if entry["ino"] == docker.stat().st_ino]
+        self.assertEqual(row["decision"], "keep")
+        docker_group, = report["developer_caches"]
+        self.assertEqual(docker_group["review_paths"], [])
+        result = self.call("run", paths=[row["path"]], scan_id=report["scan_id"], action="quarantine")
+        self.assertEqual(result["last_action"]["items"][0]["status"], "skipped")
+        self.assertEqual(docker.read_bytes(), b"VM bytes")
+
+    def test_model_recipe_survives_rescan_and_revalidates_destination_grant(self):
+        weights = b"versioned weights"
+        digest = hashlib.sha256(weights).hexdigest()
+        repository = ".cache/huggingface/hub/models--org--weights"
+        blob = self.write(repository + "/blobs/" + digest, weights)
+        artifact = self.home / repository / "snapshots" / ("a" * 40) / "model.safetensors"
+        artifact.parent.mkdir(parents=True)
+        artifact.symlink_to(os.path.relpath(blob, artifact.parent))
+        report = self.call("scan_local", startup=True)
+        model, = [item for item in report["model_inventory"]["models"] if item["version"]]
+        with self.assertRaisesRegex(ValueError, "版本"):
+            self.call("model_pin", model_id=model["id"], scan_id=report["scan_id"],
+                      filename=artifact.name, digest="sha256:" + "b" * 64)
+        recipe = self.call("model_pin", model_id=model["id"], scan_id=report["scan_id"],
+                           filename=artifact.name)["recipe"]
+        artifact.unlink()
+        blob.unlink()
+        scanned = self.call("scan", roots=[str(self.manual)])
+        self.assertEqual(scanned["model_recovery_recipes"], [recipe])
+
+        def revoke(proof, destination, *, cancel, excluded_roots, precommit):
+            self.assertEqual(proof.details()["digest"], recipe["digest"])
+            self.assertEqual(destination, self.manual)
+            self.call("settings", roots=[])
+            with precommit():
+                self.fail("revoked directory was accepted for publication")
+
+        with patch("engine.lumen.model_recovery.recover", side_effect=revoke):
+            with self.assertRaisesRegex(ValueError, "授权"):
+                self.call("model_recover", recipe_id=recipe["id"], destination=str(self.manual))
 
     def test_configured_comfy_weights_are_discovered_in_the_scoped_home(self):
         weight = self.write("CustomWeights/landscape.safetensors", b"synthetic")

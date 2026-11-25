@@ -345,8 +345,10 @@ def _space(files):
 
 
 def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=None, installed=None,
-         agent_stores=None):
+         agent_stores=None, metadata_only_roots=(), metadata_only_file_ids=frozenset()):
     root_set, exclusions, kept = _paths(roots), _paths(exclude), _paths(keep)
+    metadata_roots = _paths(metadata_only_roots)
+    metadata_files = set()
     issues, files, directories, repositories = set(), {}, set(), set()
     apps, app_ids, duplicates = {}, defaultdict(list), {}
     link_targets, volumes = {}, {}
@@ -381,6 +383,8 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
             issue(p, '特殊文件，仅跳过')
             return
         kind = 'symlink' if link else _kind(p)
+        if (s.st_dev, s.st_ino) in metadata_only_file_ids or metadata_roots and _under(p, metadata_roots):
+            metadata_files.add(p)
         store = store_for(p.parent) if agent_stores else None
         owner_agent = agent_stores[store] if store else _agent(p)
         files[p] = dict(path=str(p), dev=s.st_dev, ino=s.st_ino, size=s.st_size,
@@ -451,7 +455,8 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
                         and not (agent_stores and store_for(directory))
                         and not any(a.suffix.lower() == '.app' for a in directory.parents)):
                     apps[directory] = dict(name=directory.stem, path=str(directory), bundle_id='', version='')
-                if ('.git' in names or '.git' in leaves) and not (agent_stores and store_for(directory)):
+                if (('.git' in names or '.git' in leaves)
+                        and not (agent_stores and store_for(directory)) and not _under(directory, metadata_roots)):
                     repositories.add(directory)
                 for name in sorted(names + leaves):
                     p = directory / name
@@ -507,7 +512,7 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
     for p, row in files.items():
         if row['kind'] == 'symlink':
             continue
-        if (p.suffix == '.jsonl' and not row.get('agent_store_path') and
+        if (p.suffix == '.jsonl' and not row.get('agent_store_path') and p not in metadata_files and
                 ('.codex/sessions/' in p.as_posix() or '.claude/projects/' in p.as_posix())):
             agent = _agent(p)
             try:
@@ -612,7 +617,7 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
                        app_version=apps[app]['version'])
 
     for p, row in files.items():
-        if row.get('agent_store_path'):
+        if row.get('agent_store_path') or p in metadata_files:
             continue
         if p.suffix.lower() in {'.prproj', '.drp', '.fcpbundle', '.aep', '.otioz'}:
             issue(p, '此工程格式的素材引用尚未解析')
@@ -694,7 +699,7 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
 
     hub_refs = defaultdict(set)
     for p, row in files.items():
-        if row.get('agent_store_path'):
+        if row.get('agent_store_path') or p in metadata_files:
             continue
         ref = integrations.hub_ref(p)
         if ref and row['kind'] != 'symlink':
@@ -722,7 +727,7 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
     if deep:
         sizes = defaultdict(list)
         for p, row in files.items():
-            if row['kind'] != 'symlink' and row['size'] and not row.get('agent_store_path'):
+            if row['kind'] != 'symlink' and row['size'] and not row.get('agent_store_path') and p not in metadata_files:
                 sizes[row['size']].append(p)
         for paths in sizes.values():
             if len({(files[p]['dev'], files[p]['ino']) for p in paths}) < 2:

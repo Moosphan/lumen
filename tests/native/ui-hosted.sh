@@ -27,6 +27,7 @@ export LUMEN_INVENTORY_HOME="$lab/home"
 /usr/bin/python3 -B - <<'PY'
 import os
 import json
+import hashlib
 import plistlib
 from pathlib import Path
 
@@ -56,6 +57,14 @@ kiro.mkdir(parents=True)
 models = home / ".lmstudio/models/Lumen/Sample Weight"
 models.mkdir(parents=True)
 (models / "sample-Q4_K_M.gguf").write_bytes(b"synthetic model metadata")
+hub = home / ".cache/huggingface/hub/models--fixture--managed"
+weight = b"isolated fictional model content"
+blob = hub / "blobs" / hashlib.sha256(weight).hexdigest()
+blob.parent.mkdir(parents=True)
+blob.write_bytes(weight)
+snapshot = hub / "snapshots" / ("a" * 40) / "example.safetensors"
+snapshot.parent.mkdir(parents=True)
+snapshot.symlink_to(os.path.relpath(blob, snapshot.parent))
 for folder, name, size in [
     (".cache", "tool-cache.bin", 2_000_000),
     ("Desktop", "capture.png", 900_000),
