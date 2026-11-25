@@ -25,7 +25,7 @@ const credential = 'isolated-browser-fixture';
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { encoding: 'utf8', timeout: 60_000, ...options });
   if (result.error || result.status !== 0) {
-    throw new Error(`${command} failed: ${result.error ?? result.stderr?.slice(-1800)}`);
+    throw new Error(`${options.label ?? command} failed: ${result.error ?? result.stderr?.slice(-1800)}`);
   }
   return result.stdout;
 }
@@ -37,7 +37,7 @@ function engine(cmd, args = {}) {
     'print(json.dumps(dispatch(sys.argv[1], json.load(sys.stdin), local_home=sys.argv[2], include_system=True)))',
   ].join('\n');
   return JSON.parse(run('/usr/bin/python3', ['-B', '-c', invoke, state, home], {
-    input: JSON.stringify({ cmd, ...args }), maxBuffer: 64 * 1024 * 1024,
+    label: cmd, input: JSON.stringify({ cmd, ...args }), maxBuffer: 64 * 1024 * 1024,
   }));
 }
 
@@ -194,6 +194,9 @@ try {
     .map((name) => join(profile, name)).filter(existsSync));
   const protectedBefore = protectedPaths.flatMap(contents);
   assert(protectedBefore.some(([path]) => path.endsWith('/Cookies')), 'Chrome did not create a cookies database');
+  const systemExclusions = readdirSync('/Applications').map((name) => join('/Applications', name))
+    .filter((path) => path !== app);
+  engine('settings', { local_exclude: [...systemExclusions, '/System/Applications'] });
   engine('scan_local', { startup: true });
   let scan = engine('scan_app', { path: app });
   const item = scan.files.find((file) => file.cleanup_kind === 'compiled_code' && file.decision === 'review' && file.app_path === app);
