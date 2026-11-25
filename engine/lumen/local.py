@@ -401,27 +401,29 @@ def agent_inventory(report, extensions=()):
 def summarize(report):
     """One category per indexed inode, with application bodies already aggregated."""
     priority = ('apps', 'agent', 'library', 'downloads', 'media', 'models', 'other')
+    rank = {key: position for position, key in enumerate(priority)}
     identities = {}
     for row in report['files']:
-        path = Path(row['path'])
         kind = row['kind']
         if kind == 'model':
             category = 'models'
         elif row['projects'] or row['agents']:
             category = 'agent'
-        elif row.get('app_path') and within(path, Path(row['app_path'])):
-            category = 'apps'
-        elif row['location'] == 'Library' or 'Library' in path.parts:
-            category = 'library'
-        elif 'Downloads' in path.parts:
-            category = 'downloads'
-        elif kind in ('video', 'image', 'audio'):
-            category = 'media'
         else:
-            category = 'other'
+            path = Path(row['path'])
+            if row.get('app_path') and within(path, Path(row['app_path'])):
+                category = 'apps'
+            elif row['location'] == 'Library' or 'Library' in path.parts:
+                category = 'library'
+            elif 'Downloads' in path.parts:
+                category = 'downloads'
+            elif kind in ('video', 'image', 'audio'):
+                category = 'media'
+            else:
+                category = 'other'
         identity = row['dev'], row['ino']
         previous = identities.get(identity)
-        if previous is None or priority.index(category) < priority.index(previous[0]):
+        if previous is None or rank[category] < rank[previous[0]]:
             identities[identity] = category, row['allocated_bytes']
     totals = defaultdict(int)
     for category, size in identities.values():

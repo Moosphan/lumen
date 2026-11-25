@@ -552,10 +552,14 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
             session_names[directory.parent].append(directory)
     expired_sessions = {p for paths in session_names.values() for p in sorted(paths)[:-10]}
     editor_state = {}
+    project_by_directory = {}
     for p, row in files.items():
         # Nearest declared project controls path ownership; references can
         # subsequently add projects outside the containing directory.
-        proj = next((parent for parent in p.parents if parent in project_agents), None)
+        parent = p.parent
+        if parent not in project_by_directory:
+            project_by_directory[parent] = next((root for root in p.parents if root in project_agents), None)
+        proj = project_by_directory[parent]
         if proj:
             row.update(projects=[str(proj)], agents=sorted(set(row['agents']) | project_agents[proj]), location='项目内')
         if row.get('shared_container'):
