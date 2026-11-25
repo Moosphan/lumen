@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { once } from 'node:events';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 if (process.env.GITHUB_ACTIONS !== 'true' || process.env.RUNNER_ENVIRONMENT !== 'github-hosted' ||
@@ -23,7 +23,7 @@ const browserData = snapshot ? 'Chromium' : 'Google/Chrome';
 const lab = mkdtempSync('/private/tmp/lumen-browser-');
 const home = join(lab, 'fixture-home');
 const state = join(lab, 'state');
-const app = join(snapshot ? join(home, 'Applications') : '/Applications', `${browserName}.app`);
+const app = join('/Applications', `${browserName}.app`);
 const executable = join(app, 'Contents/MacOS', browserName);
 const appInfo = join(app, 'Contents/Info');
 const profile = join(home, 'Library/Application Support', browserData);
@@ -33,6 +33,7 @@ const lsregister = '/System/Library/Frameworks/CoreServices.framework/Frameworks
 const snapshotBuild = '1754458';
 const snapshotGeneration = '1795610528154606';
 const snapshotDigest = '8f35ec02b26336e3b2b57bc7c2a5d5a2ec03a882a16ead51957d5829bbbc3697';
+let ownsSnapshotInstall = false;
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { encoding: 'utf8', timeout: 60_000, ...options });
@@ -46,9 +47,9 @@ function engine(cmd, args = {}) {
   const invoke = [
     'import json, sys',
     'from engine.lumen.service import dispatch',
-    'print(json.dumps(dispatch(sys.argv[1], json.load(sys.stdin), local_home=sys.argv[2], include_system=sys.argv[3] == "chrome")))',
+    'print(json.dumps(dispatch(sys.argv[1], json.load(sys.stdin), local_home=sys.argv[2], include_system=True)))',
   ].join('\n');
-  return JSON.parse(run('/usr/bin/python3', ['-B', '-c', invoke, state, home, product], {
+  return JSON.parse(run('/usr/bin/python3', ['-B', '-c', invoke, state, home], {
     label: cmd, input: JSON.stringify({ cmd, ...args }), maxBuffer: 64 * 1024 * 1024,
   }));
 }
@@ -69,7 +70,10 @@ function prepareBrowser() {
   const checksum = run('/usr/bin/shasum', ['-a', '256', archive], { env: { LC_ALL: 'C', PATH: '/usr/bin:/bin' } });
   assert.equal(checksum.split(/\s+/)[0], snapshotDigest, 'Official Chromium archive SHA-256 mismatch');
   run('/usr/bin/ditto', ['-x', '-k', archive, extracted]);
-  mkdirSync(dirname(app), { recursive: true });
+  // Use a standard installation location on this disposable VM. LaunchServices
+  // can ignore code extracted into temporary directories.
+  mkdirSync(app, { mode: 0o700 });
+  ownsSnapshotInstall = true;
   renameSync(join(extracted, 'chrome-mac/Chromium.app'), app);
   assert.equal(run('/usr/bin/defaults', ['read', appInfo, 'CFBundleIdentifier']).trim(), 'org.chromium.Chromium');
   run('/usr/bin/lipo', [executable, '-verify_arch', 'arm64']);
@@ -283,13 +287,10 @@ try {
   }
   const protectedBefore = protectedPaths.flatMap(contents);
   assert(protectedBefore.some(([path]) => path.endsWith('/Cookies')), 'The browser did not create a cookies database');
-  if (!snapshot) {
-    const systemExclusions = readdirSync('/Applications').map((name) => join('/Applications', name))
-      .filter((path) => path !== app);
-    engine('settings', { local_exclude: [...systemExclusions, '/System/Applications'] });
-  } else {
-    await waitForBrowserRegistration();
-  }
+  const systemExclusions = readdirSync('/Applications').map((name) => join('/Applications', name))
+    .filter((path) => path !== app);
+  engine('settings', { local_exclude: [...systemExclusions, '/System/Applications'] });
+  if (snapshot) await waitForBrowserRegistration();
   engine('scan_local', { startup: true });
   if (snapshot) {
     const scoped = engine('scan', { roots: [defaultProfile], deep: false });
@@ -333,7 +334,10 @@ try {
   }
 } finally {
   server.close();
-  if (snapshot && existsSync(app)) spawnSync(lsregister, ['-u', app], { timeout: 5000 });
+  if (ownsSnapshotInstall) {
+    spawnSync(lsregister, ['-u', app], { timeout: 5000 });
+    rmSync(app, { recursive: true, force: true });
+  }
   rmSync(lab, { recursive: true, force: true });
 }
 
