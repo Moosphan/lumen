@@ -101,7 +101,9 @@ async function session(origin, count, verifyContent) {
   const browser = spawn('/usr/bin/sandbox-exec', ['-D', `LAB=${lab}`, '-f', isolation, executable,
     '--headless', '--no-sandbox', '--disable-gpu', '--disable-background-networking', '--disable-component-update',
     '--disable-sync', '--disable-crash-reporter', '--no-first-run', '--no-default-browser-check', '--use-mock-keychain',
-    `--${backend === 'persistent' ? 'enable' : 'disable'}-features=PersistentCacheForCodeCache`,
+    backend === 'persistent'
+      ? '--enable-features=UsePersistentCacheForCodeCache,PersistentCacheCollectionWalMode'
+      : '--disable-features=UsePersistentCacheForCodeCache,InlineScriptCache',
     '--v8-cache-options=code',
     '--js-flags=--wasm-tiering-budget=100 --wasm-caching-threshold=1 --wasm-caching-timeout-ms=0',
     '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0',
@@ -229,6 +231,8 @@ try {
   const scan = engine('scan_app', { path: app });
   if (backend === 'persistent') {
     const directory = join(cache, 'Default/Code Cache/pc');
+    assert(existsSync(directory), `Chrome did not create Persistent Cache: ${scan.files
+      .filter((file) => file.path.includes('/Code Cache/')).slice(0, 15).map((file) => file.path.slice(cache.length + 1))}`);
     const before = contents(directory);
     assert(before.some(([path]) => readFileSync(path).subarray(0, 16).equals(Buffer.from('SQLite format 3\0'))),
       'Chrome did not leave a SQLite-backed Persistent Cache database');
