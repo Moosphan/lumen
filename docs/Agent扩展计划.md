@@ -63,7 +63,9 @@
 
 Copilot CLI 与 VS Code 分行展示，工具总数按家族合并。以上是基于上游元数据和合成测试确认的格式。安装、工程关联和清理能力仍分别核验。[Copilot CLI 存储](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference) · [Windsurf 本地数据](https://docs.devin.ai/desktop/troubleshooting/windsurf-common-issues) · [Kiro 会话](https://kiro.dev/docs/ide/whats-new-v1/#sessions) · [OpenClaw Agent 配置](https://docs.openclaw.ai/concepts/multi-agent/index.html) · [Qwen Code 聊天存储](https://github.com/QwenLM/qwen-code/blob/v0.28.4/packages/core/src/services/chatRecordingService.ts) · [goose 会话结构](https://github.com/aaif-goose/goose/blob/v1.60.2/crates/goose/src/session/session_manager.rs)
 
-本轮增加 Continue，累计覆盖 15 个工具家族。既白核对 VS Code 扩展清单和 `sessions.json` 的本地工作目录，验证对应会话文件存在，仅使用索引字段关联工程。默认 `.continue` 下的配置、索引和会话列为保留；自定义数据位置沿用授权范围。冲突、失效和远程会话不建立本机项目归属。[Continue 会话格式](https://github.com/continuedev/continue/blob/5522c6f44ca0ac3528b37244818fbfa39b5af470/core/util/history.ts) · [工单 #23](https://github.com/Moosphan/lumen/issues/23)
+Continue 通过 VS Code 扩展清单和 `sessions.json` 关联本地工作目录，验证对应会话文件存在。默认 `.continue` 下的配置、索引和会话列为保留；自定义数据位置沿用授权范围。冲突、失效和远程会话不建立本机项目归属。[Continue 会话格式](https://github.com/continuedev/continue/blob/5522c6f44ca0ac3528b37244818fbfa39b5af470/core/util/history.ts) · [工单 #23](https://github.com/Moosphan/lumen/issues/23)
+
+Aider 接入后累计覆盖 16 个工具家族。默认在个人目录及已授权目录的有限层级查找历史文件开头的启动记录，使用目录位置关联工程。会话历史、配置和 RepoMap 缓存计入占用并保留。文件正文和提示词不进入索引，安装状态与自定义历史文件名仍待核验。[Aider 历史文件参数](https://github.com/Aider-AI/aider/blob/v0.86.2/aider/args.py) · [启动记录格式](https://github.com/Aider-AI/aider/blob/v0.86.2/aider/io.py) · [工单 #24](https://github.com/Moosphan/lumen/issues/24)
 
 ## 功能和验收清单
 

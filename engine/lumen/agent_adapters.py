@@ -13,7 +13,7 @@ from contextlib import closing, contextmanager
 from itertools import islice
 from pathlib import Path
 
-from . import agent_ide, agent_local_tools
+from . import agent_ide, agent_local_tools, aider
 from .actions import _directory
 from .integrations import recorded_path
 
@@ -51,6 +51,7 @@ def _variable_stamp(key):
 class _Metadata:
     def __init__(self, home, quick, excluded, issues, authorized=()):
         self.home = home
+        self.quick = quick
         self.roots = (home, *authorized)
         self.excluded = tuple(excluded)
         self.hidden = {'.git', '.Trash', '.Trashes', f'.lumen-vault-{os.getuid()}'}
@@ -456,7 +457,8 @@ def discover(home: Path, quick: bool, *, excluded=(), issues=None, authorized=()
                 and not any(_inside(path, root) for root in metadata.excluded)):
             projects[str(path)].add(agent)
 
-    readers = (_cursor, _gemini, _opencode, _cline, *agent_ide.ADAPTERS, *agent_local_tools.ADAPTERS)
+    readers = (_cursor, _gemini, _opencode, _cline, *agent_ide.ADAPTERS, *agent_local_tools.ADAPTERS,
+               aider.discover_projects)
     for adapter in readers if adapters is None else adapters:
         reader = adapter.__name__
         cached = previous.get(reader)

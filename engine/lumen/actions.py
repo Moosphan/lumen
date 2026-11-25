@@ -22,6 +22,8 @@ import subprocess
 import sys
 import uuid
 
+from .aider import protected_artifact
+
 
 def _path(value):
     p = Path(value)
@@ -72,6 +74,7 @@ def _eligible(p, roots, state):
     restricted = ('/System', '/Library', '/Applications', '/bin', '/sbin',
                   '/usr', '/dev', '/private/etc', '/private/var/db', '/private/var/root')
     if (_inside(Path(str(p).casefold()), Path(str(state).casefold())) or names & protected or
+            protected_artifact(names) or
             any(v.startswith('.env.') or v.endswith(('.pem', '.key', '.p12', '.mobileprovision')) for v in names) or
             any(v.endswith(('.app', '.framework', '.bundle', '.keychain-db')) for v in names) or
             any(_inside(Path(str(p).casefold()), Path(v.casefold())) for v in restricted)):

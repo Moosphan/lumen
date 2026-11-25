@@ -15,7 +15,7 @@ from urllib.parse import unquote, urljoin, urlsplit
 from xml.parsers.expat import ExpatError
 from xml.etree.ElementTree import ParseError
 
-from . import integrations
+from . import aider, integrations
 
 
 MODELS = {'.gguf', '.safetensors', '.ckpt', '.onnx', '.pt', '.pth', '.ggml'}
@@ -383,10 +383,11 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
             issue(p, '特殊文件，仅跳过')
             return
         kind = 'symlink' if link else _kind(p)
-        if (s.st_dev, s.st_ino) in metadata_only_file_ids or metadata_roots and _under(p, metadata_roots):
+        aider_data = '.aider' in str(p).casefold() and aider.protected_artifact(p.parts)
+        if aider_data or (s.st_dev, s.st_ino) in metadata_only_file_ids or metadata_roots and _under(p, metadata_roots):
             metadata_files.add(p)
         store = store_for(p.parent) if agent_stores else None
-        owner_agent = agent_stores[store] if store else _agent(p)
+        owner_agent = agent_stores[store] if store else 'Aider' if aider_data else _agent(p)
         files[p] = dict(path=str(p), dev=s.st_dev, ino=s.st_ino, size=s.st_size,
                         mtime_ns=s.st_mtime_ns, ctime_ns=s.st_ctime_ns, nlink=s.st_nlink, kind=kind, allocated_bytes=s.st_blocks * 512,
                         owner='', app_path='', bundle_id='', duplicate_group='',

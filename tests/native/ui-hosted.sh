@@ -62,6 +62,10 @@ continue_id = "5492b813-1f5f-42fa-8013-aa3e5584fd4c"
 (continue_sessions / "sessions.json").write_text(json.dumps([
     {"sessionId": continue_id, "workspaceDirectory": continue_project.as_uri()},
 ]))
+aider_project = home / "Projects/Aider Project"
+aider_project.mkdir()
+(aider_project / "notes.txt").write_text("Keep this Aider project source.")
+(aider_project / ".aider.chat.history.md").write_text("\n# aider chat started at 2026-11-25 12:00:00\n\nSynthetic session.")
 kiro = home / ".kiro/sessions"
 kiro.mkdir(parents=True)
 models = home / ".lmstudio/models/Lumen/Sample Weight"

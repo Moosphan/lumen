@@ -47,6 +47,56 @@ class LocalInventoryTests(unittest.TestCase):
         self.assertEqual(report["projects"][str(self.home / "Documents/Codex/2026-11-24/new-project")], ["Codex"])
         self.assertEqual(sum(r["bytes"] for r in report["categories"]), report["indexed_bytes"])
 
+    def test_aider_discovers_local_project_and_protects_only_recognized_aider_data(self):
+        header = b"\n# aider chat started at 2026-11-25 11:21:05\n\n"
+        log = self.write("Work/团队/film/.aider.chat.history.md", header + b"synthetic-private-text")
+        prompt = self.write("Work/团队/film/.aider.input.history", b"synthetic prompt")
+        tags = self.write("Work/团队/film/.aider.tags.cache.v4/entry.dat", b"synthetic tags")
+        source = self.write("Work/团队/film/reference.md", b"synthetic source")
+        self.write("Projects/reserved/.aider.chat.history.md", b"not an Aider header")
+        self.write("Projects/settings-only/.aider.conf.yml", b"model: fixture")
+        self.write("Projects/node_modules/dependency/.aider.chat.history.md", header)
+        self.write("Library/Caches/example/.aider.chat.history.md", header)
+        link = self.home / "Projects/Link"
+        link.symlink_to(log.parent, target_is_directory=True)
+
+        report = self.call("scan_local", startup=True)
+        self.assertEqual(report["projects"], {str(log.parent): ["Aider"]})
+        files = {row["path"]: row for row in report["files"]}
+        for item in (log, prompt, tags):
+            self.assertIn("Aider", files[str(item)]["agents"])
+            self.assertEqual(files[str(item)]["decision"], "keep")
+        self.assertEqual(files[str(source)]["projects"], [str(log.parent)])
+        self.assertNotIn("synthetic-private-text", (self.state / "workspace.json").read_text())
+
+    def test_aider_manual_scope_and_discovery_cache_revalidate_marker(self):
+        project = self.manual / "worktree"
+        project.mkdir()
+        marker = project / ".aider.chat.history.md"
+        marker.write_bytes(b"\r\n# aider chat started at 2026-11-25 12:00:00\r\n\r\n")
+        self.assertNotIn(str(project), self.call("scan_local", startup=True)["projects"])
+        self.call("scan", roots=[str(self.manual)], deep=False)
+        report = self.call("scan_local", startup=True)
+        self.assertEqual(report["projects"][str(project)], ["Aider"])
+        self.assertNotIn(str(project), self.call("settings", roots=[])["projects"])
+        self.assertTrue(marker.exists())
+        self.assertEqual(self.call("scan", roots=[str(self.manual)], deep=False)["projects"][str(project)], ["Aider"])
+        marker.unlink()
+        self.assertNotIn(str(project), self.call("scan_local", startup=True)["projects"])
+
+    def test_aider_artifacts_stay_protected_in_manual_only_scan(self):
+        marker = self.manual / ".AIDER.CHAT.HISTORY.MD"
+        marker.write_bytes(b"unrecognized historical format")
+        protected = self.manual / ".aider.tags.cache.v4" / "entry.dat"
+        protected.parent.mkdir()
+        protected.write_bytes(b"cache")
+        report = self.call("scan", roots=[str(self.manual)], deep=True)
+        rows = {row["path"]: row for row in report["files"]}
+        self.assertEqual([rows[str(item)]["decision"] for item in (marker, protected)], ["keep", "keep"])
+        result = self.call("run", paths=[str(marker), str(protected)], scan_id=report["scan_id"], action="quarantine")
+        self.assertEqual({item["status"] for item in result["last_action"]["items"]}, {"skipped"})
+        self.assertEqual(marker.read_bytes(), b"unrecognized historical format")
+
     def test_download_review_does_not_require_a_manual_folder_grant(self):
         item = self.write("Downloads/archive.zip")
         self.call("scan", roots=[str(self.manual)])

@@ -30,7 +30,7 @@ AGENT_KINDS = {
     'Cursor': 'ide', 'Windsurf': 'ide', 'Kiro': 'ide',
     'Cline': 'extension', 'Roo Code': 'extension', 'GitHub Copilot VS Code': 'extension',
     'Continue': 'extension',
-    'Claude Code': 'cli', 'OpenCode': 'cli', 'Gemini CLI': 'cli',
+    'Claude Code': 'cli', 'OpenCode': 'cli', 'Gemini CLI': 'cli', 'Aider': 'cli',
     'GitHub Copilot CLI': 'cli', 'OpenClaw': 'cli', 'Qwen Code': 'cli', 'goose': 'cli',
 }
 HIDDEN_SCOPE_NAMES = {'.git', '.Trash', '.Trashes', f'.lumen-vault-{os.getuid()}'}
