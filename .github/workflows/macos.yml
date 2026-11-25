@@ -71,3 +71,8 @@ jobs:
         env:
           LUMEN_RUNNER_ENVIRONMENT: ${{ runner.environment }}
         run: /usr/bin/python3 -B tests/hosted-vscode.py
+      - name: Verify generated-code cleanup across real Chrome restarts
+        timeout-minutes: 4
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
+        run: node tests/hosted-chrome.mjs

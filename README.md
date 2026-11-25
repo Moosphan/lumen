@@ -21,6 +21,15 @@ cd lumen
 open dist/Lumen.app
 ```
 
+每轮本地开发包可以保存在 `dist/<提交>/`，交付同一构建的 `Lumen.app` 和 `Lumen.zip`。
+
+```bash
+lumen_build_id=$(git rev-parse --short HEAD)
+/usr/bin/python3 -B scripts/package.py --output "dist/$lumen_build_id/Lumen.app"
+/usr/bin/codesign --verify --strict "dist/$lumen_build_id/Lumen.app"
+/usr/bin/ditto -c -k --keepParent "dist/$lumen_build_id/Lumen.app" "dist/$lumen_build_id/Lumen.zip"
+```
+
 启动后自动盘点可读取的应用安装位置、下载、常见缓存、日志与本地 Agent 工程。首页显示已盘点数据的占比和启动盘容量。应用排行支持在 Finder 中显示应用及打开所在目录。可在「扫描范围」排除自动发现的位置，或添加额外目录。清理需要审阅和确认，自动收尾可单独启用。
 
 也可以点击侧栏底部的 **创建演练样本**，体验两个 Agent 共用一个视频工程、被两个工程引用的配乐及可处理的日志。演练使用独立的设置、隔离区和废纸篓。
