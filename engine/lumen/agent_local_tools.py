@@ -420,11 +420,13 @@ def _pi_session_header(metadata, path):
         return None
     except (ValueError, RecursionError):
         return None
-    if (isinstance(value, dict) and value.get('type') == 'session'
-            and type(value.get('version')) is int and value['version'] in (1, 2, 3)
-            and isinstance(value.get('id'), str) and 0 < len(value['id']) <= 256):
-        return recorded_path(value.get('cwd'))
-    return None
+    if not isinstance(value, dict) or value.get('type') != 'session':
+        return None
+    version = value.get('version', 1)
+    identifier = value.get('id')
+    if type(version) is not int or version not in (1, 2, 3) or not isinstance(identifier, str) or not 0 < len(identifier) <= 256:
+        return None
+    return recorded_path(value.get('cwd'))
 
 
 def _pi(metadata, store, add):

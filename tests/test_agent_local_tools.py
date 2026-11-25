@@ -86,8 +86,9 @@ class LocalAgentToolTests(unittest.TestCase):
 
     def test_pi_uses_only_session_headers_for_default_and_authorized_custom_storage(self):
         header = {'type': 'session', 'version': 3, 'id': 'session-123', 'cwd': str(self.project)}
+        legacy = {key: value for key, value in header.items() if key != 'version'}
         history = self.write('.pi/agent/sessions/--bucket--/fixture.jsonl',
-                             json.dumps(header).encode() + b'\nprivate ignored body\n' * 2000)
+                             json.dumps(legacy).encode() + b'\nprivate ignored body\n' * 2000)
         self.write('.pi/agent/sessions/--bucket--/unknown.jsonl',
                    (json.dumps(dict(header, version=99, cwd=str(self.home / 'Unknown'))) + '\n').encode())
         self.write('.pi/agent/sessions/--bucket--/message.jsonl',

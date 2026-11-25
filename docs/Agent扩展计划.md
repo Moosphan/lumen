@@ -76,6 +76,8 @@ DeepSeek Harness 和 Pi 接入后累计覆盖 18 个工具家族。
 
 DeepSeek Harness 的会话、配置、插件与凭证按保留盘点。Pi 只解析会话首条记录，历史和配置按保留盘点。两者沿用工程共享占用及清理审阅流程。[Harness 工作区格式](https://github.com/deepseek-ai/deepseek-harness/blob/4b399c39a6d1479cd84ca591b4d7c88e24d38a96/packages/workspace/workspace/src/spec.ts) · [Harness 桌面数据路径](https://github.com/deepseek-ai/deepseek-harness/blob/4b399c39a6d1479cd84ca591b4d7c88e24d38a96/docs/user/guide/desktop-uninstall-cleanup.md) · [Pi 会话格式](https://github.com/earendil-works/pi/blob/bfafd8ed5168bca1f1ca88ef0529cfd326664d16/packages/coding-agent/docs/session-format.md)
 
+隔离验证使用 DeepSeek JSON 存储组件 `0.0.1-rc.1` 和 Pi `1.6.1` 的会话写入组件创建真实格式的样本，确认同一工作目录可归属两者，索引和会话文件均保留。
+
 ## 功能和验收清单
 
 | 编号 | 交付 | 依赖 | 验收 |
