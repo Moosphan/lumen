@@ -102,7 +102,8 @@ async function session(origin, count, verifyContent) {
     '--disable-features=PersistentCacheForCodeCache', '--v8-cache-options=code',
     '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0',
     `--user-data-dir=${profile}`, `--disk-cache-dir=${cache}`, `--crash-dumps-dir=${lab}`, 'about:blank'], {
-    cwd: lab, detached: true, stdio: ['ignore', 'ignore', 'pipe'], env: { ...process.env, TMPDIR: lab },
+    cwd: lab, detached: true, stdio: ['ignore', 'ignore', 'pipe'],
+    env: { ...process.env, HOME: home, CFFIXED_USER_HOME: home, TMPDIR: lab, MAC_CHROMIUM_TMPDIR: lab },
   });
   const exited = once(browser, 'exit');
   let diagnostics = '';
@@ -111,7 +112,7 @@ async function session(origin, count, verifyContent) {
   let socket;
   try {
     const url = await eventually('isolated Chrome DevTools endpoint', () => {
-      if (browser.exitCode !== null) throw new Error(diagnostics);
+      if (browser.exitCode !== null || browser.signalCode !== null) throw new Error(diagnostics);
       const [port, route] = readFileSync(marker, 'utf8').trim().split('\n');
       return /^\d+$/.test(port) && /^\/devtools\/browser\/[\w-]+$/.test(route)
         ? `ws://127.0.0.1:${port}${route}` : null;
@@ -169,6 +170,7 @@ try {
 (allow default)
 (deny network-outbound (remote ip "*:*"))
 (allow network-outbound (remote ip "localhost:*"))
+(allow network-inbound (local ip "localhost:*"))
 (deny file-write*)
 (allow file-write* (subpath (param "LAB")) (literal "/dev/null"))
 `);
