@@ -58,7 +58,10 @@ private func press(_ name: String, in app: AXUIElement) throws {
 
 private func mcpCall(bundle: URL, tool: String, arguments: [String: Any] = [:]) throws -> [String: Any] {
     let messages: [[String: Any]] = [
-        ["jsonrpc": "2.0", "id": 1, "method": "initialize", "params": ["protocolVersion": "2025-11-25"]],
+        ["jsonrpc": "2.0", "id": 1, "method": "initialize", "params": [
+            "protocolVersion": "2025-11-25", "capabilities": [String: Any](),
+            "clientInfo": ["name": "lumen-hosted-check", "version": "1.0.0"],
+        ]],
         ["jsonrpc": "2.0", "method": "notifications/initialized"],
         ["jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": ["name": tool, "arguments": arguments]],
     ]
@@ -78,9 +81,14 @@ private func mcpCall(bundle: URL, tool: String, arguments: [String: Any] = [:]) 
     try input.fileHandleForWriting.close()
     let outputData = output.fileHandleForReading.readDataToEndOfFile()
     process.waitUntilExit()
+    let replies = try outputData.split(separator: 10).compactMap { line in
+        try JSONSerialization.jsonObject(with: Data(line)) as? [String: Any]
+    }
+    guard (replies.first?["result"] as? [String: Any])?["protocolVersion"] as? String == "2025-11-25" else {
+        throw Failure("MCP initialization failed before verifying \(tool)")
+    }
     guard process.terminationStatus == 0,
-          let line = outputData.split(separator: 10).last,
-          let reply = try JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
+          let reply = replies.first(where: { $0["id"] as? Int == 2 }),
           let result = reply["result"] as? [String: Any], result["isError"] as? Bool == false,
           let blocks = result["content"] as? [[String: Any]], let text = blocks.first?["text"] as? String,
           let response = try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else {
