@@ -470,6 +470,31 @@ class LocalInventoryTests(unittest.TestCase):
         self.assertTrue(all(row["status"] == "skipped" for row in outcome["last_action"]["items"]))
         self.assertTrue(cursor.exists() and gemini.exists())
 
+    def test_devin_desktop_reuses_windsurf_family_and_guards_editor_state(self):
+        self.write('Applications/Devin.app/Contents/Info.plist', plistlib.dumps({
+            'CFBundleIdentifier': 'com.exafunction.windsurf', 'CFBundleShortVersionString': '3.14.30833',
+        }))
+        root = self.write('Projects/电影 Project/source.txt').parent
+        support = 'Library/Application Support/Devin/User'
+        identity = self.write(f'{support}/workspaceStorage/local/workspace.json',
+                              json.dumps({'folder': root.as_uri()}).encode())
+        editor_state = self.write(f'{support}/workspaceStorage/local/state.vscdb', b'private indexed state')
+        global_state = self.write(f'{support}/globalStorage/settings.json', b'private settings')
+        cascade = self.write('.codeium/windsurf/cascade/conversation.pb', b'private conversation')
+
+        report = self.call('scan_local', startup=True)
+        self.assertEqual(report['projects'].get(str(root)), ['Windsurf'])
+        agent = next(row for row in report['agent_inventory'] if row['name'] == 'Windsurf')
+        self.assertTrue(agent['installed'])
+        self.assertEqual(agent['installations'][0]['version'], '3.14.30833')
+        rows = {row['path']: row for row in report['files']}
+        protected = (identity, editor_state, global_state, cascade)
+        for path in protected:
+            self.assertEqual((rows[str(path)]['agents'], rows[str(path)]['decision']), (['Windsurf'], 'keep'))
+        outcome = self.call('run', paths=list(map(str, protected)), scan_id=report['scan_id'], action='quarantine')
+        self.assertTrue(all(row['status'] == 'skipped' for row in outcome['last_action']['items']))
+        self.assertTrue(all(path.is_file() for path in protected))
+
     def test_deep_inventory_does_not_analyze_agent_store_payloads(self):
         source = self.write(".codex/sessions/capture.html", b'<img src="image.png">')
         copy = self.write(".codex/sessions/capture-copy.html", source.read_bytes())

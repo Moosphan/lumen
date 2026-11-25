@@ -54,7 +54,7 @@
 | --- | --- | --- |
 | Claude Desktop/Cowork | 应用标识符、桌面数据、Cowork 虚拟机和本地会话分开盘点 | 项目路径格式和会话内产物归属 |
 | GitHub Copilot | CLI 首条 v1 会话事件。VS Code／Insiders 用扩展会话证据关联本地单目录工程 | 多根、远程、共享 SQLite 索引与同步历史 |
-| Windsurf | Cascade 本地存储 | 工程映射 |
+| Windsurf / Devin Desktop | 稳定版应用标识符、Windsurf 与 Devin 的稳定版及 Next 单目录工作区元数据，盘点 IDE 状态及 Cascade 本地存储 | 多根工程、Cascade 会话与具体工程的归属、桌面程序实测 |
 | Roo Code | 默认 VS Code 扩展清单、3.53.0 独立任务工作区元数据 | 旧版索引、自定义及其他编辑器配置 |
 | Kiro | IDE 应用标识符、1.x 本地 KAS 项目路径、旧会话和日志目录 | 旧会话工程归属及远程会话 |
 | OpenClaw | macOS 应用标识符、严格 JSON 配置的本地 Agent 工程，分别盘点各 Agent 会话和调度存储 | JSON5 专用语法、配置包含和单条调度任务 |
@@ -62,6 +62,8 @@
 | goose | v1.60.2 已写入 SQLite 主库的本机工作目录 | 尚未写入主库的会话与容器工作目录 |
 
 Copilot CLI 与 VS Code 分行展示，工具总数按家族合并。以上是基于上游元数据和合成测试确认的格式。安装、工程关联和清理能力仍分别核验。[Copilot CLI 存储](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference) · [Windsurf 本地数据](https://docs.devin.ai/desktop/troubleshooting/windsurf-common-issues) · [Kiro 会话](https://kiro.dev/docs/ide/whats-new-v1/#sessions) · [OpenClaw Agent 配置](https://docs.openclaw.ai/concepts/multi-agent/index.html) · [Qwen Code 聊天存储](https://github.com/QwenLM/qwen-code/blob/v0.28.4/packages/core/src/services/chatRecordingService.ts) · [goose 会话结构](https://github.com/aaif-goose/goose/blob/v1.60.2/crates/goose/src/session/session_manager.rs)
+
+从签名的 Devin Desktop 3.14.30833 稳定版安装镜像核对了沿用的 `com.exafunction.windsurf` 标识、迁移前后的数据目录名和 `workspace.json` 写入结构。既白只用本地文件 URI 关联单目录工程，工作区、全局状态和 Cascade 数据继续保留。 [官方更名与迁移记录](https://docs.devin.ai/desktop/changelog) · [工单 #29](https://github.com/Moosphan/lumen/issues/29)
 
 Continue 通过 VS Code 扩展清单和 `sessions.json` 关联本地工作目录，验证对应会话文件存在。默认 `.continue` 下的配置、索引和会话列为保留；自定义数据位置沿用授权范围。冲突、失效和远程会话不建立本机项目归属。[Continue 会话格式](https://github.com/continuedev/continue/blob/5522c6f44ca0ac3528b37244818fbfa39b5af470/core/util/history.ts) · [工单 #23](https://github.com/Moosphan/lumen/issues/23)
 
@@ -71,8 +73,8 @@ DeepSeek Harness 和 Pi 接入后累计覆盖 18 个工具家族。
 
 | Agent | 已接入的本地证据 | 待验证范围 |
 | --- | --- | --- |
-| DeepSeek Harness | 桌面发布版标识符、默认 `~/.dsh` 或授权的 `DSH_HOME`、工作区登记 v2、桌面应用数据与缓存分区、独立 CLI 会话 v0–v4 | 旧版工作区登记格式、自定义插件存储和真实桌面客户端运行 |
-| Pi | 默认和已授权的自定义配置及会话目录，JSONL v1–v3 首条会话记录的 `cwd` | CLI 安装版本、临时 CLI 参数和真实客户端回归 |
+| DeepSeek Harness | 官方签名桌面包 `0.2.2-rc.5` 的应用标识符、默认 `~/.dsh` 或授权的 `DSH_HOME`、工作区登记 v2、桌面应用数据与缓存分区、独立 CLI 会话 v0–v4 | 旧版工作区登记格式、自定义插件存储、完整桌面和 CLI 运行 |
+| Pi | 默认和已授权的自定义配置及会话目录，JSONL v1–v3 首条会话记录的 `cwd`，正式 CLI `1.6.1` 生成的 v3 记录已验证 | 安装版本自动检测、临时 CLI 参数 |
 
 DeepSeek Harness 的会话、配置、插件与凭证按保留盘点。Pi 只解析会话首条记录，历史和配置按保留盘点。两者沿用工程共享占用及清理审阅流程。[Harness 工作区格式](https://github.com/deepseek-ai/deepseek-harness/blob/4b399c39a6d1479cd84ca591b4d7c88e24d38a96/packages/workspace/workspace/src/spec.ts) · [Harness 桌面数据路径](https://github.com/deepseek-ai/deepseek-harness/blob/4b399c39a6d1479cd84ca591b4d7c88e24d38a96/docs/user/guide/desktop-uninstall-cleanup.md) · [Pi 会话格式](https://github.com/earendil-works/pi/blob/bfafd8ed5168bca1f1ca88ef0529cfd326664d16/packages/coding-agent/docs/session-format.md)
 

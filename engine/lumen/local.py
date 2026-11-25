@@ -20,6 +20,7 @@ AGENT_BUNDLES = {
     'com.openai.codex': 'Codex',
     'com.todesktop.230313mzl4w4u92': 'Cursor',
     'co.anysphere.cursor.nightly': 'Cursor',
+    'com.exafunction.windsurf': 'Windsurf',
     'com.anthropic.claudefordesktop': 'Claude Desktop',
     'dev.kiro.desktop': 'Kiro',
     'ai.openclaw.mac': 'OpenClaw',

@@ -233,6 +233,9 @@ private func fallbackReport(_ pid: pid_t) {
                       $0.key.hasSuffix("/Harness CLI Project") && $0.value == ["DeepSeek Harness"]
                   }),
                   projects.values.contains(["Pi"]),
+                  projects.contains(where: {
+                      $0.key.hasSuffix("/Windsurf Project") && $0.value == ["Windsurf"]
+                  }),
                   let agents = report["agent_inventory"] as? [[String: Any]],
                   agents.contains(where: { row in
                       row["name"] as? String == "Gemini CLI" &&
@@ -244,6 +247,10 @@ private func fallbackReport(_ pid: pid_t) {
                           && ($0["bytes"] as? Int ?? 0) > 0
                   }),
                   agents.contains(where: { $0["name"] as? String == "Pi" && ($0["bytes"] as? Int ?? 0) > 0 }),
+                  agents.contains(where: {
+                      $0["name"] as? String == "Windsurf" && $0["installed"] as? Bool == true
+                          && ($0["bytes"] as? Int ?? 0) > 0
+                  }),
                   let modelInventory = report["model_inventory"] as? [String: Any],
                   let models = modelInventory["models"] as? [[String: Any]],
                   models.contains(where: { $0["tool"] as? String == "LM Studio" &&
@@ -252,7 +259,7 @@ private func fallbackReport(_ pid: pid_t) {
                   (data["roots"] as? [String])?.isEmpty == true else { return nil as Bool? }
             return true
         }
-        print("Packaged app automatically inventoried an installed app and projects from Codex, Gemini CLI, Continue, Aider, DeepSeek Harness, and Pi.")
+        print("Packaged app automatically inventoried an installed app and projects from Codex, Gemini CLI, Continue, Aider, DeepSeek Harness, Pi, and Windsurf/Devin.")
         guard AXIsProcessTrusted() else {
             fallbackReport(pid)
             return
@@ -305,6 +312,9 @@ private func fallbackReport(_ pid: pid_t) {
             element("Harness CLI Project", in: ax, button: false)
         }
         _ = try eventually("the Pi workspace") { element("Pi Project", in: ax, button: false) }
+        _ = try eventually("the Windsurf workspace from Devin Desktop") {
+            element("Windsurf Project", in: ax, button: false)
+        }
         _ = try eventually("the workspace cleanup icon") { element("审阅工程清理项目", in: ax, button: true) }
         try press("Studio Project", in: ax)
         _ = try eventually("the expanded project storage categories") { element("数据类别", in: ax, button: false) }

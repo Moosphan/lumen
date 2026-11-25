@@ -100,6 +100,33 @@ class AgentIDEAdapterTests(unittest.TestCase):
         self.assertEqual(projects, {})
         self.assertEqual([(name, directory) for name, directory, _ in stores], [('Windsurf', file.parent)])
 
+    def test_windsurf_associates_local_editor_workspaces_and_revalidates_cached_metadata(self):
+        root = 'Library/Application Support/Windsurf/User/workspaceStorage'
+        replacement = self.home / 'Replacement'
+        next_project = self.home / 'Next/Local'
+        local = self.write(f'{root}/local/workspace.json', {'folder': self.project.as_uri()})
+        state = self.write(f'{root}/local/state.vscdb', b'private editor state')
+        self.write(f'{root}/remote/workspace.json', {'folder': 'vscode-remote://ssh-remote+host/project'})
+        self.write(f'{root}/network/workspace.json', {'folder': 'file://server/Users/project'})
+        self.write(f'{root}/multi-root/workspace.json', {'workspace': (self.home / 'file.code-workspace').as_uri()})
+        self.write(f'{root}/malformed/workspace.json', {'folder': f'{self.project.as_uri()}%QQ'})
+        other = self.write('Library/Application Support/Code/User/workspaceStorage/other/workspace.json',
+                           {'folder': (self.home / 'other').as_uri()})
+        (local.parents[1] / 'symlink').mkdir()
+        (local.parents[1] / 'symlink/workspace.json').symlink_to(other)
+        self.write('Library/Application Support/Windsurf - Next/User/workspaceStorage/next/workspace.json',
+                   {'folder': next_project.as_uri()})
+        cache = {}
+        stores, projects = self.scan(cache=cache)
+        self.assertEqual(projects, {self.project: {'Windsurf'}, next_project: {'Windsurf'}})
+        self.assertTrue(any(agent == 'Windsurf' and directory == local.parents[1] for agent, directory, _ in stores))
+        self.assertNotIn(str(state), cache['readers']['_windsurf']['stamps'])
+        self.assertNotIn('private editor state', json.dumps(cache))
+
+        self.write(local, {'folder': replacement.as_uri()})
+        self.assertEqual(self.scan(cache=cache)[1], {replacement: {'Windsurf'}, next_project: {'Windsurf'}})
+        self.assertEqual(self.scan(cache=cache, excluded=(local.parent,))[1], {next_project: {'Windsurf'}})
+
     def test_roo_uses_per_task_workspace_and_ignores_stale_index_and_messages(self):
         root = 'Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline'
         item = self.write(f'{root}/tasks/owned/history_item.json', {

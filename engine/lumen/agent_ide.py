@@ -89,7 +89,18 @@ def _copilot_vscode(metadata, store, add):
 
 def _windsurf(metadata, store, add):
     # https://docs.devin.ai/desktop/troubleshooting/windsurf-common-issues
-    store('Windsurf', metadata.home / '.codeium/windsurf/cascade', 'Windsurf Cascade 会话存储')
+    # Devin 3.14.30833 keeps VS Code's workspace.json and changes nameShort from Windsurf to Devin.
+    agent = 'Windsurf'
+    store(agent, metadata.home / '.codeium/windsurf/cascade', 'Windsurf Cascade 会话存储')
+    for editor in ('Windsurf', 'Windsurf - Next', 'Devin', 'Devin - Next'):
+        user = metadata.home / 'Library/Application Support' / editor / 'User'
+        workspaces = user / 'workspaceStorage'
+        store(agent, user / 'globalStorage', f'{editor} 全局存储')
+        if store(agent, workspaces, f'{editor} 工作区存储'):
+            for workspace in metadata.children(workspaces, directories=True):
+                value = metadata.read_json(workspace / 'workspace.json', dict)
+                if value is not None and 'workspace' not in value:
+                    add(_local_folder_uri(value.get('folder')), agent)
 
 
 def _roo_code(metadata, store, add):

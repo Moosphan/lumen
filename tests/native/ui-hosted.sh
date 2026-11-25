@@ -119,6 +119,19 @@ pi_sessions.mkdir(parents=True)
 (pi_sessions / "example.jsonl").write_text(json.dumps({
     "type": "session", "version": 3, "id": "fixture-session", "cwd": str(pi_project),
 }) + "\n")
+devin = home / "Applications/Devin.app/Contents"
+devin.mkdir(parents=True)
+(devin / "Info.plist").write_bytes(plistlib.dumps({
+    "CFBundleIdentifier": "com.exafunction.windsurf", "CFBundleName": "Devin",
+    "CFBundleShortVersionString": "3.14.30833",
+}))
+windsurf_project = home / "Projects/Windsurf Project"
+windsurf_project.mkdir()
+(windsurf_project / "notes.txt").write_bytes(b"workspace sources" * 1024)
+windsurf_state = home / "Library/Application Support/Devin/User/workspaceStorage/fixture"
+windsurf_state.mkdir(parents=True)
+(windsurf_state / "workspace.json").write_text(json.dumps({"folder": windsurf_project.as_uri()}))
+(windsurf_state / "state.vscdb").write_bytes(b"protected editor state")
 kiro = home / ".kiro/sessions"
 kiro.mkdir(parents=True)
 models = home / ".lmstudio/models/Lumen/Sample Weight"
