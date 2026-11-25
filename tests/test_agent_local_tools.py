@@ -84,23 +84,22 @@ class LocalAgentToolTests(unittest.TestCase):
             registry.symlink_to(source)
             self.assertEqual(self.scan(authorized=(external,))[1], {})
 
-    def test_deepseek_headless_uses_only_authoritative_log_headers(self):
-        def log(project, identifier, version, *, compressed=False, bucket=None, header_id=None):
-            key = bucket or '--' + str(project).replace('/', '-').lstrip('-') + '--'
-            line = (json.dumps({'type': 'session', 'version': version, 'id': header_id or identifier,
-                                'createdAt': 1795610528154, 'isSeeded': False,
-                                'delegationDepth': 0, 'cwd': str(project)}) + '\n').encode()
-            name = f'session.v{version}.jsonl' if version else 'session.jsonl'
-            if compressed:
-                # A standard single-segment Zstd frame carrying one raw block.
-                line = (bytes.fromhex('28b52ffda0') + len(line).to_bytes(4, 'little') +
-                        (len(line) * 8 + 1).to_bytes(3, 'little') + line)
-                name += '.zstd'
-            return self.write(f'.dsh/sessions/{key}/{identifier}/{name}', line + b'ignored private body')
+    def _deepseek_log(self, project, identifier, version, *, compressed=False, bucket=None, header_id=None):
+        key = bucket or '--' + str(project).replace('/', '-').lstrip('-') + '--'
+        line = (json.dumps({'type': 'session', 'version': version, 'id': header_id or identifier,
+                            'createdAt': 1795610528154, 'isSeeded': False,
+                            'delegationDepth': 0, 'cwd': str(project)}) + '\n').encode()
+        name = f'session.v{version}.jsonl' if version else 'session.jsonl'
+        if compressed:
+            # A standard single-segment Zstd frame carrying one raw block.
+            line = (bytes.fromhex('28b52ffda0') + len(line).to_bytes(4, 'little') +
+                    (len(line) * 8 + 1).to_bytes(3, 'little') + line)
+            name += '.zstd'
+        return self.write(f'.dsh/sessions/{key}/{identifier}/{name}', line + b'ignored private body')
 
-        current = self.home / 'Projects/current'
+    def test_deepseek_headless_uses_only_authoritative_log_headers(self):
+        log = self._deepseek_log
         legacy = self.home / 'Projects/legacy'
-        log(current, 'session-current', 4, compressed=True)
         log(legacy, 'session-legacy', 0)
         wrong = self.home / 'Projects/wrong'
         log(wrong, 'session-wrong', 4, header_id='foreign')
@@ -111,13 +110,21 @@ class LocalAgentToolTests(unittest.TestCase):
         log(wrong, 'session-mixed', 4, compressed=True)
         log(wrong, 'session-duplicate', 4)
         log(self.home / 'Projects/ambiguous', 'session-duplicate', 4)
+        older = log(wrong, 'session-link', 3)
+        (older.parent / 'session.v4.jsonl').symlink_to(older)
+        self.assertEqual(self.scan()[1], {legacy: {'DeepSeek Harness'}})
+
+    def test_deepseek_compressed_header_is_bounded_and_revalidated(self):
+        from engine.lumen.zstd_header import _decoder
+
+        if _decoder() is None:
+            self.skipTest('source checkout has no Zstandard decoder; the native package bundles one')
+        current = self.home / 'Projects/current'
+        first = self._deepseek_log(current, 'session-current', 4, compressed=True)
         cache = {}
-        self.assertEqual(self.scan(cache=cache)[1], {
-            current: {'DeepSeek Harness'}, legacy: {'DeepSeek Harness'},
-        })
-        first = log(current, 'session-current', 4, compressed=True)
+        self.assertEqual(self.scan(cache=cache)[1], {current: {'DeepSeek Harness'}})
         first.write_bytes(first.read_bytes()[:12])
-        self.assertEqual(self.scan(cache=cache)[1], {legacy: {'DeepSeek Harness'}})
+        self.assertEqual(self.scan(cache=cache)[1], {})
         self.assertNotIn('ignored private body', json.dumps(cache))
 
     def test_pi_uses_only_session_headers_for_default_and_authorized_custom_storage(self):
