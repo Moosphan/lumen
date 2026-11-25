@@ -71,12 +71,14 @@ DeepSeek Harness 和 Pi 接入后累计覆盖 18 个工具家族。
 
 | Agent | 已接入的本地证据 | 待验证范围 |
 | --- | --- | --- |
-| DeepSeek Harness | 桌面发布版标识符、默认 `~/.dsh` 或授权的 `DSH_HOME`、工作区登记 v2、桌面应用数据与缓存分区 | 未登记的独立 headless 会话、旧版登记格式和真实桌面版本回归 |
+| DeepSeek Harness | 桌面发布版标识符、默认 `~/.dsh` 或授权的 `DSH_HOME`、工作区登记 v2、桌面应用数据与缓存分区、独立 CLI 会话 v0–v4 | 旧版工作区登记格式、自定义插件存储和真实桌面客户端运行 |
 | Pi | 默认和已授权的自定义配置及会话目录，JSONL v1–v3 首条会话记录的 `cwd` | CLI 安装版本、临时 CLI 参数和真实客户端回归 |
 
 DeepSeek Harness 的会话、配置、插件与凭证按保留盘点。Pi 只解析会话首条记录，历史和配置按保留盘点。两者沿用工程共享占用及清理审阅流程。[Harness 工作区格式](https://github.com/deepseek-ai/deepseek-harness/blob/4b399c39a6d1479cd84ca591b4d7c88e24d38a96/packages/workspace/workspace/src/spec.ts) · [Harness 桌面数据路径](https://github.com/deepseek-ai/deepseek-harness/blob/4b399c39a6d1479cd84ca591b4d7c88e24d38a96/docs/user/guide/desktop-uninstall-cleanup.md) · [Pi 会话格式](https://github.com/earendil-works/pi/blob/bfafd8ed5168bca1f1ca88ef0529cfd326664d16/packages/coding-agent/docs/session-format.md)
 
 隔离验证使用 DeepSeek JSON 存储组件 `0.0.1-rc.1` 和 Pi `1.6.1` 的会话写入组件创建真实格式的样本，确认同一工作目录可归属两者，索引和会话文件均保留。
+
+独立 DeepSeek CLI 会话按最高物理世代核验 JSONL 首行或 Zstandard 首帧。校验会话标识和目录布局后使用会话头中的 `cwd`。未知版本、混合编码、重复会话标识只保留盘点。macOS 运行包自带首帧解码库。[会话存储格式](https://github.com/deepseek-ai/deepseek-harness/blob/4b399c39a6d1479cd84ca591b4d7c88e24d38a96/packages/session/session-persistence-jsonl/README.md) · [工单 #28](https://github.com/Moosphan/lumen/issues/28)
 
 ## 功能和验收清单
 

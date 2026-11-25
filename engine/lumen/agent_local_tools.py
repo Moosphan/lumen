@@ -4,6 +4,7 @@ import os
 import re
 import sqlite3
 
+from . import deepseek_sessions
 from .integrations import recorded_path
 
 
@@ -361,14 +362,18 @@ def _continue(metadata, store, add):
                 metadata.failed(path, error)
 
 
+def _deepseek_homes(metadata):
+    default = metadata.home / '.dsh'
+    configured = metadata.configured('DSH_HOME') or default
+    return tuple(root for root in dict.fromkeys((default, configured)) if root != metadata.home)
+
+
 def _deepseek_harness(metadata, store, add):
     # The shipped base uses the single JSON unit in storages. The global
     # workspace order is authoritative, including during create/delete recovery.
     # https://github.com/deepseek-ai/deepseek-harness/blob/4b399c39a6d1479cd84ca591b4d7c88e24d38a96/packages/workspace/workspace/src/spec.ts
     agent = 'DeepSeek Harness'
-    default = metadata.home / '.dsh'
-    configured = metadata.configured('DSH_HOME') or default
-    roots = tuple(root for root in dict.fromkeys((default, configured)) if root != metadata.home)
+    roots = _deepseek_homes(metadata)
     for root in roots:
         if not store(agent, root, 'DeepSeek Harness 会话、配置与插件数据'):
             continue
@@ -402,6 +407,14 @@ def _deepseek_harness(metadata, store, add):
         ('HTTPStorages/com.deepseek.dsh', 'DeepSeek Harness 网站存储'),
     ):
         store(agent, metadata.home / 'Library' / relative, evidence)
+
+
+def _deepseek_headless(metadata, store, add):
+    roots = _deepseek_homes(metadata)
+    for root in roots:
+        for project in deepseek_sessions.projects(metadata, root / 'sessions'):
+            if not any(project == data or data in project.parents for data in roots):
+                add(str(project), 'DeepSeek Harness')
 
 
 def _pi_session_header(metadata, path):
@@ -462,4 +475,4 @@ def _pi(metadata, store, add):
                     add(str(path), agent)
 
 
-ADAPTERS = (_claude_desktop, _openclaw, _qwen_code, _goose, _continue, _deepseek_harness, _pi)
+ADAPTERS = (_claude_desktop, _openclaw, _qwen_code, _goose, _continue, _deepseek_harness, _deepseek_headless, _pi)

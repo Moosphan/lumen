@@ -98,6 +98,19 @@ harness_id = "49fb9c05-a1c4-419e-9254-a6379f88240a"
     "global": {"initialized": True, "workspaceIds": [harness_id]},
     "tables": {"workspaces": {harness_id: {"path": str(harness_project)}}},
 }))
+cli_project = home / "Projects/Harness CLI Project"
+cli_project.mkdir()
+(cli_project / "scene.txt").write_bytes(b"cli scene" * 8192)
+cli_id = "session-fixture-headless"
+bucket = "--" + str(cli_project).replace("/", "-").replace(" ", "~0020").lstrip("-") + "--"
+cli_session = home / ".dsh/sessions" / bucket / cli_id
+cli_session.mkdir(parents=True)
+header = (json.dumps({
+    "type": "session", "version": 4, "id": cli_id, "cwd": str(cli_project),
+    "createdAt": 1795610528154, "isSeeded": False, "delegationDepth": 0,
+}) + "\n").encode()
+frame = bytes.fromhex("28b52ffda0") + struct.pack("<I", len(header)) + (len(header) * 8 + 1).to_bytes(3, "little")
+(cli_session / "session.v4.jsonl.zstd").write_bytes(frame + header + b"unread fixture body")
 pi_project = home / "Projects/Pi Project"
 pi_project.mkdir()
 (pi_project / "edit.txt").write_bytes(b"draft" * 4096)

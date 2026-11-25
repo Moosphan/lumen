@@ -90,7 +90,7 @@ class _Metadata:
                 self.failed(path, error)
         return False
 
-    def children(self, path, *, directories=False, suffix=None, prefix=None):
+    def children(self, path, *, directories=False, suffix=None, prefix=None, symlinks=False):
         if not self.allowed(path):
             return []
         self.watch(path)
@@ -104,7 +104,8 @@ class _Metadata:
                     child = path / entry.name
                     if (self.allowed(child) and (suffix is None or entry.name.endswith(suffix))
                             and (prefix is None or entry.name.startswith(prefix))
-                            and (entry.is_dir(follow_symlinks=False) if directories else entry.is_file(follow_symlinks=False))):
+                            and ((symlinks and entry.is_symlink()) or
+                                 (entry.is_dir(follow_symlinks=False) if directories else entry.is_file(follow_symlinks=False)))):
                         found.append(child)
                 return sorted(found)
         except OSError as error:

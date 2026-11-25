@@ -229,6 +229,9 @@ private func fallbackReport(_ pid: pid_t) {
                   projects.values.contains(["Continue"]),
                   projects.values.contains(["Aider"]),
                   projects.values.contains(["DeepSeek Harness"]),
+                  projects.contains(where: {
+                      $0.key.hasSuffix("/Harness CLI Project") && $0.value == ["DeepSeek Harness"]
+                  }),
                   projects.values.contains(["Pi"]),
                   let agents = report["agent_inventory"] as? [[String: Any]],
                   agents.contains(where: { row in
@@ -298,6 +301,9 @@ private func fallbackReport(_ pid: pid_t) {
         _ = try eventually("the automatically detected project row") { element("Studio Project", in: ax, button: false) }
         _ = try eventually("the automatically detected Gemini workspace") { element("Gemini Project", in: ax, button: false) }
         _ = try eventually("the DeepSeek Harness workspace") { element("Harness Project", in: ax, button: false) }
+        _ = try eventually("the DeepSeek Harness unregistered CLI workspace") {
+            element("Harness CLI Project", in: ax, button: false)
+        }
         _ = try eventually("the Pi workspace") { element("Pi Project", in: ax, button: false) }
         _ = try eventually("the workspace cleanup icon") { element("审阅工程清理项目", in: ax, button: true) }
         try press("Studio Project", in: ax)

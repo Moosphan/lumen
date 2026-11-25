@@ -34,20 +34,30 @@ def main():
             content = app / "Contents"
             exe = content / "MacOS"
             res = content / "Resources"
+            frameworks = content / "Frameworks"
             exe.mkdir(parents=True)
             res.mkdir()
+            frameworks.mkdir()
             shutil.copy2(bin_path / "Lumen", exe / "Lumen")
             shutil.copytree(REPO/"engine", res/"engine", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
             shutil.copy2(REPO/"设计稿/assets/storage.jpg", res/"storage.jpg")
             shutil.copy2(REPO/"assets/Lumen.icns", res/"Lumen.icns")
+            zstd = frameworks / "liblumen-zstd.dylib"
+            subprocess.run(["/usr/bin/xcrun", "clang", "-dynamiclib", "-Oz", "-mmacosx-version-min=13.0",
+                            "-Wl,-install_name,@rpath/liblumen-zstd.dylib",
+                            "-Wl,-exported_symbol,_ZSTD_findFrameCompressedSize",
+                            "-Wl,-exported_symbol,_ZSTD_decompress",
+                            str(REPO / "vendor/zstd/zstddeclib.c"), "-o", str(zstd)], env=env, check=True)
+            shutil.copy2(REPO / "vendor/zstd/LICENSE", res / "Zstandard-LICENSE.txt")
             (content/"Info.plist").write_bytes(plistlib.dumps({
                 "CFBundleIdentifier":"org.lumen.cleaner", "CFBundleExecutable":"Lumen",
                 "CFBundleName":"Lumen", "CFBundleDisplayName":"既白 Lumen",
                 "CFBundleShortVersionString":"0.1.0", "CFBundleVersion":"1",
                 "CFBundlePackageType":"APPL", "CFBundleIconFile":"Lumen.icns", "LSMinimumSystemVersion":"13.0",
                 "NSHighResolutionCapable":True, "NSPrincipalClass":"NSApplication"}))
+            subprocess.run(["codesign","--force","--sign","-",str(zstd)],check=True)
             subprocess.run(["codesign","--force","--sign","-",str(app)],check=True)
-            subprocess.run(["codesign","--verify","--strict",str(app)],check=True)
+            subprocess.run(["codesign","--verify","--deep","--strict",str(app)],check=True)
             os.rename(app,dest)
     print(dest)
 
