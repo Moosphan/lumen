@@ -221,8 +221,9 @@ def _cwd_records(stream, agent, max_bytes=None):
             if obj.get('type') not in ('session_meta', 'turn_context'):
                 continue
             obj = obj.get('payload')
-        if isinstance(obj, dict) and isinstance(obj.get('cwd'), str):
-            dirs.add(obj['cwd'])
+        path = integrations.recorded_path(obj.get('cwd')) if isinstance(obj, dict) else None
+        if path and path != Path('/'):
+            dirs.add(str(path))
     return dirs
 
 
@@ -343,7 +344,8 @@ def _space(files):
                 shared_allocated_bytes=shared, unique_files=len(physical))
 
 
-def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=None, installed=None):
+def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=None, installed=None,
+         agent_stores=None):
     root_set, exclusions, kept = _paths(roots), _paths(exclude), _paths(keep)
     issues, files, directories, repositories = set(), {}, set(), set()
     apps, app_ids, duplicates = {}, defaultdict(list), {}
@@ -352,6 +354,8 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
     suggested_projects = set()
     project_agents = {Path(os.path.abspath(p)): set([a] if isinstance(a, str) else a)
                       for p, a in (projects or {}).items()}
+    agent_stores = agent_stores or {}
+    store_by_directory = {}
 
     def issue(p, why):
         issues.add(f'{p} · {why}')
@@ -364,19 +368,28 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
         if files[p]['decision'] != 'defer':
             files[p].update(decision='keep', reason=why)
 
+    def store_for(directory):
+        if directory not in store_by_directory:
+            store_by_directory[directory] = directory if directory in agent_stores else next(
+                (ancestor for ancestor in directory.parents if ancestor in agent_stores), None)
+        return store_by_directory[directory]
+
     def register(p, s):
         link = stat.S_ISLNK(s.st_mode)
         if not link and not stat.S_ISREG(s.st_mode):
             issue(p, '特殊文件，仅跳过')
             return
         kind = 'symlink' if link else _kind(p)
-        owner_agent = _agent(p)
+        store = store_for(p.parent) if agent_stores else None
+        owner_agent = agent_stores[store] if store else _agent(p)
         files[p] = dict(path=str(p), dev=s.st_dev, ino=s.st_ino, size=s.st_size,
                         mtime_ns=s.st_mtime_ns, ctime_ns=s.st_ctime_ns, nlink=s.st_nlink, kind=kind, allocated_bytes=s.st_blocks * 512,
                         owner='', app_path='', bundle_id='', duplicate_group='',
                         agents=[owner_agent] if owner_agent else [], projects=[], refs=[],
                         location='Library' if 'Library' in p.parts else '其他位置',
                         decision='review', reason='需要核对用途，当前证据不足以直接清理')
+        if store:
+            files[p]['agent_store_path'] = str(store)
         if link or s.st_nlink > 1:
             protect(p, '符号链接，仅盘点链接本身' if link else '硬链接共享底层数据')
         elif kind == 'model':
@@ -425,16 +438,19 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
                     link_targets[root] = Path(os.path.normpath(root.parent / os.readlink(root)))
                 continue
             def walk_error(exc):
-                issue(exc.filename or root, str(exc))
+                path = Path(exc.filename) if exc.filename else root
+                issue(path if path.is_absolute() else root, str(exc))
             for folder, names, leaves, fd in os.fwalk(root, onerror=walk_error, follow_symlinks=False):
                 directory = Path(folder)
                 if directory in directories:
                     names.clear()
                     continue
                 directories.add(directory)
-                if directory.suffix.lower() == '.app' and not any(a.suffix.lower() == '.app' for a in directory.parents):
+                if (installed is None and directory.suffix.lower() == '.app'
+                        and not (agent_stores and store_for(directory))
+                        and not any(a.suffix.lower() == '.app' for a in directory.parents)):
                     apps[directory] = dict(name=directory.stem, path=str(directory), bundle_id='', version='')
-                if '.git' in names or '.git' in leaves:
+                if ('.git' in names or '.git' in leaves) and not (agent_stores and store_for(directory)):
                     repositories.add(directory)
                 for name in sorted(names + leaves):
                     p = directory / name
@@ -490,8 +506,9 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
     for p, row in files.items():
         if row['kind'] == 'symlink':
             continue
-        agent = _agent(p)
-        if p.suffix == '.jsonl' and ('.codex/sessions/' in p.as_posix() or '.claude/projects/' in p.as_posix()):
+        if (p.suffix == '.jsonl' and not row.get('agent_store_path') and
+                ('.codex/sessions/' in p.as_posix() or '.claude/projects/' in p.as_posix())):
+            agent = _agent(p)
             try:
                 for cwd in _read(p, row, lambda stream: _cwd_records(stream, agent)):
                     proj = Path(cwd)
@@ -590,6 +607,8 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
                        app_version=apps[app]['version'])
 
     for p, row in files.items():
+        if row.get('agent_store_path'):
+            continue
         if p.suffix.lower() in {'.prproj', '.drp', '.fcpbundle', '.aep'}:
             issue(p, '此工程格式的素材引用尚未解析')
         parser = None
@@ -668,6 +687,8 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
 
     hub_refs = defaultdict(set)
     for p, row in files.items():
+        if row.get('agent_store_path'):
+            continue
         ref = integrations.hub_ref(p)
         if ref and row['kind'] != 'symlink':
             protect(p, '模型仓库修订引用')
@@ -694,7 +715,7 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
     if deep:
         sizes = defaultdict(list)
         for p, row in files.items():
-            if row['kind'] != 'symlink' and row['size']:
+            if row['kind'] != 'symlink' and row['size'] and not row.get('agent_store_path'):
                 sizes[row['size']].append(p)
         for paths in sizes.values():
             if len({(files[p]['dev'], files[p]['ino']) for p in paths}) < 2:

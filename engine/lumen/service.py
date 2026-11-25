@@ -92,6 +92,7 @@ def assign_roots(config, values, state, renew=()):
 def apply_settings(config, request, state):
     if "local_exclude" in request:
         config["local_exclude"] = paths(request["local_exclude"])
+        config.pop("agent_metadata", None)
     if "roots" in request:
         assign_roots(config, request["roots"], state, request.get("renew_roots", ()))
     def require_scoped(value):
@@ -221,10 +222,13 @@ def inventory(config, state, incremental=False, full=False, quick=False):
                       for name in (".Trash", f".lumen-vault-{os.getuid()}"))
     manual = active_roots(config)
     locations, detected, installed, discovery_issues, suggestions = [], {}, None, set(), set()
+    extensions = []
     if config.get("local_enabled") and config.get("_local_home"):
         blocked = [Path(p) for p in exclusions + config.get("local_exclude", [])]
-        locations, detected, installed, discovery_issues, suggestions = local.plan(
-            Path(config["_local_home"]), config["_include_system"], blocked, quick=not deep)
+        locations, detected, installed, discovery_issues, suggestions, extensions = local.plan(
+            Path(config["_local_home"]), config["_include_system"], blocked, quick=not deep,
+            metadata_cache=config.setdefault("agent_metadata", {}) if incremental else None,
+            authorized=tuple(map(Path, manual)))
         locations += app_cleanup.extensions(Path(config["_local_home"]), installed,
                                             config.get("app_analysis", ()), set(blocked))
         exclusions += config.get("local_exclude", [])
@@ -236,7 +240,8 @@ def inventory(config, state, incremental=False, full=False, quick=False):
                    for name in (".Trash", f".lumen-vault-{os.getuid()}")]
     report = scan(manual + automatic, deep=deep, projects=projects,
                   keep=sorted(protected), exclude=exclusions,
-                  hash_cache=config.setdefault("hash_cache", {}) if incremental else None, installed=installed)
+                  hash_cache=config.setdefault("hash_cache", {}) if incremental else None, installed=installed,
+                  agent_stores={Path(row["path"]): row["agent_store"] for row in locations if row.get("agent_store")})
     report["issues"].extend(sorted(discovery_issues))
     report["local_locations"] = locations
     if installed is not None:
@@ -294,6 +299,7 @@ def inventory(config, state, incremental=False, full=False, quick=False):
                 and not row.get("cleanup_kind")):
             row.update(decision="keep", reason="自动发现的位置仅盘点，可在扫描范围添加后审阅")
     local.summarize(report)
+    report["agent_inventory"] = local.agent_inventory(report, extensions)
     return report
 
 

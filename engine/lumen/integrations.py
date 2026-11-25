@@ -13,6 +13,20 @@ TASK_TEMPORARY = 'task.declared-temporary.quarantine.v1'
 SAFE_RULE_IDS = frozenset({FIXTURE_LOG, VSCODE_LOG})
 
 
+def recorded_path(value):
+    """Validate an absolute local path from tool metadata without opening it."""
+    if not isinstance(value, str) or len(value) > 4096 or '\0' in value:
+        return None
+    try:
+        value.encode('utf-8')
+    except UnicodeError:
+        return None
+    path = Path(value)
+    if path.anchor == '/' and '..' not in path.parts:
+        return path
+    return None
+
+
 def claude_session_end(event, roots):
     """Adapt an explicitly supplied Claude Code SessionEnd hook payload to a task."""
     if not isinstance(event, dict) or event.get('hook_event_name') != 'SessionEnd':

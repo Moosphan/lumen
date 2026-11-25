@@ -30,8 +30,54 @@ import Foundation
         precondition(bySafe.first?.id == .single("Codex"))
     }
 
+    static func checkWorkspaceInventory() {
+        let files: [Object] = [
+            ["path": "/projects/shared/export.mov", "dev": 1, "ino": 1, "size": 20,
+             "projects": ["/projects/shared"], "kind": "video", "decision": "review"],
+            ["path": "/projects/shared/input.png", "dev": 1, "ino": 2, "size": 40,
+             "projects": ["/projects/shared"], "kind": "image", "decision": "keep"],
+            ["path": "/projects/linked/input.png", "dev": 1, "ino": 2, "size": 40,
+             "projects": ["/projects/linked"], "kind": "image", "decision": "keep"],
+            ["path": "/agents/cursor/cache.log", "dev": 1, "ino": 3, "size": 8,
+             "agents": ["Cursor"], "agent_store_path": "/agents/cursor", "kind": "log", "decision": "keep"],
+            ["path": "/agents/extra/cache-alias.log", "dev": 1, "ino": 3, "size": 8,
+             "agents": ["Cursor"], "kind": "log", "decision": "keep"],
+            ["path": "/agents/extra/note.log", "dev": 1, "ino": 4, "size": 4,
+             "agents": ["Cursor"], "kind": "log", "decision": "keep"]
+        ]
+        let stores: [Object] = [["path": "/agents/cursor", "title": "Cursor 数据", "bytes": 8, "count": 1]]
+        let agents: [Object] = [
+            ["name": "Cursor", "installed": true, "projects": ["/projects/shared"],
+             "bytes": 72, "count": 4, "shared_bytes": 68,
+             "installations": [["path": "/Applications/Cursor.app", "version": "2.0"]], "stores": stores]
+        ]
+        let report: Object = [
+            "projects": ["/projects/shared": ["Codex", "Cursor"], "/projects/linked": ["Codex"]],
+            "files": files, "agent_inventory": agents
+        ]
+        let inventory = InventoryPresentation(report)
+        let project = inventory.workspaceProjects["/projects/shared"]!
+        precondition(project.agents == ["Codex", "Cursor"])
+        precondition(project.detail.stats.bytes == 60 && project.detail.stats.sharedBytes == 40)
+        precondition(project.detail.stats.review == 1 && project.detail.stats.reviewBytes == 20)
+        precondition(project.categories.first(where: { $0.kind == "image" })?.detail.paths.count == 2)
+        let cursor = inventory.workspaceAgents.first(where: { $0.id == "Cursor" })!
+        precondition(cursor.stats.bytes == 72 && cursor.stats.sharedBytes == 68 && cursor.installed)
+        precondition(cursor.stores.first?.detail.paths == ["/agents/cursor/cache.log"])
+        precondition(cursor.toolBuckets.count == 1 && cursor.toolBuckets[0].stats.bytes == 4)
+        precondition(cursor.toolBuckets[0].paths == ["/agents/extra/cache-alias.log", "/agents/extra/note.log"])
+        precondition(inventory.workspaceAgents.contains { $0.id == "Codex" && !$0.installed })
+
+        var legacy = report
+        legacy.removeValue(forKey: "agent_inventory")
+        let old = InventoryPresentation(legacy)
+        precondition(old.workspaceProjects.count == 2)
+        precondition(old.workspaceAgents.first { $0.id == "Cursor" }?.stats.bytes == 72)
+    }
+
     @MainActor static func main() async throws {
         checkWorkspaceRanking()
+        checkWorkspaceInventory()
         guard let temporaryPath = ProcessInfo.processInfo.environment["TMPDIR"],
               let state = ProcessInfo.processInfo.environment["LUMEN_STATE_DIR"],
               URL(fileURLWithPath: state).deletingLastPathComponent().path ==

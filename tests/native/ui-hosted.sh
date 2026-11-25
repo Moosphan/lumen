@@ -26,6 +26,7 @@ export LUMEN_STATE_DIR="$lab/workspace-state" TMPDIR="$lab/tmp"
 export LUMEN_INVENTORY_HOME="$lab/home"
 /usr/bin/python3 -B - <<'PY'
 import os
+import json
 import plistlib
 from pathlib import Path
 
@@ -44,6 +45,12 @@ project.mkdir(parents=True)
 (project / "empty-marker").touch()
 (project / "long-shoot-name-with-color-reference-and-export-notes-2026.txt").write_text("Small reference.")
 (project / "render.mov").write_bytes(b"render" * 600_000)
+gemini_project = home / "Projects/Gemini Project"
+gemini_project.mkdir(parents=True)
+(gemini_project / "scene.txt").write_text("Keep this source.")
+gemini = home / ".gemini"
+gemini.mkdir()
+(gemini / "projects.json").write_text(json.dumps({"projects": {str(gemini_project): "gemini-project"}}))
 for folder, name, size in [
     (".cache", "tool-cache.bin", 2_000_000),
     ("Desktop", "capture.png", 900_000),

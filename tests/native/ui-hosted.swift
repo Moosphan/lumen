@@ -184,11 +184,17 @@ private func fallbackReport(_ pid: pid_t) {
             guard let data = config(state), let report = data["report"] as? [String: Any],
                   let apps = report["apps"] as? [[String: Any]], apps.contains(where: { $0["name"] as? String == "Sample Studio" }),
                   let projects = report["projects"] as? [String: [String]], projects.values.contains(["Codex"]),
+                  projects.values.contains(["Gemini CLI"]),
+                  let agents = report["agent_inventory"] as? [[String: Any]],
+                  agents.contains(where: { row in
+                      row["name"] as? String == "Gemini CLI" &&
+                      (row["stores"] as? [[String: Any]])?.contains(where: { ($0["count"] as? Int ?? 0) > 0 }) == true
+                  }),
                   let categories = report["categories"] as? [[String: Any]], categories.count >= 3,
                   (data["roots"] as? [String])?.isEmpty == true else { return nil as Bool? }
             return true
         }
-        print("Packaged app automatically inventoried an installed app, Codex project and download without a manual directory.")
+        print("Packaged app automatically inventoried an installed app, Codex and Gemini CLI projects, and a download.")
         guard AXIsProcessTrusted() else {
             fallbackReport(pid)
             return
@@ -213,6 +219,7 @@ private func fallbackReport(_ pid: pid_t) {
         try press("返回应用排行", in: ax)
         try press("Agent 工作区", in: ax)
         _ = try eventually("the automatically detected project row") { element("Studio Project", in: ax, button: false) }
+        _ = try eventually("the automatically detected Gemini workspace") { element("Gemini Project", in: ax, button: false) }
         _ = try eventually("the workspace cleanup icon") { element("审阅工程清理项目", in: ax, button: true) }
         captureWindow(pid: pid, lab: lab, filename: "Lumen-agent-sweep.png")
         try press("大文件清理", in: ax)
