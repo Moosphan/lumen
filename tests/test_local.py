@@ -534,6 +534,32 @@ class LocalInventoryTests(unittest.TestCase):
         report = self.call("scan_app", path=str(self.home / "Applications/Chromium.app"))
         self.assertEqual(next(row for row in report["files"] if row["path"] == str(item))["decision"], "keep")
 
+    def test_chromium_persistent_cache_is_explained_and_never_selected_for_cleanup(self):
+        app = self.write("Applications/Chrome.app/Contents/Info.plist", plistlib.dumps({
+            "CFBundleIdentifier": "com.google.Chrome",
+        })).parents[1]
+        root = "Library/Caches/Google/Chrome/Profile 2/Code Cache/pc/"
+        database = self.write(root + "partition/cache.db", b"SQLite format 3\0fixture")
+        journal = self.write(root + "partition/cache.db-wal", b"fixture write-ahead log")
+        targets = {str(path): path.read_bytes() for path in (database, journal)}
+
+        initial = self.call("scan_local", startup=True)
+        self.assertEqual({row["decision"] for row in initial["files"] if row["path"] in targets}, {"keep"})
+        report = self.call("scan_app", path=str(app))
+        rows = [row for row in report["files"] if row["path"] in targets]
+        self.assertEqual(len(rows), 2)
+        for row in rows:
+            self.assertEqual((row.get("cache_backend"), row["app_path"], row["cache_profile"], row["decision"]),
+                             ("persistent", str(app), "Profile 2", "keep"))
+            self.assertIn("持久化代码缓存", row["reason"])
+            self.assertNotIn("cleanup_kind", row)
+
+        report = self.call("scan", roots=[str(database.parent)], deep=True)
+        for action in ("quarantine", "clean", "trash"):
+            report = self.call("run", paths=list(targets), scan_id=report["scan_id"], action=action)
+            self.assertEqual([row["status"] for row in report["last_action"]["items"]], ["skipped", "skipped"])
+        self.assertEqual({path: Path(path).read_bytes() for path in targets}, targets)
+
     def test_xcode_candidates_exclude_compiled_deliverables_and_sources(self):
         self.write("Applications/Xcode.app/Contents/Info.plist",
                    plistlib.dumps({"CFBundleIdentifier": "com.apple.dt.Xcode"}))

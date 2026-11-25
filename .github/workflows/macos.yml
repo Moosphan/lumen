@@ -82,3 +82,9 @@ jobs:
         env:
           RUNNER_ENVIRONMENT: ${{ runner.environment }}
         run: node tests/hosted-chrome.mjs
+
+      - name: Verify Persistent Cache protection across real Chrome restarts
+        timeout-minutes: 3
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
+        run: node tests/hosted-chrome.mjs persistent

@@ -49,6 +49,9 @@ format_header = struct.pack("<QIIII", 0xfcfb6d1ba7725c30, 5, 3, 0, 0)
 format_footer = struct.pack("<QIIII", 0xf4fa6f45970d41d8, 0, 0, 0, 0)
 (code_cache / "ab1234567890cdef_0").write_bytes(format_header + b"key-fixture-code" + format_footer * 2)
 (code_cache / "index").write_bytes(b"fixture index")
+database = code_cache.parent / "pc" / "fixture.db"
+database.parent.mkdir()
+database.write_bytes(b"SQLite format 3\0fixture")
 downloads = home / "Downloads"
 downloads.mkdir()
 (downloads / "archive.zip").write_bytes(b"sample" * 8192)

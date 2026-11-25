@@ -271,13 +271,21 @@ private func fallbackReport(_ pid: pid_t) {
             guard let report = config(state)?["report"] as? [String: Any],
                   let scanned = report["files"] as? [[String: Any]] else { return nil as Bool? }
             let browser = scanned.filter { ($0["path"] as? String)?.contains("/Chromium/Default/Code Cache/") == true }
-            return browser.count == 2 && browser.contains(where: { $0["cleanup_kind"] as? String == "compiled_code" && $0["decision"] as? String == "review" })
-                && browser.contains(where: { ($0["path"] as? String)?.hasSuffix("/index") == true && $0["decision"] as? String == "keep" }) ? true : nil
+            let reviewable = browser.filter { $0["decision"] as? String == "review" }
+            let protected = browser.filter { $0["decision"] as? String == "keep" }
+            return browser.count == 3 && reviewable.count == 1
+                && reviewable.first?["cleanup_kind"] as? String == "compiled_code"
+                && protected.contains(where: { ($0["path"] as? String)?.hasSuffix("/index") == true })
+                && protected.contains(where: { $0["cache_backend"] as? String == "persistent" }) ? true : nil
         }
         _ = try eventually("the generated-code cache candidate in the Chromium detail") {
             element("ab1234567890cdef_0", in: ax, button: false)
         }
-        print("Chromium cleanup detail: a verified generated-code entry is reviewable and the cache index is protected.")
+        try press("保留或暂缓 2", in: ax)
+        _ = try eventually("the Persistent Cache label in the protected tab") {
+            element("持久化代码缓存", in: ax, button: false)
+        }
+        print("Chromium cleanup detail: a verified generated-code entry is reviewable; the cache index and Persistent Cache database are protected.")
         try press("返回应用排行", in: ax)
         try press("Agent 工作区", in: ax)
         _ = try eventually("the automatically detected project row") { element("Studio Project", in: ax, button: false) }

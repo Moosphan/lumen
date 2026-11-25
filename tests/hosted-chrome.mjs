@@ -14,6 +14,8 @@ if (process.env.GITHUB_ACTIONS !== 'true' || process.env.RUNNER_ENVIRONMENT !== 
 }
 
 const app = '/Applications/Google Chrome.app';
+const backend = process.argv[2] ?? 'simple';
+assert(['simple', 'persistent'].includes(backend), 'Unknown Chromium code cache backend');
 const executable = join(app, 'Contents/MacOS/Google Chrome');
 const lab = mkdtempSync('/private/tmp/lumen-chrome-');
 const home = join(lab, 'fixture-home');
@@ -99,7 +101,8 @@ async function session(origin, count, verifyContent) {
   const browser = spawn('/usr/bin/sandbox-exec', ['-D', `LAB=${lab}`, '-f', isolation, executable,
     '--headless', '--no-sandbox', '--disable-gpu', '--disable-background-networking', '--disable-component-update',
     '--disable-sync', '--disable-crash-reporter', '--no-first-run', '--no-default-browser-check', '--use-mock-keychain',
-    '--disable-features=PersistentCacheForCodeCache', '--v8-cache-options=code',
+    `--${backend === 'persistent' ? 'enable' : 'disable'}-features=PersistentCacheForCodeCache`,
+    '--v8-cache-options=code',
     '--js-flags=--wasm-tiering-budget=100 --wasm-caching-threshold=1 --wasm-caching-timeout-ms=0',
     '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0',
     `--user-data-dir=${profile}`, `--disk-cache-dir=${cache}`, `--crash-dumps-dir=${lab}`, 'about:blank'], {
@@ -184,7 +187,7 @@ try {
   run('/usr/bin/codesign', ['--verify', '-R',
     '=anchor apple generic and identifier "com.google.Chrome" and certificate leaf[subject.OU] = "EQHXZ8M8AV"', app]);
   const version = run('/usr/bin/defaults', ['read', join(app, 'Contents/Info'), 'CFBundleShortVersionString']).trim();
-  console.log(`Testing signed Google Chrome ${version} with the Chromium Simple backend.`);
+  console.log(`Testing signed Google Chrome ${version} with the ${backend} code cache backend.`);
   mkdirSync(profile, { recursive: true });
   mkdirSync(cache, { recursive: true });
   writeFileSync(join(lab, 'chrome.sb'), `(version 1)
@@ -207,8 +210,10 @@ try {
       await store.put('/local-only', new Response(${saved}));
       return true;
     })()`));
-    await eventually('Chrome to write the WebAssembly cache', () =>
-      readdirSync(join(cache, 'Default/Code Cache/wasm')).some((name) => /^[0-9a-f]{16}_0$/.test(name)));
+    if (backend === 'simple') {
+      await eventually('Chrome to write the WebAssembly cache', () =>
+        readdirSync(join(cache, 'Default/Code Cache/wasm')).some((name) => /^[0-9a-f]{16}_0$/.test(name)));
+    }
   });
 
   const protectedPaths = ['Default/Local Storage', 'Default/Service Worker/CacheStorage']
@@ -221,7 +226,41 @@ try {
     .filter((path) => path !== app);
   engine('settings', { local_exclude: [...systemExclusions, '/System/Applications'] });
   engine('scan_local', { startup: true });
-  let scan = engine('scan_app', { path: app });
+  const scan = engine('scan_app', { path: app });
+  if (backend === 'persistent') {
+    const directory = join(cache, 'Default/Code Cache/pc');
+    const before = contents(directory);
+    assert(before.some(([path]) => readFileSync(path).subarray(0, 16).equals(Buffer.from('SQLite format 3\0'))),
+      'Chrome did not leave a SQLite-backed Persistent Cache database');
+    const paths = before.map(([path]) => path);
+    const rows = scan.files.filter((file) => paths.includes(file.path));
+    assert.equal(rows.length, paths.length);
+    assert(rows.every((file) => file.cache_backend === 'persistent' && file.decision === 'keep' &&
+      file.app_path === app && !file.cleanup_kind), 'Persistent Cache files should be attributed and kept together');
+    const result = engine('run', { scan_id: scan.scan_id, paths, action: 'quarantine' });
+    assert.deepEqual(result.last_action.items.map((entry) => entry.status), paths.map(() => 'skipped'));
+    assert.deepEqual(contents(directory), before);
+  } else {
+    verifySimpleCache(scan, origin, protectedPaths, protectedBefore);
+  }
+  await session(origin, 1, async (evaluate) => {
+    const reopened = await evaluate(`(async () => {
+      const offline = await caches.match('/local-only');
+      return [localStorage.getItem('lumen-local'), document.cookie.includes('lumen=' + ${saved}), await offline?.text()];
+    })()`);
+    assert.deepEqual(reopened, [credential, true, credential]);
+  });
+  if (backend === 'persistent') {
+    console.log(`Real Google Chrome ${version}: Persistent Cache files were attributed, excluded from isolation and byte-identical; restart preserved WebAssembly execution and site data.`);
+  } else {
+    console.log(`Real Google Chrome ${version}: JavaScript and WebAssembly caches quarantined and restored byte-for-byte; after restart, WebAssembly executed and cookies, local storage and offline Cache Storage remained readable.`);
+  }
+} finally {
+  server.close();
+  rmSync(lab, { recursive: true, force: true });
+}
+
+function verifySimpleCache(scan, origin, protectedPaths, protectedBefore) {
   const entries = scan.files.filter((file) =>
     file.cleanup_kind === 'compiled_code' && file.decision === 'review' && file.app_path === app);
   const inventory = scan.files.filter((file) => file.path.includes('/Code Cache/'))
@@ -244,17 +283,5 @@ try {
   const batch = quarantine(scan);
   engine('restore', { batch_id: batch });
   assert.deepEqual(targets.map(digest), prior);
-  scan = engine('scan_app', { path: app });
-  quarantine(scan);
-  await session(origin, 1, async (evaluate) => {
-    const reopened = await evaluate(`(async () => {
-      const offline = await caches.match('/local-only');
-      return [localStorage.getItem('lumen-local'), document.cookie.includes('lumen=' + ${saved}), await offline?.text()];
-    })()`);
-    assert.deepEqual(reopened, [credential, true, credential]);
-  });
-  console.log(`Real Google Chrome ${version}: JavaScript and WebAssembly caches quarantined and restored byte-for-byte; after restart, WebAssembly executed and cookies, local storage and offline Cache Storage remained readable.`);
-} finally {
-  server.close();
-  rmSync(lab, { recursive: true, force: true });
+  quarantine(engine('scan_app', { path: app }));
 }

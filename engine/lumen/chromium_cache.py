@@ -41,7 +41,8 @@ def identify(path, home):
         language = _LANGUAGE.get(tail[0]) if len(tail) == 2 else None
         eligible = bool(canonical and relative[offset + 1] == 'Code Cache' and _PROFILE.fullmatch(profile)
                         and language and _ENTRY.fullmatch(tail[1]))
-        return dict(bundle_id=identifier, profile=profile, language=language, eligible=eligible)
+        return dict(bundle_id=identifier, profile=profile, language=language, eligible=eligible,
+                    persistent=folded[offset + 2:offset + 3] == ('pc',))
     return None
 
 
@@ -92,6 +93,11 @@ def classify(report, requested):
         if app is not None and not row.get('shared_owners'):
             row.update(owner=app['name'], app_path=app['path'], bundle_id=identifier,
                        app_version=app['version'], cache_profile=evidence['profile'])
+        if evidence['persistent']:
+            row['cache_backend'] = 'persistent'
+            if row['decision'] != 'defer' and row['kind'] != 'symlink' and row['nlink'] == 1:
+                row.update(decision='keep', reason='持久化代码缓存。浏览器按数据库管理这些文件，请整组保留。')
+            continue
         if row['decision'] not in ('safe', 'review'):
             continue
         selected = app is not None and app['path'] in requested

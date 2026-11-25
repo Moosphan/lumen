@@ -213,7 +213,9 @@ struct AppCleanupDetail: View {
             }.buttonStyle(.plain)
             VStack(alignment: .trailing, spacing: 3) {
                 Text(bytes(row.allocated)).monospacedDigit().font(.callout)
-                if let type = ["cache": "缓存", "logs": "日志", "temporary": "临时文件", "build": "构建缓存",
+                if row.raw.string("cache_backend") == "persistent" {
+                    Text("持久化代码缓存").font(.caption).foregroundStyle(.secondary)
+                } else if let type = ["cache": "缓存", "logs": "日志", "temporary": "临时文件", "build": "构建缓存",
                                "compiled_code": "生成代码缓存"][row.raw.string("cleanup_kind")] {
                     Text(type).font(.caption).foregroundStyle(.secondary)
                 }
