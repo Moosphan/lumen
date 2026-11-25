@@ -11,6 +11,7 @@ _AGENT_ID = re.compile(r'[a-z0-9][a-z0-9_-]{0,63}')
 _OPENCLAW_PROFILE = re.compile(_AGENT_ID.pattern, re.IGNORECASE | re.ASCII)
 _QWEN_RECORD_TYPES = ('user', 'assistant', 'tool_result', 'system')
 _METADATA_WINDOW = 64 * 1024
+_CONTINUE_SESSION_ID = re.compile(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}', re.IGNORECASE | re.ASCII)
 
 
 def _prefix(metadata, path, limit):
@@ -312,4 +313,52 @@ def _goose(metadata, store, add):
                 add(cwd, agent)
 
 
-ADAPTERS = (_claude_desktop, _openclaw, _qwen_code, _goose)
+def _continue(metadata, store, add):
+    # https://github.com/continuedev/continue/blob/5522c6f44ca0ac3528b37244818fbfa39b5af470/core/util/history.ts
+    from .agent_ide import _local_folder_uri
+
+    agent = 'Continue'
+    default = metadata.home / '.continue'
+    configured = metadata.configured('CONTINUE_GLOBAL_DIR') or default
+    for root in dict.fromkeys((default, configured)):
+        if root == default:
+            store(agent, root, 'Continue 配置、索引和本地工具数据')
+        else:
+            store(agent, root / 'index', 'Continue 自定义代码索引')
+        sessions = root / 'sessions'
+        if not store(agent, sessions, 'Continue 本机会话存储'):
+            continue
+        index = sessions / 'sessions.json'
+        rows = metadata.read_json(index, list, limit=2 * 1024 * 1024)
+        if rows is None:
+            continue
+        if len(rows) > metadata.limit:
+            metadata.issue(index, 'Continue 仅核对会话索引中的近期记录')
+        identifiers = set()
+        conflicts = set()
+        for row in rows:
+            key = row.get('sessionId') if isinstance(row, dict) else None
+            if isinstance(key, str) and _CONTINUE_SESSION_ID.fullmatch(key):
+                normalized = key.casefold()
+                if normalized in identifiers:
+                    conflicts.add(normalized)
+                identifiers.add(normalized)
+        for row in rows[-metadata.limit:]:
+            key = row.get('sessionId') if isinstance(row, dict) else None
+            if not isinstance(key, str) or not _CONTINUE_SESSION_ID.fullmatch(key) or key.casefold() in conflicts:
+                continue
+            location = row.get('workspaceDirectory')
+            directory = recorded_path(location) or _local_folder_uri(location)
+            if directory is None:
+                continue
+            # Check that the index row still has a local backing file without reading its contents.
+            path = sessions / f'{key}.json'
+            try:
+                with metadata.open(path) as stream:
+                    if stream is not None:
+                        add(str(directory), agent)
+            except OSError as error:
+                metadata.failed(path, error)
+
+
+ADAPTERS = (_claude_desktop, _openclaw, _qwen_code, _goose, _continue)

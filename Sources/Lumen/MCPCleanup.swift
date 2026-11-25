@@ -13,7 +13,7 @@ struct MCPCleanupPanel: View {
     @ObservedObject var store: Store
     @State private var drafts: [MCPDraft] = []
     @State private var selected: MCPDraft?
-    @State private var copied = false
+    @State private var copied = ""
     @State private var loaded = false
 
     private var enabled: Bool { store.data["mcp_enabled"] as? Bool == true }
@@ -32,8 +32,10 @@ struct MCPCleanupPanel: View {
             if enabled {
                 HStack {
                     Button("刷新 MCP 草案") { refresh() }
-                    Button(copied ? "已复制" : "复制客户端配置") { copyConfiguration() }
-                        .disabled(store.fixtureState != nil)
+                    Menu(copied.isEmpty ? "复制连接配置" : "已复制 \(copied)") {
+                        Button("Codex 连接命令") { copyConfiguration(codex: true) }
+                        Button("通用 MCP JSON") { copyConfiguration(codex: false) }
+                    }.disabled(store.fixtureState != nil)
                 }
                 if loaded && drafts.isEmpty {
                     Text("暂无可审批的草案。").font(.caption).foregroundStyle(.secondary)
@@ -73,15 +75,24 @@ struct MCPCleanupPanel: View {
         }
     }
 
-    private func copyConfiguration() {
+    private func copyConfiguration(codex: Bool) {
         guard let script = resource("engine/mcp_server.py", source: "engine/mcp_server.py") else { return }
+        if codex {
+            let quotedPath = "'" + script.path.replacingOccurrences(of: "'", with: "'\\''") + "'"
+            copy("codex mcp add lumen -- /usr/bin/python3 -I -B \(quotedPath)", label: "Codex 命令")
+            return
+        }
         let config = ["mcpServers": ["lumen": [
             "command": "/usr/bin/python3", "args": ["-I", "-B", script.path],
         ]]]
         guard let data = try? JSONSerialization.data(withJSONObject: config, options: [.prettyPrinted, .sortedKeys]),
               let json = String(data: data, encoding: .utf8) else { return }
+        copy(json, label: "MCP JSON")
+    }
+
+    private func copy(_ text: String, label: String) {
         NSPasteboard.general.clearContents()
-        copied = NSPasteboard.general.setString(json, forType: .string)
+        if NSPasteboard.general.setString(text, forType: .string) { copied = label }
     }
 }
 

@@ -29,6 +29,7 @@ AGENT_KINDS = {
     'Claude Desktop': 'desktop',
     'Cursor': 'ide', 'Windsurf': 'ide', 'Kiro': 'ide',
     'Cline': 'extension', 'Roo Code': 'extension', 'GitHub Copilot VS Code': 'extension',
+    'Continue': 'extension',
     'Claude Code': 'cli', 'OpenCode': 'cli', 'Gemini CLI': 'cli',
     'GitHub Copilot CLI': 'cli', 'OpenClaw': 'cli', 'Qwen Code': 'cli', 'goose': 'cli',
 }

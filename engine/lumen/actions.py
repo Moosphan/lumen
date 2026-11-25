@@ -64,7 +64,7 @@ def _inside(path, root):
 
 def _eligible(p, roots, state):
     names = {v.casefold() for v in p.parts}
-    protected = {'.git', '.ssh', '.gnupg', '.aws', '.azure', '.kube', 'keychains',
+    protected = {'.git', '.ssh', '.gnupg', '.aws', '.azure', '.kube', '.continue', 'keychains',
                  'credentials', 'cookies', 'login data', 'local state', 'sessions',
                  'bookmarks', 'web data', 'places.sqlite', 'logins.json', 'key4.db',
                  'secrets', 'auth.json', '.netrc', '.env', 'wallet.dat',

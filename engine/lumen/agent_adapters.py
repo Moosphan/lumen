@@ -25,6 +25,7 @@ EXTENSIONS = {
     ('saoudrizwan', 'claude-dev'): 'Cline',
     ('github', 'copilot-chat'): 'GitHub Copilot VS Code',
     ('rooveterinaryinc', 'roo-cline'): 'Roo Code',
+    ('continue', 'continue'): 'Continue',
 }
 
 

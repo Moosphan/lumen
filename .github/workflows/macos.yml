@@ -25,6 +25,15 @@ jobs:
         env:
           RUNNER_ENVIRONMENT: ${{ runner.environment }}
         run: python3 -B tests/hosted-integrations.py hugging-face
+      - name: Verify draft and status from a real Codex client
+        if: always() && !cancelled()
+        timeout-minutes: 3
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
+        run: |
+          npm install --prefix "$RUNNER_TEMP/lumen-codex-cli" --ignore-scripts --no-fund --no-audit @openai/codex@0.172.0
+          LUMEN_CODEX_CLI="$RUNNER_TEMP/lumen-codex-cli/node_modules/.bin/codex" \
+            python3 -B tests/hosted-integrations.py codex-mcp
 
   verify:
     runs-on: macos-15

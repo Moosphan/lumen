@@ -63,6 +63,8 @@
 
 Copilot CLI 与 VS Code 分行展示，工具总数按家族合并。以上是基于上游元数据和合成测试确认的格式。安装、工程关联和清理能力仍分别核验。[Copilot CLI 存储](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference) · [Windsurf 本地数据](https://docs.devin.ai/desktop/troubleshooting/windsurf-common-issues) · [Kiro 会话](https://kiro.dev/docs/ide/whats-new-v1/#sessions) · [OpenClaw Agent 配置](https://docs.openclaw.ai/concepts/multi-agent/index.html) · [Qwen Code 聊天存储](https://github.com/QwenLM/qwen-code/blob/v0.28.4/packages/core/src/services/chatRecordingService.ts) · [goose 会话结构](https://github.com/aaif-goose/goose/blob/v1.60.2/crates/goose/src/session/session_manager.rs)
 
+本轮增加 Continue，累计覆盖 15 个工具家族。既白核对 VS Code 扩展清单和 `sessions.json` 的本地工作目录，验证对应会话文件存在，仅使用索引字段关联工程。默认 `.continue` 下的配置、索引和会话列为保留；自定义数据位置沿用授权范围。冲突、失效和远程会话不建立本机项目归属。[Continue 会话格式](https://github.com/continuedev/continue/blob/5522c6f44ca0ac3528b37244818fbfa39b5af470/core/util/history.ts) · [工单 #23](https://github.com/Moosphan/lumen/issues/23)
+
 ## 功能和验收清单
 
 | 编号 | 交付 | 依赖 | 验收 |

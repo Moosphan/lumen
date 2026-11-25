@@ -226,6 +226,7 @@ private func fallbackReport(_ pid: pid_t) {
                   let apps = report["apps"] as? [[String: Any]], apps.contains(where: { $0["name"] as? String == "Sample Studio" }),
                   let projects = report["projects"] as? [String: [String]], projects.values.contains(["Codex"]),
                   projects.values.contains(["Gemini CLI"]),
+                  projects.values.contains(["Continue"]),
                   let agents = report["agent_inventory"] as? [[String: Any]],
                   agents.contains(where: { row in
                       row["name"] as? String == "Gemini CLI" &&
@@ -240,7 +241,7 @@ private func fallbackReport(_ pid: pid_t) {
                   (data["roots"] as? [String])?.isEmpty == true else { return nil as Bool? }
             return true
         }
-        print("Packaged app automatically inventoried an installed app, Codex and Gemini CLI projects, and a download.")
+        print("Packaged app automatically inventoried an installed app, Codex, Gemini CLI and Continue projects, and a download.")
         guard AXIsProcessTrusted() else {
             fallbackReport(pid)
             return

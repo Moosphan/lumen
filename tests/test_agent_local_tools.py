@@ -22,6 +22,7 @@ class LocalAgentToolTests(unittest.TestCase):
             'OPENCLAW_HOME', 'OPENCLAW_STATE_DIR', 'OPENCLAW_CONFIG_PATH',
             'OPENCLAW_WORKSPACE_DIR', 'OPENCLAW_PROFILE', 'QWEN_HOME', 'QWEN_RUNTIME_DIR',
             'GOOSE_PATH_ROOT', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME',
+            'CONTINUE_GLOBAL_DIR',
         )
         env = patch.dict(os.environ, dict.fromkeys(keys, ''))
         env.start()
@@ -37,6 +38,50 @@ class LocalAgentToolTests(unittest.TestCase):
         from engine.lumen import agent_local_tools
 
         return discover(self.home, True, adapters=agent_local_tools.ADAPTERS, **options)
+
+    def test_continue_associates_only_linked_local_sessions_without_reading_transcripts(self):
+        from engine.lumen.agent_adapters import extension_installations
+
+        root = '.continue/sessions'
+        real = '5492b813-1f5f-42fa-8013-aa3e5584fd4c'
+        removed = '7c6d075b-0226-4384-8b19-8224c6bc3915'
+        ambiguous = '3c90de89-929f-4491-9ce9-a2d070213253'
+        session = self.write(f'{root}/{real}.json', b'synthetic private transcript')
+        self.write(f'{root}/{ambiguous}.json', b'separate transcript')
+        self.write(f'{root}/sessions.json', [
+            {'sessionId': real, 'workspaceDirectory': self.project.as_uri(), 'title': 'private-title'},
+            {'sessionId': removed, 'workspaceDirectory': str(self.home / 'Removed')},
+            {'sessionId': ambiguous, 'workspaceDirectory': str(self.home / 'Ambiguous')},
+            {'sessionId': ambiguous, 'workspaceDirectory': 'vscode-remote://ssh-remote+fixture/project'},
+        ])
+        manifest = self.write('.vscode/extensions/continue.continue-1.3.40/package.json', {
+            'publisher': 'Continue', 'name': 'continue', 'version': '1.3.40',
+        })
+        cache = {}
+        stores, projects = self.scan(cache=cache)
+        self.assertIn(('Continue', session.parent, 'Continue 本机会话存储'), stores)
+        self.assertEqual(projects, {self.project: {'Continue'}})
+        self.assertNotIn('private-title', json.dumps(cache))
+        self.assertEqual(extension_installations(self.home), [('Continue', manifest.parent, '1.3.40')])
+        session.unlink()
+        self.assertEqual(self.scan(cache=cache)[1], {})
+
+    def test_continue_custom_location_needs_scope_and_rejects_symlink_entries(self):
+        external = self.base / 'continue-data'
+        sessions = external / 'sessions'
+        sessions.mkdir(parents=True)
+        identifier = '5492b813-1f5f-42fa-8013-aa3e5584fd4c'
+        (sessions / 'sessions.json').write_text(json.dumps([
+            {'sessionId': identifier, 'workspaceDirectory': str(self.project)},
+        ]))
+        transcript = sessions / f'{identifier}.json'
+        transcript.write_bytes(b'private')
+        with patch.dict(os.environ, {'CONTINUE_GLOBAL_DIR': str(external)}):
+            self.assertEqual(self.scan()[1], {})
+            self.assertEqual(self.scan(authorized=(external,))[1], {self.project: {'Continue'}})
+            transcript.unlink()
+            transcript.symlink_to(sessions / 'sessions.json')
+            self.assertEqual(self.scan(authorized=(external,))[1], {})
 
     def test_claude_separates_desktop_cowork_runtime_and_cowork_sessions(self):
         root = 'Library/Application Support/Claude'

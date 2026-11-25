@@ -52,6 +52,16 @@ gemini_project.mkdir(parents=True)
 gemini = home / ".gemini"
 gemini.mkdir()
 (gemini / "projects.json").write_text(json.dumps({"projects": {str(gemini_project): "gemini-project"}}))
+continue_project = home / "Projects/Continue Project"
+continue_project.mkdir()
+(continue_project / "notes.txt").write_text("Keep this local project.")
+continue_sessions = home / ".continue/sessions"
+continue_sessions.mkdir(parents=True)
+continue_id = "5492b813-1f5f-42fa-8013-aa3e5584fd4c"
+(continue_sessions / f"{continue_id}.json").write_text("fixture session bytes")
+(continue_sessions / "sessions.json").write_text(json.dumps([
+    {"sessionId": continue_id, "workspaceDirectory": continue_project.as_uri()},
+]))
 kiro = home / ".kiro/sessions"
 kiro.mkdir(parents=True)
 models = home / ".lmstudio/models/Lumen/Sample Weight"
