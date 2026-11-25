@@ -32,7 +32,7 @@ const credential = 'isolated-browser-fixture';
 const lsregister = '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister';
 const snapshotBuild = '1754458';
 const snapshotGeneration = '1795610528154606';
-const snapshotDigest = Buffer.from('seA8w09+IDpjntLgUgbUsg==', 'base64').toString('hex');
+const snapshotDigest = '8f35ec02b26336e3b2b57bc7c2a5d5a2ec03a882a16ead51957d5829bbbc3697';
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { encoding: 'utf8', timeout: 60_000, ...options });
@@ -66,9 +66,8 @@ function prepareBrowser() {
   const url = `https://storage.googleapis.com/chromium-browser-snapshots/Mac_Arm/${snapshotBuild}/chrome-mac.zip?generation=${snapshotGeneration}`;
   run('/usr/bin/curl', ['-q', '--fail', '--silent', '--show-error', '--proto', '=https',
     '--connect-timeout', '12', '--max-time', '75', '-o', archive, url], { timeout: 80_000 });
-  assert.equal(run('/sbin/md5', ['-q', archive]).trim(), snapshotDigest, 'Official Chromium archive checksum mismatch');
   const checksum = run('/usr/bin/shasum', ['-a', '256', archive], { env: { LC_ALL: 'C', PATH: '/usr/bin:/bin' } });
-  console.log(`Chromium snapshot SHA-256: ${checksum.split(/\s+/)[0]}`);
+  assert.equal(checksum.split(/\s+/)[0], snapshotDigest, 'Official Chromium archive SHA-256 mismatch');
   run('/usr/bin/ditto', ['-x', '-k', archive, extracted]);
   mkdirSync(dirname(app), { recursive: true });
   renameSync(join(extracted, 'chrome-mac/Chromium.app'), app);
@@ -251,10 +250,22 @@ try {
     }
   });
 
-  const protectedPaths = ['Default/Local Storage', 'Default/Service Worker/CacheStorage']
-    .map((name) => join(profile, name));
+  const defaultProfile = join(profile, 'Default');
+  // Chromium's SQLite rollout stores DOM data in LocalStorage. Older builds
+  // use the Local Storage/leveldb directory. Hash either backend as written.
+  const localStorage = readdirSync(defaultProfile)
+    .filter((name) => name === 'Local Storage' || /^LocalStorage(?:-(?:journal|shm|wal))?$/.test(name));
+  assert(localStorage.includes('Local Storage') || localStorage.includes('LocalStorage'),
+    'The browser did not write its DOM local storage database');
+  const protectedPaths = [...localStorage, 'Service Worker/CacheStorage'].map((name) => join(defaultProfile, name));
   protectedPaths.push(...['Default/Cookies', 'Default/Network/Cookies']
     .map((name) => join(profile, name)).filter(existsSync));
+  if (backend === 'simple') {
+    for (const kind of ['js', 'wasm']) {
+      const codeCache = join(cache, 'Default/Code Cache', kind);
+      protectedPaths.push(join(codeCache, 'index'), join(codeCache, 'index-dir'));
+    }
+  }
   const protectedBefore = protectedPaths.flatMap(contents);
   assert(protectedBefore.some(([path]) => path.endsWith('/Cookies')), 'The browser did not create a cookies database');
   if (!snapshot) {
