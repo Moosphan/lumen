@@ -221,6 +221,8 @@ private func fallbackReport(_ pid: pid_t) {
         _ = try eventually("the automatically detected project row") { element("Studio Project", in: ax, button: false) }
         _ = try eventually("the automatically detected Gemini workspace") { element("Gemini Project", in: ax, button: false) }
         _ = try eventually("the workspace cleanup icon") { element("审阅工程清理项目", in: ax, button: true) }
+        try press("Studio Project", in: ax)
+        _ = try eventually("the expanded project storage categories") { element("数据类别", in: ax, button: false) }
         captureWindow(pid: pid, lab: lab, filename: "Lumen-agent-sweep.png")
         try press("大文件清理", in: ax)
         let nodes = ["Documents", "Library", ".cache", "Downloads", "Movies", "Pictures"]

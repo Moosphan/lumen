@@ -304,55 +304,28 @@ struct WorkspaceView: View {
 
     private func projectRow(_ project: WorkspaceProject) -> some View {
         let detail = project.detail
-        return DisclosureGroup(isExpanded: expansion(project.id, in: $expandedProjects)) {
-            LazyVStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 12) {
-                    if project.agents.isEmpty {
-                        Text("待关联 Agent").font(.caption).foregroundStyle(.secondary)
-                    } else {
-                        Menu("关联 Agent（\(project.agents.count)）") {
-                            ForEach(project.agents, id: \.self) { name in
-                                Button(name) { open(name, in: .agents) }
+        let isExpanded = expandedProjects.contains(project.id)
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                Button {
+                    if isExpanded { expandedProjects.remove(project.id) }
+                    else { expandedProjects.insert(project.id) }
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                            .font(.caption.weight(.semibold)).foregroundStyle(.secondary).frame(width: 12)
+                        Image(systemName: "folder").foregroundStyle(lilac).frame(width: 22)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(detail.title).font(.headline).lineLimit(1)
+                            pathLabel(project.id)
+                            if !project.agents.isEmpty {
+                                let agents = project.agents.joined(separator: "、")
+                                Text(agents).font(.caption).foregroundStyle(.secondary).lineLimit(1).help(agents)
                             }
-                        }.fixedSize()
-                    }
-                    if !project.related.isEmpty {
-                        Menu("共享工程（\(project.related.count)）") {
-                            ForEach(project.related, id: \.self) { root in
-                                Button(displayPath(root)) { open(root, in: .projects) }
-                            }
-                        }.fixedSize()
-                    }
-                    if let delta = growth[project.id], delta.int64Value != 0 {
-                        Text("变化 \(bytes(delta.int64Value))").font(.caption).foregroundStyle(.secondary)
-                    }
-                }
-                if !project.categories.isEmpty {
-                    sectionLabel("数据类别")
-                    ForEach(project.categories) { category in
-                        let stats = category.detail.stats
-                        HStack(spacing: 8) {
-                            Text(WorkspaceCategory.title(category.kind)).font(.callout)
-                            Text("\(stats.count) 项").font(.caption).foregroundStyle(.secondary)
-                            Spacer()
-                            candidates(stats)
-                            Text(bytes(stats.bytes)).monospacedDigit().frame(minWidth: 66, alignment: .trailing)
-                            CleanupIcon(title: "审阅\(WorkspaceCategory.title(category.kind))文件") { drill(category.detail) }
                         }
                     }
-                }
-            }.padding(.top, 10).padding(.leading, 6)
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: "folder").foregroundStyle(lilac).frame(width: 22)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(detail.title).font(.headline).lineLimit(1)
-                    pathLabel(project.id)
-                    if !project.agents.isEmpty {
-                        let agents = project.agents.joined(separator: "、")
-                        Text(agents).font(.caption).foregroundStyle(.secondary).lineLimit(1).help(agents)
-                    }
-                }
+                }.buttonStyle(.plain).accessibilityLabel(detail.title)
+                    .accessibilityValue(isExpanded ? "已展开" : "已折叠")
                 Spacer(minLength: 8)
                 VStack(alignment: .trailing, spacing: 3) {
                     space(detail.stats.bytes, shared: detail.stats.sharedBytes)
@@ -361,7 +334,48 @@ struct WorkspaceView: View {
                 FinderButton(path: project.id, reveal: true)
                 CleanupIcon(title: "审阅工程清理项目") { drill(detail) }.disabled(detail.paths.isEmpty)
             }.frame(maxWidth: .infinity, alignment: .leading)
+            if isExpanded { projectDetails(project) }
         }
+    }
+
+    private func projectDetails(_ project: WorkspaceProject) -> some View {
+        LazyVStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                if project.agents.isEmpty {
+                    Text("待关联 Agent").font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Menu("关联 Agent（\(project.agents.count)）") {
+                        ForEach(project.agents, id: \.self) { name in
+                            Button(name) { open(name, in: .agents) }
+                        }
+                    }.fixedSize()
+                }
+                if !project.related.isEmpty {
+                    Menu("共享工程（\(project.related.count)）") {
+                        ForEach(project.related, id: \.self) { root in
+                            Button(displayPath(root)) { open(root, in: .projects) }
+                        }
+                    }.fixedSize()
+                }
+                if let delta = growth[project.id], delta.int64Value != 0 {
+                    Text("变化 \(bytes(delta.int64Value))").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            if !project.categories.isEmpty {
+                sectionLabel("数据类别")
+                ForEach(project.categories) { category in
+                    let stats = category.detail.stats
+                    HStack(spacing: 8) {
+                        Text(WorkspaceCategory.title(category.kind)).font(.callout)
+                        Text("\(stats.count) 项").font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        candidates(stats)
+                        Text(bytes(stats.bytes)).monospacedDigit().frame(minWidth: 66, alignment: .trailing)
+                        CleanupIcon(title: "审阅\(WorkspaceCategory.title(category.kind))文件") { drill(category.detail) }
+                    }
+                }
+            }
+        }.padding(.top, 10).padding(.leading, 28)
     }
 
     private func installationRow(_ install: Object) -> some View {
