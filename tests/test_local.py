@@ -185,6 +185,99 @@ class LocalInventoryTests(unittest.TestCase):
         self.assertTrue(agent["partial"])
         self.assertTrue(any(row["path"] == str(store) and row["partial"] for row in agent["stores"]))
 
+    def test_local_inventory_lists_models_and_protects_their_configuration(self):
+        q4 = self.write(".lmstudio/models/Publisher/Camera/Camera-Q4_K_M.gguf", b"weight")
+        manifest = self.write(".lmstudio/models/Publisher/Camera/README.md")
+        report = self.call("scan_local", startup=True)
+        model, = report["model_inventory"]["models"]
+        self.assertEqual((model["tool"], model["quantization"], model["path"]),
+                         ("LM Studio", "Q4_K_M", str(q4)))
+        self.assertEqual(model["active_state"], "unknown")
+        rows = {row["path"]: row for row in report["files"]}
+        self.assertEqual(rows[str(manifest)]["decision"], "keep")
+        self.assertTrue(any(row.get("model_store") for row in report["local_locations"]))
+        result = self.call("run", action="quarantine", paths=[str(q4), str(manifest)],
+                           scan_id=report["scan_id"])
+        self.assertEqual({item["status"] for item in result["last_action"]["items"]}, {"skipped"})
+
+    def test_openclaw_default_hidden_workspace_appears_in_workspace_inventory(self):
+        workspace = self.write(".openclaw/workspace/notes.txt").parent
+        asset = self.write("Media/footage.wav")
+        self.write(".openclaw/workspace/timeline.otio", json.dumps({
+            "OTIO_SCHEMA": "Timeline.1",
+            "tracks": {"OTIO_SCHEMA": "Stack.1", "children": [
+                {"OTIO_SCHEMA": "Clip.1", "media_reference": {
+                    "OTIO_SCHEMA": "ExternalReference.1", "target_url": asset.as_uri(),
+                }},
+            ]},
+        }).encode())
+        self.write(".openclaw/openclaw.json", json.dumps(
+            {"agents": {"defaults": {"workspace": str(workspace)}}}).encode())
+        self.call("scan", roots=[str(asset.parent)], deep=False)
+        report = self.call("scan_local", startup=True)
+        self.assertEqual(report["projects"][str(workspace)], ["OpenClaw"])
+        self.assertIn(str(workspace), next(row for row in report["agent_inventory"]
+                                          if row["name"] == "OpenClaw")["projects"])
+        source = next(row for row in report["files"] if row["path"] == str(asset))
+        self.assertEqual(source["decision"], "keep")
+        self.assertTrue(source["refs"])
+
+    def test_configured_comfy_weights_are_discovered_in_the_scoped_home(self):
+        weight = self.write("CustomWeights/landscape.safetensors", b"synthetic")
+        self.write("Documents/ComfyUI/extra_model_paths.yaml",
+                   f"studio:\n  base_path: {self.home}\n  checkpoints: CustomWeights\n".encode())
+        report = self.call("scan_local", startup=True)
+        model, = report["model_inventory"]["models"]
+        self.assertEqual((model["path"], model["tool"]), (str(weight), "ComfyUI"))
+        report = self.call("settings", local_exclude=[str(weight.parent)])
+        self.assertEqual(report["model_inventory"]["models"], [])
+
+    def test_explicit_lm_studio_model_folder_is_scoped_and_revocable(self):
+        weight = self.manual / 'Publisher' / 'Camera' / 'Camera-Q8_0.gguf'
+        weight.parent.mkdir(parents=True)
+        weight.write_text('synthetic')
+        root = {"path": str(self.manual), "tool": "LM Studio"}
+        with self.assertRaises(ValueError):
+            self.call("settings", model_roots=[root])
+        report = self.call("settings", roots=[str(self.manual)], model_roots=[root])
+        model, = report["model_inventory"]["models"]
+        self.assertEqual((model["path"], model["tool"]), (str(weight), "LM Studio"))
+        removed = self.call("settings", roots=[])
+        self.assertEqual(removed["model_roots"], [])
+        self.assertFalse(removed["model_inventory"]["models"])
+
+    def test_manual_comfy_bin_weights_stay_protected_without_model_scope(self):
+        project = self.manual / 'ComfyUI'
+        weight = project / 'models/checkpoints/model.bin'
+        weight.parent.mkdir(parents=True)
+        weight.write_bytes(b'weights')
+        workflow = project / 'user/default/workflows/render.json'
+        workflow.parent.mkdir(parents=True)
+        workflow.write_text(json.dumps({"nodes": [
+            {"id": 1, "type": "CheckpointLoaderSimple", "widgets_values": [weight.name]},
+            {"id": "\ud800", "type": "UnknownLoader\ud800", "widgets_values": []},
+        ]}))
+        report = self.call("scan", roots=[str(project)], deep=False)
+        model, = report["model_inventory"]["models"]
+        self.assertEqual(model["path"], str(weight))
+        self.assertTrue(model["workflow_refs"])
+        self.assertTrue(report["model_inventory"]["issues"])
+        current = next(row for row in report["files"] if row["path"] == str(weight))
+        self.assertEqual(current["decision"], "keep")
+        blocked = self.call("run", action="quarantine", paths=[str(weight)], scan_id=report["scan_id"])
+        self.assertEqual(blocked["last_action"]["items"][0]["status"], "skipped")
+
+    def test_agent_observation_is_removed_when_a_grant_is_renewed_for_replaced_directory(self):
+        self.call("scan", roots=[str(self.manual)])
+        event = {"hook_event_name": "Stop", "session_id": "session", "turn_id": "turn", "cwd": str(self.manual)}
+        self.call("agent_event", agent="Codex", event=event)
+        self.manual.rename(self.manual.with_name("old manual"))
+        self.manual.mkdir()
+        self.assertEqual(self.call("status")["agent_observations"], [])
+        report = self.call("scan", roots=[str(self.manual)], renew_roots=[str(self.manual)])
+        self.assertEqual(report["agent_observations"], [])
+        self.assertFalse(self.call("agent_event", agent="Codex", event=event)["duplicate"])
+
     def test_overlapping_session_sources_keep_distinct_parser_metadata(self):
         codex = self.write("Projects/codex/source.txt").parent
         claude = self.write("Projects/claude/source.txt").parent

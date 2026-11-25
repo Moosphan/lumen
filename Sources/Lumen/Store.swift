@@ -100,7 +100,8 @@ func resource(_ name: String, source: String) -> URL? {
                 task.waitUntilExit()
                 let envelope = (try? JSONSerialization.jsonObject(with: reply)) as? Object
                 let dashboard = envelope?["data"] as? Object
-                let presentation = ["fixture", "size_tree"].contains(command) ? nil : dashboard.map(InventoryPresentation.init)
+                let presentation = ["fixture", "size_tree", "model_runtime"].contains(command)
+                    ? nil : dashboard.map(InventoryPresentation.init)
                 DispatchQueue.main.async {
                     guard self.process === task else { return }
                     self.process = nil
@@ -119,7 +120,7 @@ func resource(_ name: String, source: String) -> URL? {
                         self.inventory = presentation
                         self.generation += 1
                     }
-                    if command != "status" && command != "fixture" {
+                    if !["status", "fixture", "model_runtime"].contains(command) {
                         self.notice = ["scan", "scan_local"].contains(command) ? "扫描完成，共 \(self.files.count) 个文件。" : "已更新本地记录。"
                     }
                     if let last = dashboard["last_action"] as? Object {

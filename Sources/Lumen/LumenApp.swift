@@ -34,12 +34,14 @@ struct Panel<Content: View>: View {
 }
 
 enum Page: String, CaseIterable {
-    case home = "空间总览", apps = "应用排行", agents = "Agent 工作区", review = "清理建议", large = "大文件清理", history = "清理记录", scopes = "扫描范围"
+    case home = "空间总览", apps = "应用排行", agents = "Agent 工作区", models = "模型存储"
+    case review = "清理建议", large = "大文件清理", history = "清理记录", scopes = "扫描范围"
     var icon: String {
         switch self {
         case .home: return "square.grid.2x2"
         case .apps: return "macwindow"
         case .agents: return "square.3.layers.3d"
+        case .models: return "cpu"
         case .review: return "sparkles"
         case .large: return "chart.bar.xaxis"
         case .history: return "clock.arrow.circlepath"
@@ -138,6 +140,7 @@ struct Workbench: View {
                                     review(project: bucket.title)
                                     bucketPaths = bucket.paths
                                 })
+                                case .models: ModelInventoryView(store: store)
                                 case .review: ReviewView(store: store, owner: $owner, project: $project, verdict: $verdict,
                                                          bucketPaths: $bucketPaths, path: $reviewPath)
                                 case .large:

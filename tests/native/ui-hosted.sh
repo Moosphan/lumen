@@ -51,6 +51,11 @@ gemini_project.mkdir(parents=True)
 gemini = home / ".gemini"
 gemini.mkdir()
 (gemini / "projects.json").write_text(json.dumps({"projects": {str(gemini_project): "gemini-project"}}))
+kiro = home / ".kiro/sessions"
+kiro.mkdir(parents=True)
+models = home / ".lmstudio/models/Lumen/Sample Weight"
+models.mkdir(parents=True)
+(models / "sample-Q4_K_M.gguf").write_bytes(b"synthetic model metadata")
 for folder, name, size in [
     (".cache", "tool-cache.bin", 2_000_000),
     ("Desktop", "capture.png", 900_000),

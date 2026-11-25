@@ -53,6 +53,32 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(len(result['issues']), 2)
         self.assertEqual(integrations.automatic_paths(result, integrations.SAFE_RULE_IDS), [])
 
+    def test_otio_clip_protects_original_and_proxy_media_across_projects(self):
+        original = self.write('Media/original.mov', 'source')
+        proxy = self.write('Proxy/rough.mov', 'proxy')
+        ignored = self.write('Media/unrelated.mov', 'unused')
+        self.write('Edit/scene.otio', json.dumps({
+            'OTIO_SCHEMA': 'Timeline.1',
+            'metadata': {'OTIO_SCHEMA': 'ExternalReference.1', 'target_url': ignored.as_uri()},
+            'tracks': {'OTIO_SCHEMA': 'Stack.1', 'children': [
+                {'OTIO_SCHEMA': 'Track.1', 'children': [
+                    {'OTIO_SCHEMA': 'Clip.1', 'media_reference':
+                        {'OTIO_SCHEMA': 'ExternalReference.1', 'target_url': 'https://example.invalid/media'}},
+                    {'OTIO_SCHEMA': 'Clip.2', 'media_references': {
+                        'source': {'OTIO_SCHEMA': 'ExternalReference.1', 'target_url': original.as_uri()},
+                        'proxy': {'OTIO_SCHEMA': 'ExternalReference.1', 'target_url': '../Proxy/rough.mov'},
+                    }},
+                ]},
+            ]},
+        }))
+        report = scan([self.root], projects={str(self.root / name): [] for name in ('Edit', 'Media', 'Proxy')})
+        rows = {row['path']: row for row in report['files']}
+        for path in (original, proxy):
+            self.assertEqual(rows[str(path)]['decision'], 'keep')
+            self.assertIn(str(self.root / 'Edit'), rows[str(path)]['projects'])
+        self.assertEqual(rows[str(ignored)]['refs'], [])
+        self.assertTrue(any('OTIO' in issue for issue in report['issues']))
+
     def test_hub_refs_and_protected_blobs(self):
         revision = 'a' * 40
         repo = 'hub/models--org--tiny/'

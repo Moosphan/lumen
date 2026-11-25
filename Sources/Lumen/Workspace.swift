@@ -86,6 +86,10 @@ struct AppRanking: View {
 
 enum WorkspaceForm: String, Identifiable { case project, task; var id: Self { self } }
 
+private let taskSessionPrefixes = [
+    "Claude Code": "claude-session:", "Codex": "codex-session:", "Gemini CLI": "gemini-session:",
+]
+
 private enum WorkspaceMode: String, CaseIterable {
     case agents = "按 Agent", projects = "按工程"
 }
@@ -101,6 +105,8 @@ struct WorkspaceView: View {
     @State private var budget = ""
     @State private var form: WorkspaceForm?
     @State private var editingTask: Object = [:]
+    @State private var selectedCloseout: Object = [:]
+    @State private var showingCloseout = false
 
     private var growth: [String: NSNumber] { store.data["growth"] as? [String: NSNumber] ?? [:] }
     private var search: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -112,7 +118,10 @@ struct WorkspaceView: View {
                 Divider().frame(height: 29)
                 metric("已识别工程", store.inventory.workspaceProjects.count.formatted())
                 Divider().frame(height: 29)
-                metric("已安装 Agent", store.inventory.workspaceAgents.filter(\.installed).count.formatted())
+                metric("已识别工具", Set(store.inventory.workspaceAgents.map { agent in
+                    let family = agent.raw.string("family")
+                    return family.isEmpty ? agent.id : family
+                }).count.formatted())
                 Divider().frame(height: 29)
                 metric("共享文件占用", bytes(store.inventory.workspaceStats.sharedBytes))
                     .help("含跨工程共享的文件及硬链接")
@@ -154,6 +163,9 @@ struct WorkspaceView: View {
                     Text("任务清单").font(.headline); Spacer()
                     Button("登记任务") { editingTask = [:]; form = .task }
                 }
+                let closeouts = Dictionary(uniqueKeysWithValues: store.data.rows("task_closeouts").map {
+                    ($0.string("id"), $0)
+                })
                 ForEach(Array(store.data.rows("tasks").enumerated()), id: \.offset) { pair in
                     let task = pair.element
                     HStack {
@@ -161,12 +173,67 @@ struct WorkspaceView: View {
                             Text(task.string("agent") + " · " + (task["closed"] as? Bool == true ? "已结束" : "进行中")).bold()
                             Text(task.string("root")).font(.caption).foregroundStyle(.secondary)
                         }; Spacer()
+                        if let closeout = closeouts[task.string("id")] {
+                            Button("查看收尾单") { selectedCloseout = closeout; showingCloseout = true }
+                        }
                         Button("编辑任务") { editingTask = task; form = .task }
                     }
                 }
             }
+            agentObservations
         }.disabled(!store.busy.isEmpty).sheet(item: $form) { kind in
             WorkspaceEditor(store: store, kind: kind, task: editingTask)
+        }.sheet(isPresented: $showingCloseout) {
+            TaskCloseoutView(summary: selectedCloseout, review: { path in
+                showingCloseout = false
+                let key = ProjectBucket.Key(projects: [selectedCloseout.string("root")],
+                                            agents: [selectedCloseout.string("agent")])
+                drill(ProjectBucket(id: key, paths: [path], detailTitle: "任务收尾单"))
+            })
+        }
+    }
+
+    private var agentObservations: some View {
+        let titles = ["turn_finished": "回复结束", "session_ended": "会话结束", "interrupted": "运行中断"]
+        let observations = store.data.rows("agent_observations")
+        let tasks = Set(store.data.rows("tasks").map { $0.string("id") })
+        return Panel {
+            HStack {
+                Text("会话观察").font(.headline)
+                Spacer()
+                Button("刷新观察") { store.call("status") }
+            }
+            if observations.isEmpty {
+                Text("接入 Codex 或 Gemini CLI 的本地 Hook 后，可在这里查看观察记录。")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else {
+                DisclosureGroup("最近观察（\(observations.count)）") {
+                    LazyVStack(alignment: .leading, spacing: 10) {
+                        ForEach(Array(observations.enumerated()), id: \.offset) { _, observation in
+                            let name = observation.string("agent")
+                            let session = observation.string("session_id")
+                            let id = (taskSessionPrefixes[name] ?? "") + session
+                            HStack {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text("\(name) · \(titles[observation.string("stage")] ?? "观察")")
+                                        .font(.callout.weight(.medium))
+                                    pathLabel(observation.string("root"))
+                                }
+                                Spacer()
+                                if tasks.contains(id) {
+                                    Text("已登记").font(.caption).foregroundStyle(.secondary)
+                                } else {
+                                    Button("登记为任务…") {
+                                        editingTask = ["root": observation.string("root"), "agent": name,
+                                                       "session_id": session]
+                                        form = .task
+                                    }
+                                }
+                            }
+                        }
+                    }.padding(.top, 8)
+                }
+            }
         }
     }
 
@@ -184,8 +251,17 @@ struct WorkspaceView: View {
         let agents = store.inventory.workspaceAgents.filter { agent in
             matches(agent.id) || agent.projects.contains(where: matches) || agent.stores.contains { matches($0.id) }
         }.sorted { compare($0.stats, name: $0.id, $1.stats, other: $1.id) }
-        return workspaceList(agents, empty: "未找到匹配的 Agent") { agent in
-            agentRow(agent)
+        return VStack(alignment: .leading, spacing: 8) {
+            let types = [("app", "桌面应用"), ("desktop", "桌面 Agent"), ("ide", "IDE"),
+                         ("extension", "编辑器扩展"), ("cli", "CLI")]
+            let counts = Dictionary(grouping: agents, by: { $0.raw.string("kind") }).mapValues(\.count)
+            let labels = types.compactMap { key, label in counts[key].map { "\(label) \($0)" } }
+            if !labels.isEmpty {
+                Text(labels.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary)
+            }
+            workspaceList(agents, empty: "未找到匹配的 Agent") { agent in
+                agentRow(agent)
+            }
         }
     }
 
@@ -485,8 +561,8 @@ struct WorkspaceEditor: View {
             }}
             TextField(kind == .task ? "Agent 名称" : "Agent 名称（多个名称用逗号分隔）", text: $agent)
             if kind == .task {
-                if agent.trimmingCharacters(in: .whitespaces) == "Claude Code" && task["id"] == nil {
-                    TextField("Claude 会话 ID（可选，用于自动接收结束事件）", text: $sessionID)
+                if taskSessionPrefixes[agent.trimmingCharacters(in: .whitespaces)] != nil && task["id"] == nil {
+                    TextField("会话 ID（可选）", text: $sessionID)
                 }
                 Text("每行填写一个已授权的绝对路径。输入与正式输出会标记为保留。").foregroundStyle(.secondary)
                 pathsEditor("输入", $inputs); pathsEditor("正式输出", $outputs); pathsEditor("临时产物", $temporary)
@@ -497,12 +573,13 @@ struct WorkspaceEditor: View {
                 if kind == .task {
                     var args: Object = ["root":root,"agent":agent,"inputs":lines(inputs),"outputs":lines(outputs),"temporary":lines(temporary),"closed":closed]
                     let session = sessionID.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if task["id"] == nil && agent.trimmingCharacters(in: .whitespaces) == "Claude Code" && !session.isEmpty {
+                    if task["id"] == nil, let prefix = taskSessionPrefixes[agent.trimmingCharacters(in: .whitespaces)],
+                       !session.isEmpty {
                         guard session.range(of: #"^[A-Za-z0-9_-]{1,128}$"#, options: .regularExpression) != nil else {
                             formError = "会话 ID 仅接受 1 至 128 个字母、数字、连字符或下划线。"
                             return
                         }
-                        let identifier = "claude-session:" + session
+                        let identifier = prefix + session
                         guard !store.data.rows("tasks").contains(where: { $0.string("id") == identifier }) else {
                             formError = "该会话已登记，请从任务清单编辑已有记录。"
                             return
@@ -523,6 +600,7 @@ struct WorkspaceEditor: View {
             root = task.string("root"); agent = task.string("agent")
             inputs = task.paths("inputs").joined(separator: "\n"); outputs = task.paths("outputs").joined(separator: "\n")
             temporary = task.paths("temporary").joined(separator: "\n"); closed = task["closed"] as? Bool ?? false
+            sessionID = task.string("session_id")
         }
     }
 }

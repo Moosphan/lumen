@@ -48,6 +48,21 @@
 - **OpenClaw、Kiro、Qwen Code、goose**。优先识别项目、会话存储和工具数据。OpenClaw 按 Agent 和会话隔离归属，用户调度的后台任务与本次任务单独标记。[OpenClaw 会话文档](https://docs.openclaw.ai/concepts/session)
 - **候补队列**。Trae、Amp、Kiro CLI、Conductor、Aider，按用户需求和元数据可靠性排序。Kiro、Kiro CLI 如共享产品家族，在覆盖统计中合并，在版本矩阵中单列。
 
+#### 第二批开发分支覆盖
+
+| 家族 | 已接入的本地证据 | 仍需验证的范围 |
+| --- | --- | --- |
+| Claude Desktop/Cowork | 应用标识符、桌面数据、Cowork 虚拟机和本地会话分开盘点 | 项目路径格式和会话内产物归属 |
+| GitHub Copilot | CLI 首条 v1 会话事件。VS Code／Insiders 用扩展会话证据关联本地单目录工程 | 多根、远程、共享 SQLite 索引与同步历史 |
+| Windsurf | Cascade 本地存储 | 工程映射 |
+| Roo Code | 默认 VS Code 扩展清单、3.53.0 独立任务工作区元数据 | 旧版索引、自定义及其他编辑器配置 |
+| Kiro | IDE 应用标识符、1.x 本地 KAS 项目路径、旧会话和日志目录 | 旧会话工程归属及远程会话 |
+| OpenClaw | macOS 应用标识符、严格 JSON 配置的本地 Agent 工程，分别盘点各 Agent 会话和调度存储 | JSON5 专用语法、配置包含和单条调度任务 |
+| Qwen Code | v0.28.4 本地聊天记录的工程路径和受支持运行目录配置 | 新版托管会话元数据 |
+| goose | v1.60.2 已写入 SQLite 主库的本机工作目录 | 尚未写入主库的会话与容器工作目录 |
+
+Copilot CLI 与 VS Code 分行展示，工具总数按家族合并。以上是基于上游元数据和合成测试确认的格式。安装、工程关联和清理能力仍分别核验。[Copilot CLI 存储](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference) · [Windsurf 本地数据](https://docs.devin.ai/desktop/troubleshooting/windsurf-common-issues) · [Kiro 会话](https://kiro.dev/docs/ide/whats-new-v1/#sessions) · [OpenClaw Agent 配置](https://docs.openclaw.ai/concepts/multi-agent/index.html) · [Qwen Code 聊天存储](https://github.com/QwenLM/qwen-code/blob/v0.28.4/packages/core/src/services/chatRecordingService.ts) · [goose 会话结构](https://github.com/aaif-goose/goose/blob/v1.60.2/crates/goose/src/session/session_manager.rs)
+
 ## 功能和验收清单
 
 | 编号 | 交付 | 依赖 | 验收 |
@@ -65,6 +80,8 @@
 | P2-3 | 补齐通用清理 | P0-4、P2-1 | 开发缓存优先覆盖 Xcode、npm/pnpm、pip/uv、Homebrew 和 Docker 构建缓存。支持受验证的原生清理与恢复方式。大文件增加媒体组及工程引用提示；应用详情继续扩展低影响规则和卸载残留归属。 |
 
 模型盘点优先使用本地元数据和已经运行的工具提供的查询接口。Hugging Face 以共享 blob 的最终引用确定可释放量，Ollama 和 LM Studio 将工具返回的逻辑模型与磁盘文件对应，ComfyUI 按内置加载节点和已知路径配置建立引用。未知节点和路径解析缺口在详情中可见。隔离空间与实际释放空间分开显示。[Ollama 模型列表](https://docs.ollama.com/api/tags) · [Hugging Face 缓存](https://huggingface.co/docs/huggingface_hub/guides/manage-cache) · [LM Studio 模型列表](https://lmstudio.ai/docs/developer/rest/list) · [ComfyUI 模型路径](https://docs.comfy.org/basic-concepts/models)
+
+本分支的模型页使用已盘点的本地文件。Ollama 显示清单和 tag，Hugging Face 显示修订及共享权重，LM Studio 区分已知量化或分片，ComfyUI 识别内置加载节点的静态引用。支持已授权的自定义目录，并可手动核验 Ollama 或 LM Studio 本机服务的加载状态。结果缺乏证据时显示未知，模型全部保留。任务收尾单显示生命周期和批次，OpenTimelineIO 的本地源素材与代理引用也参与保护。增量扫描复用未变化的 Agent 归属摘要，缓存仅持久化证据字段、工程路径和文件状态戳。
 
 通用功能对照表持续追踪模拟器运行时、相似照片视频、厂商原生包管理、可恢复卸载和内存压力／交换空间展示。先在磁盘清理范围内逐项验收，内存指标作为后续独立功能评估。[Latent 功能概览](https://latentmac.com/) · [Latent 帮助](https://latentmac.com/help)
 

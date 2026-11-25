@@ -1,0 +1,142 @@
+"""Read local IDE and extension metadata within the inventory's scan scope."""
+import json
+import re
+from itertools import islice
+from urllib.parse import unquote, urlsplit
+
+
+_VSCODE_EDITORS = ('Code', 'Code - Insiders')
+_WORKSPACE_HASH = re.compile(r'[0-9a-f]{16}')
+
+
+def _copilot_cwd(metadata, path, session_id):
+    try:
+        with metadata.open(path) as stream:
+            if stream is None:
+                return None
+            limit = min(16 * 1024, metadata.budget)
+            line = stream.readline(limit + 1)
+            metadata.budget -= min(len(line), metadata.budget)
+            if len(line) > limit:
+                metadata.issue(path, 'Copilot CLI 会话元数据超过本次读取上限')
+                return None
+        if not line.endswith(b'\n'):
+            return None
+        event = json.loads(line)
+        if not isinstance(event, dict) or event.get('type') != 'session.start':
+            return None
+        data = event.get('data')
+        if not isinstance(data, dict) or data.get('version') != 1 or data.get('sessionId') != session_id:
+            return None
+        context = data.get('context')
+        if isinstance(context, dict):
+            return context.get('cwd')
+    except OSError as error:
+        metadata.failed(path, error)
+    except (ValueError, RecursionError):
+        metadata.issue(path, 'Copilot CLI 会话元数据损坏或格式未受支持')
+    return None
+
+
+def _copilot_cli(metadata, store, add):
+    # https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference
+    # https://github.com/microsoft/What-I-Did-Copilot/blob/main/docs/architecture.md#session-file-format
+    agent = 'GitHub Copilot CLI'
+    roots = [metadata.home / '.copilot']
+    configured = metadata.configured('COPILOT_HOME')
+    if configured is not None:
+        roots.append(configured)
+    for root in dict.fromkeys(roots):
+        store(agent, root / 'logs', 'Copilot CLI 日志')
+        sessions = root / 'session-state'
+        if store(agent, sessions, 'Copilot CLI 本地会话存储'):
+            for session in metadata.children(sessions, directories=True):
+                add(_copilot_cwd(metadata, session / 'events.jsonl', session.name), agent)
+    store(agent, metadata.home / 'Library/Caches/copilot', 'Copilot CLI macOS 默认缓存')
+
+
+def _local_folder_uri(uri):
+    if (not isinstance(uri, str) or not uri.startswith('file://') or len(uri) > 12288
+            or any(ord(char) < 32 for char in uri)):
+        return None
+    try:
+        parsed = urlsplit(uri)
+        if (parsed.netloc.casefold() not in ('', 'localhost') or parsed.query or parsed.fragment
+                or re.search(r'%(?![\da-fA-F]{2})', parsed.path)):
+            return None
+        return unquote(parsed.path, errors='strict')
+    except (ValueError, UnicodeError):
+        return None
+
+
+def _copilot_vscode(metadata, store, add):
+    # https://github.com/microsoft/vscode/blob/main/src/vs/workbench/api/common/extHostStoragePaths.ts
+    # https://github.com/microsoft/vscode/blob/main/src/vs/platform/storage/electron-main/storageMain.ts
+    # https://github.com/microsoft/vscode-copilot-chat/blob/main/src/extension/chat/vscode-node/sessionTranscriptService.ts
+    agent = 'GitHub Copilot VS Code'
+    for editor in _VSCODE_EDITORS:
+        user = metadata.home / 'Library/Application Support' / editor / 'User'
+        store(agent, user / 'globalStorage/github.copilot-chat', f'{editor} Copilot Chat 扩展全局存储')
+        for workspace in metadata.children(user / 'workspaceStorage', directories=True):
+            transcripts = workspace / 'GitHub.copilot-chat/transcripts'
+            if not store(agent, transcripts, f'{editor} Copilot Chat 扩展会话存储'):
+                continue
+            if metadata.children(transcripts, suffix='.jsonl'):
+                value = metadata.read_json(workspace / 'workspace.json', dict)
+                if value is not None:
+                    add(_local_folder_uri(value.get('folder')), agent)
+
+
+def _windsurf(metadata, store, add):
+    # https://docs.devin.ai/desktop/troubleshooting/windsurf-common-issues
+    store('Windsurf', metadata.home / '.codeium/windsurf/cascade', 'Windsurf Cascade 会话存储')
+
+
+def _roo_code(metadata, store, add):
+    # Roo Code 3.53.0 persists HistoryItem.workspace in the authoritative per-task file.
+    # https://github.com/RooCodeInc/Roo-Code/blob/main/src/core/task-persistence/TaskHistoryStore.ts
+    # https://github.com/RooCodeInc/Roo-Code/blob/main/src/core/task-persistence/taskMetadata.ts
+    for editor in _VSCODE_EDITORS:
+        root = (metadata.home / 'Library/Application Support' / editor
+                / 'User/globalStorage/rooveterinaryinc.roo-cline')
+        if store('Roo Code', root, f'{editor} Roo Code 扩展全局存储'):
+            for task in metadata.children(root / 'tasks', directories=True):
+                item = metadata.read_json(task / 'history_item.json', dict)
+                if item is not None and item.get('id') == task.name:
+                    add(item.get('workspace'), 'Roo Code')
+
+
+def _kiro(metadata, store, add):
+    # https://kiro.dev/docs/ide/whats-new-v1/#sessions
+    # https://github.com/kirodotdev/Kiro/issues/10534
+    # https://github.com/kirodotdev/Kiro/issues/10770
+    application = metadata.home / 'Library/Application Support/Kiro'
+    store('Kiro', application / 'logs', 'Kiro IDE 日志')
+    legacy = application / 'User/globalStorage/kiro.kiroagent/workspace-sessions'
+    store('Kiro', legacy, 'Kiro IDE 旧版会话存储')
+    root = metadata.home / '.kiro/sessions'
+    if not store('Kiro', root, 'Kiro KAS 共享会话存储'):
+        return
+    sessions = (session for bucket in metadata.children(root, directories=True)
+                if _WORKSPACE_HASH.fullmatch(bucket.name)
+                for session in metadata.children(bucket, directories=True))
+    for index, session in enumerate(islice(sessions, metadata.limit + 1)):
+        if index == metadata.limit:
+            metadata.issue(root, 'Kiro 会话元数据项目数超过本次读取上限')
+            break
+        path = session / 'session.json'
+        item = metadata.read_json(path, dict)
+        if item is None or item.get('id') != session.name:
+            continue
+        target = item.get('executionTarget')
+        if target is not None and (not isinstance(target, dict) or target.get('kind') != 'local'):
+            continue
+        workspaces = item.get('workspacePaths')
+        if isinstance(workspaces, list):
+            if len(workspaces) > metadata.limit:
+                metadata.issue(path, 'Kiro 工作区数量超过本次读取上限')
+            for workspace in islice(workspaces, metadata.limit):
+                add(workspace, 'Kiro')
+
+
+ADAPTERS = (_copilot_cli, _copilot_vscode, _windsurf, _roo_code, _kiro)

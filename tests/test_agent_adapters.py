@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from engine.lumen.agent_adapters import cline_installations, discover
+from engine.lumen.agent_adapters import discover, extension_installations
 
 
 class AgentAdapterTests(unittest.TestCase):
@@ -39,6 +39,33 @@ class AgentAdapterTests(unittest.TestCase):
         stores, projects = self.scan()
         self.assertEqual(projects, {self.project: {'Cursor'}})
         self.assertEqual([(agent, path) for agent, path, _ in stores], [('Cursor', source.parents[1])])
+
+    def test_incremental_discovery_caches_only_projections_and_revalidates_changes(self):
+        from engine.lumen.agent_adapters import _Metadata
+
+        cursor = self.write('Library/Application Support/Cursor/User/workspaceStorage/id/workspace.json',
+                            {'folder': self.project.as_uri()})
+        transcript = self.write('.cline/data/tasks/taskHistory.json', [
+            {'id': 't', 'cwdOnTaskInitialization': str(self.project), 'task': 'private task example'},
+        ])
+        cache = {}
+        expected = self.scan(cache=cache)
+        self.assertNotIn('private task example', json.dumps(cache))
+        with patch.object(_Metadata, 'read_json', side_effect=AssertionError("parsed unchanged metadata")):
+            self.assertEqual(self.scan(cache=cache), expected)
+
+        destination = self.home / 'Projects/another'
+        cursor.write_text(json.dumps({'folder': destination.as_uri()}))
+        _, projects = self.scan(cache=cache)
+        self.assertEqual(projects, {destination: {'Cursor'}, self.project: {'Cline'}})
+        _, projects = self.scan(cache=cache, excluded=(transcript.parent,))
+        self.assertEqual(projects, {destination: {'Cursor'}})
+
+    def test_incremental_discovery_detects_new_metadata_under_an_empty_store(self):
+        cache = {}
+        self.assertEqual(self.scan(cache=cache), ([], {}))
+        self.write('.gemini/projects.json', {'projects': {str(self.project): 'film'}})
+        self.assertEqual(self.scan(cache=cache)[1], {self.project: {'Gemini CLI'}})
 
     def test_gemini_uses_project_registry_and_honors_explicit_in_home_override(self):
         source = self.write('.gemini/projects.json', {'projects': {str(self.project): 'film'}})
@@ -153,7 +180,12 @@ class AgentAdapterTests(unittest.TestCase):
         self.write(f'{root}-3.40.0/package.json', {**manifest, 'version': '3.40.0'})
         self.write(f'{root}-3.46.0/package.json', {**manifest, 'publisher': 'different'})
         self.write('.vscode/extensions/.obsolete', {'saoudrizwan.claude-dev-3.40.0': True})
-        self.assertEqual(cline_installations(self.home), [(valid.parent, '3.45.1')])
+        copilot = self.write('.vscode/extensions/github.copilot-chat-0.44.0/package.json', {
+            'publisher': 'GitHub', 'name': 'copilot-chat', 'version': '0.44.0',
+        })
+        self.assertEqual(extension_installations(self.home), [
+            ('Cline', valid.parent, '3.45.1'), ('GitHub Copilot VS Code', copilot.parent, '0.44.0'),
+        ])
 
     @unittest.skipIf(os.geteuid() == 0, 'root can read permission-denied fixtures')
     def test_inaccessible_metadata_is_reported_and_respects_exclusion(self):

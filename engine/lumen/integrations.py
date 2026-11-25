@@ -99,6 +99,61 @@ def fcpxml_sources(path, data):
             yield Path(os.path.normpath(path.parent / target)), asset.get('id', 'asset')
 
 
+def otio_sources(path, data):
+    """Resolve static source and proxy links from OpenTimelineIO JSON timelines."""
+    timeline = json.loads(data)
+    if not isinstance(timeline, dict) or timeline.get('OTIO_SCHEMA') != 'Timeline.1':
+        raise ValueError('OTIO 时间线结构未受支持')
+    pending = [timeline.get('tracks')]
+    partial = False
+    number = 0
+    while pending:
+        node = pending.pop()
+        if not isinstance(node, dict):
+            partial = True
+            continue
+        schema = node.get('OTIO_SCHEMA')
+        if schema in ('Stack.1', 'Track.1'):
+            children = node.get('children')
+            if isinstance(children, list):
+                pending.extend(reversed(children))
+            else:
+                partial = True
+            continue
+        if schema not in ('Clip.1', 'Clip.2'):
+            partial |= schema not in ('Gap.1', 'Transition.1')
+            continue
+        number += 1
+        references = node.get('media_references') if schema == 'Clip.2' else {'default': node.get('media_reference')}
+        if not isinstance(references, dict):
+            partial = True
+            continue
+        for ref in references.values():
+            if not isinstance(ref, dict) or ref.get('OTIO_SCHEMA') != 'ExternalReference.1':
+                partial = True
+                continue
+            url = ref.get('target_url')
+            if not isinstance(url, str) or not url or any(ord(c) < 32 for c in url):
+                partial = True
+                continue
+            try:
+                parts = urlsplit(url)
+                local = parts.scheme in ('', 'file') and parts.netloc.casefold() in ('', 'localhost')
+                if not local or not parts.path or parts.query or parts.fragment:
+                    partial = True
+                    continue
+                value = unquote(parts.path, errors='strict')
+                target = recorded_path(os.path.normpath(path.parent / value))
+            except (ValueError, UnicodeError):
+                target = None
+            if target is None:
+                partial = True
+            else:
+                yield target, f'OTIO 片段 {number}'
+    if partial:
+        raise ValueError('OTIO 包含未覆盖的媒体、远程引用或时间线结构')
+
+
 def hub_ref(path):
     """Return the Hub model repo and named ref only inside its refs subtree."""
     for parent in path.parents:

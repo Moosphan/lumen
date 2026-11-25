@@ -190,6 +190,11 @@ private func fallbackReport(_ pid: pid_t) {
                       row["name"] as? String == "Gemini CLI" &&
                       (row["stores"] as? [[String: Any]])?.contains(where: { ($0["count"] as? Int ?? 0) > 0 }) == true
                   }),
+                  agents.contains(where: { $0["name"] as? String == "Kiro" }),
+                  let modelInventory = report["model_inventory"] as? [String: Any],
+                  let models = modelInventory["models"] as? [[String: Any]],
+                  models.contains(where: { $0["tool"] as? String == "LM Studio" &&
+                      $0["quantization"] as? String == "Q4_K_M" }),
                   let categories = report["categories"] as? [[String: Any]], categories.count >= 3,
                   (data["roots"] as? [String])?.isEmpty == true else { return nil as Bool? }
             return true
@@ -224,6 +229,11 @@ private func fallbackReport(_ pid: pid_t) {
         try press("Studio Project", in: ax)
         _ = try eventually("the expanded project storage categories") { element("数据类别", in: ax, button: false) }
         captureWindow(pid: pid, lab: lab, filename: "Lumen-agent-sweep.png")
+        try press("模型存储", in: ax)
+        try press("模型详情", in: ax)
+        _ = try eventually("the model preservation verdict") { element("保留模型", in: ax, button: false) }
+        try press("完成", in: ax)
+        captureWindow(pid: pid, lab: lab, filename: "Lumen-model-inventory.png")
         try press("大文件清理", in: ax)
         let nodes = ["Documents", "Library", ".cache", "Downloads", "Movies", "Pictures"]
         _ = try eventually("space map tiles in multiple rows and columns") {

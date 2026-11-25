@@ -1,5 +1,6 @@
 """Read only the project metadata needed by the desktop inventory."""
 import errno
+from hashlib import sha256
 import json
 import os
 import re
@@ -11,18 +12,39 @@ from collections import Counter, defaultdict
 from contextlib import closing, contextmanager
 from itertools import islice
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
 
+from . import agent_ide, agent_local_tools
 from .actions import _directory
 from .integrations import recorded_path
 
 
 _MIB = 1024 * 1024
 _SLUG = re.compile(r'[a-z0-9-]+')
+_CACHE_SCHEMA = 1
+EXTENSIONS = {
+    ('saoudrizwan', 'claude-dev'): 'Cline',
+    ('github', 'copilot-chat'): 'GitHub Copilot VS Code',
+    ('rooveterinaryinc', 'roo-cline'): 'Roo Code',
+}
 
 
 def _inside(path, root):
     return path == root or root in path.parents
+
+
+def _stamp(path):
+    # Check the entry through its real parent; never traverse a replaced symlink.
+    try:
+        with _directory(path.parent) as fd:
+            info = os.stat(path.name, dir_fd=fd, follow_symlinks=False)
+    except OSError as error:
+        return [error.errno]
+    return [info.st_dev, info.st_ino, info.st_size, info.st_mode, info.st_mtime_ns, info.st_ctime_ns]
+
+
+def _variable_stamp(key):
+    value = os.environ.get(key)
+    return sha256(os.fsencode(value)).hexdigest() if value is not None else None
 
 
 class _Metadata:
@@ -35,6 +57,8 @@ class _Metadata:
         self.limit = 240 if quick else 1600
         self.budget = (8 if quick else 32) * _MIB
         self.database_limit = (128 if quick else 512) * _MIB
+        self.watched = None
+        self.variables = {}
 
     def issue(self, path, message):
         self.issues.add(f'{path} · {message}')
@@ -48,8 +72,15 @@ class _Metadata:
         if error.errno not in (errno.ENOENT, errno.ENOTDIR, errno.ELOOP):
             self.issue(path, '无法读取 Agent 元数据位置')
 
+    def watch(self, path):
+        if self.watched is not None and len(self.watched) <= 4096 and self.allowed(path):
+            key = str(path)
+            if key not in self.watched:
+                self.watched[key] = _stamp(path)
+
     def directory(self, path):
         if self.allowed(path):
+            self.watch(path)
             try:
                 with _directory(path):
                     return True
@@ -60,6 +91,7 @@ class _Metadata:
     def children(self, path, *, directories=False, suffix=None, prefix=None):
         if not self.allowed(path):
             return []
+        self.watch(path)
         try:
             with _directory(path) as fd, os.scandir(fd) as entries:
                 found = []
@@ -82,6 +114,7 @@ class _Metadata:
         if not self.allowed(path):
             yield None
             return
+        self.watch(path)
         with _directory(path.parent) as fd:
             info = os.stat(path.name, dir_fd=fd, follow_symlinks=False)
             if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
@@ -126,8 +159,14 @@ class _Metadata:
         self.issue(path, 'Agent 元数据损坏或格式未受支持')
         return None
 
-    def configured(self, key):
+    def setting(self, key):
         value = os.environ.get(key)
+        if self.watched is not None:
+            self.variables[key] = _variable_stamp(key)
+        return value
+
+    def configured(self, key):
+        value = self.setting(key)
         if value:
             path = recorded_path(value)
             if path is not None and any(_inside(path, root) or _inside(root, path) for root in self.roots):
@@ -147,18 +186,9 @@ def _cursor(metadata, store, add):
     store('Cursor', user / 'logs', 'Cursor IDE 日志')
     for folder in metadata.children(workspace, directories=True):
         value = metadata.read_json(folder / 'workspace.json', dict)
-        uri = value.get('folder') if value is not None else None
-        if not isinstance(uri, str) or not uri.startswith('file://') or len(uri) > 12288:
-            continue
-        try:
-            parsed = urlsplit(uri)
-            if (parsed.netloc.casefold() not in ('', 'localhost') or parsed.query or parsed.fragment
-                    or not parsed.path or any(ord(ch) < 32 for ch in uri)
-                    or re.search(r'%(?![\da-fA-F]{2})', parsed.path)):
-                continue
-            add(unquote(parsed.path, errors='strict'), 'Cursor')
-        except (ValueError, UnicodeError):
-            continue
+        directory = agent_ide._local_folder_uri(value.get('folder')) if value is not None else None
+        if directory is not None:
+            add(directory, 'Cursor')
 
 
 def _gemini(metadata, store, add):
@@ -228,10 +258,9 @@ def _cline(metadata, store, add):
                 add(row.get('cwdOnTaskInitialization'), 'Cline')
 
 
-def cline_installations(home: Path, excluded=(), *, authorized=()) -> list[tuple[Path, str]]:
-    """Find Cline manifests in the local VS Code extension directories."""
+def extension_installations(home: Path, excluded=(), *, authorized=()):
+    """Find known extension manifests in the local VS Code directories."""
     metadata = _Metadata(home, True, excluded, issues=None, authorized=authorized)
-    identifier = 'saoudrizwan.claude-dev'
     roots = [home / '.vscode/extensions', home / '.vscode-insiders/extensions']
     configured = metadata.configured('VSCODE_EXTENSIONS')
     if configured is not None:
@@ -239,15 +268,17 @@ def cline_installations(home: Path, excluded=(), *, authorized=()) -> list[tuple
     found = []
     for root in dict.fromkeys(roots):
         obsolete = metadata.read_json(root / '.obsolete', dict) or {}
-        for folder in metadata.children(root, directories=True, prefix=identifier + '-'):
-            if obsolete.get(folder.name):
-                continue
-            manifest = metadata.read_json(folder / 'package.json', dict, limit=512 * 1024)
-            if manifest is None or (manifest.get('publisher'), manifest.get('name')) != ('saoudrizwan', 'claude-dev'):
-                continue
-            version = manifest.get('version')
-            if isinstance(version, str) and re.fullmatch(r'\d+\.\d+\.\d+(?:[-+][a-zA-Z0-9.+-]+)?', version):
-                found.append((folder, version))
+        for (publisher, name), agent in EXTENSIONS.items():
+            for folder in metadata.children(root, directories=True, prefix=f'{publisher}.{name}-'):
+                if obsolete.get(folder.name):
+                    continue
+                manifest = metadata.read_json(folder / 'package.json', dict, limit=512 * 1024)
+                if manifest is None or tuple(str(manifest.get(key, '')).casefold()
+                                              for key in ('publisher', 'name')) != (publisher, name):
+                    continue
+                version = manifest.get('version')
+                if isinstance(version, str) and re.fullmatch(r'\d+\.\d+\.\d+(?:[-+][a-zA-Z0-9.+-]+)?', version):
+                    found.append((agent, folder, version))
     return found
 
 
@@ -299,6 +330,7 @@ def _opencode_sqlite(metadata, path):
             try:
                 wal = path.with_name(path.name + '-wal')
                 if metadata.allowed(wal):
+                    metadata.watch(wal)
                     with _directory(wal.parent) as fd:
                         if os.stat(wal.name, dir_fd=fd, follow_symlinks=False).st_size:
                             metadata.issue(path, 'OpenCode 仅识别已写入主库的记录，部分会话可能待同步')
@@ -390,25 +422,71 @@ def _opencode(metadata, store, add):
         store('OpenCode', directory / 'opencode', 'OpenCode 缓存存储')
 
 
-def discover(home: Path, quick: bool, *, excluded=(), issues=None,
-             authorized=()) -> tuple[list[tuple[str, Path, str]], dict[Path, set[str]]]:
+def _current(metadata, stamps, variables):
+    if any(_variable_stamp(key) != digest for key, digest in variables.items()):
+        return False
+    for value, stamp in stamps.items():
+        path = recorded_path(value)
+        if (path is None or not metadata.allowed(path) or _stamp(path) != stamp
+                or (len(stamp) == 1 and stamp[0] not in (errno.ENOENT, errno.ENOTDIR, errno.ELOOP))):
+            return False
+    return True
+
+
+def discover(home: Path, quick: bool, *, excluded=(), issues=None, authorized=(), cache=None,
+             adapters=None) -> tuple[list[tuple[str, Path, str]], dict[Path, set[str]]]:
     """Return readable Agent store locations and local project-path candidates."""
-    metadata = _Metadata(home, quick, excluded, issues, authorized)
-    stores = {}
-    projects = defaultdict(set)
+    metadata = _Metadata(home, quick, excluded, None, authorized)
+    scope = [_CACHE_SCHEMA, str(home), quick, sorted(map(str, excluded)), sorted(map(str, authorized))]
+    previous = cache.get('readers', {}) if cache is not None and cache.get('scope') == scope else {}
+    current = {}
+    all_stores = {}
+    all_projects = defaultdict(set)
 
     def store(agent, path, evidence):
         if not metadata.directory(path):
             return False
-        stores[agent, path] = evidence
+        stores[agent, str(path)] = evidence
         return True
 
     def add(value, agent):
         path = recorded_path(value)
         if (path is not None and path != Path('/') and not metadata.hidden.intersection(path.parts)
                 and not any(_inside(path, root) for root in metadata.excluded)):
-            projects[path].add(agent)
+            projects[str(path)].add(agent)
 
-    for adapter in (_cursor, _gemini, _opencode, _cline):
-        adapter(metadata, store, add)
-    return [(agent, path, evidence) for (agent, path), evidence in stores.items()], dict(projects)
+    readers = (_cursor, _gemini, _opencode, _cline, *agent_ide.ADAPTERS, *agent_local_tools.ADAPTERS)
+    for adapter in readers if adapters is None else adapters:
+        reader = adapter.__name__
+        cached = previous.get(reader)
+        budget = metadata.budget
+        stores, projects = {}, defaultdict(set)
+        if (cached and cached['budget'] == budget and
+                _current(metadata, cached['stamps'], cached['variables'])):
+            result = cached
+            current[reader] = cached
+            metadata.budget -= cached['spent']
+        else:
+            metadata.issues = set()
+            metadata.watched = {} if cache is not None else None
+            metadata.variables = {}
+            adapter(metadata, store, add)
+            result = dict(
+                stores=[[name, path, evidence] for (name, path), evidence in stores.items()],
+                projects={path: sorted(names) for path, names in projects.items()},
+                issues=sorted(metadata.issues),
+            )
+            if (metadata.watched is not None and len(metadata.watched) <= 4096
+                    and _current(metadata, metadata.watched, metadata.variables)):
+                current[reader] = dict(result, budget=budget, spent=budget - metadata.budget,
+                                       stamps=metadata.watched, variables=metadata.variables)
+        for name, path, evidence in result['stores']:
+            all_stores[name, Path(path)] = evidence
+        for path, names in result['projects'].items():
+            all_projects[Path(path)].update(names)
+        if issues is not None:
+            issues.update(result['issues'])
+    if cache is not None:
+        cache.clear()
+        cache.update(scope=scope, readers=current)
+    return [(agent, path, evidence) for (agent, path), evidence in all_stores.items()], dict(all_projects)

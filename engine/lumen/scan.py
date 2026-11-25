@@ -370,8 +370,9 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
 
     def store_for(directory):
         if directory not in store_by_directory:
-            store_by_directory[directory] = directory if directory in agent_stores else next(
-                (ancestor for ancestor in directory.parents if ancestor in agent_stores), None)
+            owner = next((parent for parent in (directory, *directory.parents)
+                          if parent in agent_stores or parent in project_agents), None)
+            store_by_directory[directory] = owner if owner in agent_stores else None
         return store_by_directory[directory]
 
     def register(p, s):
@@ -609,13 +610,15 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
     for p, row in files.items():
         if row.get('agent_store_path'):
             continue
-        if p.suffix.lower() in {'.prproj', '.drp', '.fcpbundle', '.aep'}:
+        if p.suffix.lower() in {'.prproj', '.drp', '.fcpbundle', '.aep', '.otioz'}:
             issue(p, '此工程格式的素材引用尚未解析')
         parser = None
         if p.name == 'manifest.json' and p.parent.name == '.vite':
             parser = integrations.vite_outputs
         elif p.suffix.lower() == '.fcpxml':
             parser = integrations.fcpxml_sources
+        elif p.suffix.lower() == '.otio':
+            parser = integrations.otio_sources
         if parser and row['kind'] != 'symlink':
             try:
                 for target, label in parser(p, _read(p, row, _small)):
@@ -629,7 +632,7 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
                     asset['refs'] = sorted(set(asset['refs']) | {f'{p}#{label}'})
                     asset['projects'] = sorted(set(asset['projects']) | set(row['projects']))
                     asset['agents'] = sorted(set(asset['agents']) | set(row['agents']))
-                    protect(target, 'Vite 构建清单或 Final Cut Pro 工程存在引用')
+                    protect(target, '构建清单或媒体时间线存在静态引用')
             except (ValueError, RecursionError, ParseError, OSError) as exc:
                 issue(p, f'清单或工程引用未完整解析：{exc}')
         if row['kind'] != 'html':

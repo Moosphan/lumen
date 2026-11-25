@@ -19,7 +19,8 @@ struct SuggestedScopes: View {
         let automatic = store.data.rows("local_locations")
         let excluded = store.data.paths("local_exclude")
         let groups = [("文件", "folder"), ("资源库", "folder"),
-                      ("Agent 工程", "square.3.layers.3d"), ("Agent 数据", "externaldrive")]
+                      ("Agent 工程", "square.3.layers.3d"), ("Agent 数据", "externaldrive"),
+                      ("模型存储", "cpu")]
         Panel {
             Text("本机自动扫描").font(.headline)
             Text("标准位置和已识别工程会在打开既白时盘点。").font(.callout).foregroundStyle(.secondary)
@@ -33,7 +34,7 @@ struct SuggestedScopes: View {
                         ForEach(rows, id: \.scopePath) { row in
                             let path = row.string("path")
                             location(row.string("title"), path: path, icon: icon) {
-                                FinderButton(path: path)
+                                FinderButton(path: path, reveal: row["directory"] as? Bool == false)
                                 if group == "Agent 工程" && !store.roots.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) {
                                     Button("加为清理范围") { store.scan(store.roots + [path], deep: deep, renewRoots: [path]) }
                                 }

@@ -8,7 +8,7 @@ from heapq import nlargest
 from pathlib import Path
 from xml.parsers.expat import ExpatError
 
-from . import agent_adapters, integrations
+from . import agent_adapters, integrations, model_inventory
 from .actions import _directory
 
 
@@ -20,6 +20,17 @@ AGENT_BUNDLES = {
     'com.openai.codex': 'Codex',
     'com.todesktop.230313mzl4w4u92': 'Cursor',
     'co.anysphere.cursor.nightly': 'Cursor',
+    'com.anthropic.claudefordesktop': 'Claude Desktop',
+    'dev.kiro.desktop': 'Kiro',
+    'ai.openclaw.mac': 'OpenClaw',
+    'ai.openclaw.mac.debug': 'OpenClaw',
+}
+AGENT_KINDS = {
+    'Claude Desktop': 'desktop',
+    'Cursor': 'ide', 'Windsurf': 'ide', 'Kiro': 'ide',
+    'Cline': 'extension', 'Roo Code': 'extension', 'GitHub Copilot VS Code': 'extension',
+    'Claude Code': 'cli', 'OpenCode': 'cli', 'Gemini CLI': 'cli',
+    'GitHub Copilot CLI': 'cli', 'OpenClaw': 'cli', 'Qwen Code': 'cli', 'goose': 'cli',
 }
 HIDDEN_SCOPE_NAMES = {'.git', '.Trash', '.Trashes', f'.lumen-vault-{os.getuid()}'}
 
@@ -138,9 +149,14 @@ def project_locations(home, sources, excluded, issues, quick=False, metadata_cac
                 and path not in broad_folders
                 and not HIDDEN_SCOPE_NAMES.intersection(path.parts)
                 and not any(within(path, root) for root in excluded)):
-            scoped_home = within(path, home) and not any(
+            parts = path.relative_to(home).parts if within(path, home) else ()
+            openclaw_workspace = (agent == 'OpenClaw' and len(parts) >= 2
+                                  and re.fullmatch(r'\.openclaw(?:-[\w-]+)?', parts[0])
+                                  and re.fullmatch(r'workspace(?:-[\w-]+)?', parts[1]))
+            checked = parts[1:] if openclaw_workspace else parts
+            scoped_home = bool(parts) and not any(
                 p.casefold() in {'library', 'applications', '.git', 'node_modules'} or p.startswith('.')
-                for p in path.relative_to(home).parts)
+                for p in checked)
             if not (scoped_home or any(within(path, root) for root in authorized)):
                 if path != Path('/') and not within(path, home) and not str(path).startswith(
                         ('/System/', '/Library/', '/private/', '/var/', '/tmp/', '/usr/')):
@@ -236,14 +252,14 @@ def project_locations(home, sources, excluded, issues, quick=False, metadata_cac
     return projects, skipped
 
 
-def plan(home, system, excluded, quick=False, metadata_cache=None, authorized=()):
+def plan(home, system, excluded, quick=False, metadata_cache=None, authorized=(), adapter_cache=None):
     from .scan import SYSTEM_ROOTS
 
     issues = set()
     excluded = set(excluded) | SYSTEM_ROOTS
     sources = session_stores(home, issues, authorized)
     other_stores, other_projects = agent_adapters.discover(
-        home, quick, excluded=excluded, issues=issues, authorized=authorized)
+        home, quick, excluded=excluded, issues=issues, authorized=authorized, cache=adapter_cache)
     projects, suggested = project_locations(home, sources, excluded, issues, quick=quick,
                                             metadata_cache=metadata_cache, extra_projects=other_projects,
                                             authorized=authorized)
@@ -256,29 +272,51 @@ def plan(home, system, excluded, quick=False, metadata_cache=None, authorized=()
         'Library/Application Support/Code': ('VS Code 数据', '资源库'),
         'Library/Developer/Xcode/DerivedData': ('Xcode 构建缓存', '资源库'),
         '.cache/huggingface': ('Hugging Face 模型', '资源库'),
-        '.ollama/models': ('Ollama 模型', '资源库'),
     }
+    model_roots = {
+        path: tool for path, tool in model_inventory.locations(home, os.environ)
+        if path != home and any(within(path, root) for root in (home, *authorized))
+    }
+    model_metadata = set(model_inventory.metadata_locations(home))
+    private = HIDDEN_SCOPE_NAMES | {'.ssh', '.aws', '.gnupg', '.kube', 'Keychains'}
+    broad_scopes = {home, *(home / name for name in ('Library', 'Documents', 'Desktop', 'Downloads',
+                                                   'Movies', 'Music', 'Pictures'))}
+
+    def model_scope(path):
+        return (path not in broad_scopes and any(within(path, root) for root in (home, *authorized))
+                and not any(within(path, root) for root in excluded) and not private.intersection(path.parts))
+
+    configured_comfy = model_inventory.configured_comfy_locations(home, os.environ, model_scope, issues)
+    model_roots.update({path: 'ComfyUI' for path in sorted(configured_comfy) if model_scope(path)})
+    model_roots = {path: tool for path, tool in model_roots.items() if model_scope(path)}
+    candidates = {home / rel: group for rel, group in common.items()}
+    candidates.update({path: (path.name, 'Agent 工程') for path in sorted(projects)})
+    candidates.update({path: (title, 'Agent 数据') for path, (_, title, _) in sources.items()})
+    candidates.update({path: (tool + ' 模型', '模型存储') for path, tool in model_roots.items()})
+    candidates.update({path: (path.name, '模型存储') for path in sorted(model_metadata)})
     locations = []
-    for path, (title, group) in [(home / rel, meta) for rel, meta in common.items()] + [
-            (path, (title, 'Agent 数据')) for path, (_, title, _) in sources.items()] + [
-            (p, (p.name, 'Agent 工程')) for p in sorted(projects)]:
+    for path, (title, group) in candidates.items():
         if any(within(path, p) for p in excluded) or HIDDEN_SCOPE_NAMES.intersection(path.parts):
             continue
         try:
             info = path.lstat()
-            if stat.S_ISDIR(info.st_mode) and path.resolve(strict=True) == path:
+            if (stat.S_ISDIR(info.st_mode) or path in model_metadata and stat.S_ISREG(info.st_mode)
+                    and info.st_nlink == 1) and path.resolve(strict=True) == path:
                 location = dict(path=str(path), title=title, group=group,
-                                agents=sorted(projects.get(path, ())), identity=[info.st_dev, info.st_ino])
+                                agents=sorted(projects.get(path, ())), identity=[info.st_dev, info.st_ino],
+                                directory=stat.S_ISDIR(info.st_mode))
                 if path in sources:
                     location.update(agent_store=sources[path][0], evidence=sources[path][2])
+                if group == '模型存储':
+                    location['model_store'] = True
                 locations.append(location)
         except FileNotFoundError:
             pass
         except (OSError, RuntimeError):
             issues.add(str(path) + ' · macOS 未开放读取权限')
-    cline = agent_adapters.cline_installations(home, excluded=excluded, authorized=authorized)
-    extensions = [dict(agent='Cline', path=str(path), version=version,
-                       kind='extension', evidence='VS Code 扩展清单') for path, version in cline]
+    found_extensions = agent_adapters.extension_installations(home, excluded=excluded, authorized=authorized)
+    extensions = [dict(agent=agent, path=str(path), version=version, kind='extension', evidence='VS Code 扩展清单')
+                  for agent, path, version in found_extensions]
     return locations, projects, installed_apps(home, system, excluded), issues, suggested, extensions
 
 
@@ -290,8 +328,11 @@ def agent_inventory(report, extensions=()):
     def agent(name):
         if name not in agents:
             agents[name] = dict(name=name, installed=False, projects=[], stores=[],
-                                supports_events=name == 'Claude Code', has_verified_cleanup=False,
+                                supports_events=name in ('Claude Code', 'Codex', 'Gemini CLI'),
+                                has_verified_cleanup=False,
                                 bytes=0, count=0, shared_bytes=0)
+            agents[name]['family'] = 'GitHub Copilot' if name.startswith('GitHub Copilot ') else name
+            agents[name]['kind'] = AGENT_KINDS.get(name, '')
         return agents[name]
 
     def count(entry, size, shared):
