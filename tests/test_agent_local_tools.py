@@ -22,7 +22,7 @@ class LocalAgentToolTests(unittest.TestCase):
             'OPENCLAW_HOME', 'OPENCLAW_STATE_DIR', 'OPENCLAW_CONFIG_PATH',
             'OPENCLAW_WORKSPACE_DIR', 'OPENCLAW_PROFILE', 'QWEN_HOME', 'QWEN_RUNTIME_DIR',
             'GOOSE_PATH_ROOT', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME',
-            'CONTINUE_GLOBAL_DIR',
+            'CONTINUE_GLOBAL_DIR', 'DSH_HOME', 'PI_CODING_AGENT_DIR', 'PI_CODING_AGENT_SESSION_DIR',
         )
         env = patch.dict(os.environ, dict.fromkeys(keys, ''))
         env.start()
@@ -38,6 +38,72 @@ class LocalAgentToolTests(unittest.TestCase):
         from engine.lumen import agent_local_tools
 
         return discover(self.home, True, adapters=agent_local_tools.ADAPTERS, **options)
+
+    def test_deepseek_reads_only_registered_stable_workspaces_and_revalidates_changes(self):
+        active = '49fb9c05-a1c4-419e-9254-a6379f88240a'
+        changed = '847b2a80-72e5-4af3-a44c-f4a7e5587383'
+        stale = 'ddade71c-4776-4d04-a390-769917152c17'
+        registry = {
+            'unit': {'name': 'workspace', 'version': 2},
+            'global': {'initialized': True, 'workspaceIds': [active, changed],
+                       'pendingMutation': {'operation': 'delete', 'workspaceId': changed}},
+            'tables': {'workspaces': {
+                active: {'path': str(self.project), 'title': 'private-title', 'sessionIds': []},
+                changed: {'path': str(self.home / 'Changing'), 'sessionIds': []},
+                stale: {'path': str(self.home / 'Stale'), 'sessionIds': []},
+            }},
+        }
+        metadata = self.write('.dsh/storages/workspace.json', registry)
+        session = self.write('.dsh/sessions/--project--/session/session.v4.jsonl.zstd', b'private compressed payload')
+        desktop = self.write('Library/Application Support/@deepseek-ai/dsh-desktop/state.json', b'opaque')
+        cache = {}
+        stores, projects = self.scan(cache=cache)
+        self.assertEqual(projects, {self.project: {'DeepSeek Harness'}})
+        self.assertIn(('DeepSeek Harness', session.parents[3], 'DeepSeek Harness 会话、配置与插件数据'), stores)
+        self.assertTrue(any(agent == 'DeepSeek Harness' and path == desktop.parent for agent, path, _ in stores))
+        self.assertNotIn('private-title', json.dumps(cache))
+        registry['unit']['version'] = 3
+        metadata.write_text(json.dumps(registry))
+        self.assertEqual(self.scan(cache=cache)[1], {})
+
+    def test_deepseek_custom_home_requires_scope_and_does_not_follow_symlink(self):
+        external = self.base / 'harness'
+        external.mkdir()
+        (external / 'storages').mkdir()
+        workspace = '49fb9c05-a1c4-419e-9254-a6379f88240a'
+        registry = external / 'storages/workspace.json'
+        registry.write_text(json.dumps({
+            'unit': {'name': 'workspace', 'version': 2},
+            'global': {'initialized': True, 'workspaceIds': [workspace]},
+            'tables': {'workspaces': {workspace: {'path': str(self.project), 'sessionIds': []}}},
+        }))
+        with patch.dict(os.environ, {'DSH_HOME': str(external)}):
+            self.assertEqual(self.scan()[1], {})
+            self.assertEqual(self.scan(authorized=(external,))[1], {self.project: {'DeepSeek Harness'}})
+            source = registry.rename(external / 'untargeted.json')
+            registry.symlink_to(source)
+            self.assertEqual(self.scan(authorized=(external,))[1], {})
+
+    def test_pi_uses_only_session_headers_for_default_and_authorized_custom_storage(self):
+        header = {'type': 'session', 'version': 3, 'id': 'session-123', 'cwd': str(self.project)}
+        history = self.write('.pi/agent/sessions/--bucket--/fixture.jsonl',
+                             json.dumps(header).encode() + b'\nprivate ignored body\n' * 2000)
+        self.write('.pi/agent/sessions/--bucket--/unknown.jsonl',
+                   (json.dumps(dict(header, version=99, cwd=str(self.home / 'Unknown'))) + '\n').encode())
+        self.write('.pi/agent/sessions/--bucket--/message.jsonl',
+                   (json.dumps(dict(header, type='message', cwd=str(self.home / 'Message'))) + '\n').encode())
+        custom = self.base / 'pi-sessions'
+        custom.mkdir()
+        custom_project = self.home / 'Projects/Reusable'
+        (custom / 'custom.jsonl').write_text(json.dumps(dict(header, cwd=str(custom_project))) + '\n')
+        with patch.dict(os.environ, {'PI_CODING_AGENT_SESSION_DIR': str(custom)}):
+            cache = {}
+            self.assertEqual(self.scan(cache=cache)[1], {self.project: {'Pi'}})
+            _, projects = self.scan(authorized=(custom,), cache=cache)
+            self.assertEqual(projects, {self.project: {'Pi'}, custom_project: {'Pi'}})
+            self.assertNotIn('private ignored body', json.dumps(cache))
+            history.unlink()
+            self.assertEqual(self.scan(authorized=(custom,), cache=cache)[1], {custom_project: {'Pi'}})
 
     def test_continue_associates_only_linked_local_sessions_without_reading_transcripts(self):
         from engine.lumen.agent_adapters import extension_installations

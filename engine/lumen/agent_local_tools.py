@@ -361,4 +361,103 @@ def _continue(metadata, store, add):
                 metadata.failed(path, error)
 
 
-ADAPTERS = (_claude_desktop, _openclaw, _qwen_code, _goose, _continue)
+def _deepseek_harness(metadata, store, add):
+    # The shipped base uses the single JSON unit in storages. The global
+    # workspace order is authoritative, including during create/delete recovery.
+    # https://github.com/deepseek-ai/deepseek-harness/blob/4b399c39a6d1479cd84ca591b4d7c88e24d38a96/packages/workspace/workspace/src/spec.ts
+    agent = 'DeepSeek Harness'
+    default = metadata.home / '.dsh'
+    configured = metadata.configured('DSH_HOME') or default
+    roots = tuple(root for root in dict.fromkeys((default, configured)) if root != metadata.home)
+    for root in roots:
+        if not store(agent, root, 'DeepSeek Harness 会话、配置与插件数据'):
+            continue
+        registry = root / 'storages/workspace.json'
+        document = metadata.read_json(registry, dict, limit=2 * 1024 * 1024)
+        if document is None:
+            continue
+        state, tables = document.get('global'), document.get('tables')
+        ids = state.get('workspaceIds') if isinstance(state, dict) and state.get('initialized') is True else None
+        records = tables.get('workspaces') if isinstance(tables, dict) else None
+        if document.get('unit') != {'name': 'workspace', 'version': 2} or not isinstance(ids, list) or not isinstance(records, dict):
+            metadata.issue(registry, 'DeepSeek Harness 工作区登记未初始化或格式未受支持')
+            continue
+        pending = state.get('pendingMutation')
+        changing = pending.get('workspaceId') if isinstance(pending, dict) else None
+        if len(ids) > metadata.limit:
+            metadata.issue(registry, 'DeepSeek Harness 工作区数超过本次读取上限')
+        for identifier in ids[:metadata.limit]:
+            if not isinstance(identifier, str) or identifier == changing:
+                continue
+            record = records.get(identifier)
+            path = recorded_path(record.get('path')) if isinstance(record, dict) else None
+            if path is not None and not any(path == data or data in path.parents for data in roots):
+                add(str(path), agent)
+    for relative, evidence in (
+        ('Application Support/@deepseek-ai/dsh-desktop', 'DeepSeek Harness 桌面应用数据'),
+        ('Logs/DeepSeek Harness', 'DeepSeek Harness 桌面日志'),
+        ('Caches/com.deepseek.dsh', 'DeepSeek Harness 桌面缓存'),
+        ('Caches/com.deepseek.dsh.ShipIt', 'DeepSeek Harness 更新缓存'),
+        ('Caches/@deepseek-aidsh-desktop-updater', 'DeepSeek Harness 安装包缓存'),
+        ('HTTPStorages/com.deepseek.dsh', 'DeepSeek Harness 网站存储'),
+    ):
+        store(agent, metadata.home / 'Library' / relative, evidence)
+
+
+def _pi_session_header(metadata, path):
+    try:
+        with metadata.open(path) as stream:
+            if stream is None:
+                return None
+            limit = min(16 * 1024, metadata.budget)
+            line = stream.readline(limit)
+            metadata.budget -= len(line)
+            if not line.endswith(b'\n'):
+                return None
+            value = json.loads(line)
+    except OSError as error:
+        metadata.failed(path, error)
+        return None
+    except (ValueError, RecursionError):
+        return None
+    if (isinstance(value, dict) and value.get('type') == 'session'
+            and type(value.get('version')) is int and value['version'] in (1, 2, 3)
+            and isinstance(value.get('id'), str) and 0 < len(value['id']) <= 256):
+        return recorded_path(value.get('cwd'))
+    return None
+
+
+def _pi(metadata, store, add):
+    # https://github.com/earendil-works/pi/blob/bfafd8ed5168bca1f1ca88ef0529cfd326664d16/packages/coding-agent/docs/session-format.md
+    agent = 'Pi'
+    default = metadata.home / '.pi/agent'
+    configured = metadata.configured('PI_CODING_AGENT_DIR') or default
+    session_override = metadata.configured('PI_CODING_AGENT_SESSION_DIR')
+    roots = tuple(root for root in dict.fromkeys((default, configured)) if root != metadata.home)
+    sessions = [root / 'sessions' for root in roots]
+    for root in roots:
+        if store(agent, root, 'Pi 配置、扩展与会话数据'):
+            settings = metadata.read_json(root / 'settings.json', dict)
+            path = _home_path(settings.get('sessionDir'), metadata.home) if settings is not None else None
+            if path is not None and session_override is None:
+                sessions.append(path)
+    if session_override is not None:
+        sessions.append(session_override)
+    sessions = tuple(path for path in dict.fromkeys(sessions) if path != metadata.home)
+    remaining = metadata.limit
+    for root in sessions:
+        if not store(agent, root, 'Pi 本机会话存储'):
+            continue
+        buckets = metadata.children(root, directories=True, prefix='--')
+        for directory in (root, *(path for path in buckets if path.name.endswith('--'))):
+            for session in metadata.children(directory, suffix='.jsonl'):
+                if remaining == 0 or metadata.budget == 0:
+                    metadata.issue(root, 'Pi 会话元数据超过本次读取上限')
+                    return
+                remaining -= 1
+                path = _pi_session_header(metadata, session)
+                if path is not None and not any(path == data or data in path.parents for data in (*roots, *sessions)):
+                    add(str(path), agent)
+
+
+ADAPTERS = (_claude_desktop, _openclaw, _qwen_code, _goose, _continue, _deepseek_harness, _pi)

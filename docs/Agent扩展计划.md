@@ -67,6 +67,15 @@ Continue 通过 VS Code 扩展清单和 `sessions.json` 关联本地工作目录
 
 Aider 接入后累计覆盖 16 个工具家族。默认在个人目录及已授权目录的有限层级查找历史文件开头的启动记录，使用目录位置关联工程。会话历史、配置和 RepoMap 缓存计入占用并保留。文件正文和提示词不进入索引，安装状态与自定义历史文件名仍待核验。[Aider 历史文件参数](https://github.com/Aider-AI/aider/blob/v0.86.2/aider/args.py) · [启动记录格式](https://github.com/Aider-AI/aider/blob/v0.86.2/aider/io.py) · [工单 #24](https://github.com/Moosphan/lumen/issues/24)
 
+DeepSeek Harness 和 Pi 接入后累计覆盖 18 个工具家族。
+
+| Agent | 已接入的本地证据 | 待验证范围 |
+| --- | --- | --- |
+| DeepSeek Harness | 桌面发布版标识符、默认 `~/.dsh` 或授权的 `DSH_HOME`、工作区登记 v2、桌面应用数据与缓存分区 | 未登记的独立 headless 会话、旧版登记格式和真实桌面版本回归 |
+| Pi | 默认和已授权的自定义配置及会话目录，JSONL v1–v3 首条会话记录的 `cwd` | CLI 安装版本、临时 CLI 参数和真实客户端回归 |
+
+DeepSeek Harness 的会话、配置、插件与凭证按保留盘点。Pi 只解析会话首条记录，历史和配置按保留盘点。两者沿用工程共享占用及清理审阅流程。[Harness 工作区格式](https://github.com/deepseek-ai/deepseek-harness/blob/4b399c39a6d1479cd84ca591b4d7c88e24d38a96/packages/workspace/workspace/src/spec.ts) · [Harness 桌面数据路径](https://github.com/deepseek-ai/deepseek-harness/blob/4b399c39a6d1479cd84ca591b4d7c88e24d38a96/docs/user/guide/desktop-uninstall-cleanup.md) · [Pi 会话格式](https://github.com/earendil-works/pi/blob/bfafd8ed5168bca1f1ca88ef0529cfd326664d16/packages/coding-agent/docs/session-format.md)
+
 ## 功能和验收清单
 
 | 编号 | 交付 | 依赖 | 验收 |

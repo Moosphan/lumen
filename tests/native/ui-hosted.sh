@@ -81,6 +81,31 @@ aider_project = home / "Projects/Aider Project"
 aider_project.mkdir()
 (aider_project / "notes.txt").write_text("Keep this Aider project source.")
 (aider_project / ".aider.chat.history.md").write_text("\n# aider chat started at 2026-11-25 12:00:00\n\nSynthetic session.")
+harness = home / "Applications/DeepSeek Harness.app/Contents"
+harness.mkdir(parents=True)
+(harness / "Info.plist").write_bytes(plistlib.dumps({
+    "CFBundleIdentifier": "com.deepseek.dsh", "CFBundleName": "DeepSeek Harness",
+    "CFBundleShortVersionString": "0.1.0",
+}))
+harness_project = home / "Projects/Harness Project"
+harness_project.mkdir()
+(harness_project / "scene.txt").write_bytes(b"scene" * 8192)
+registry = home / ".dsh/storages"
+registry.mkdir(parents=True)
+harness_id = "49fb9c05-a1c4-419e-9254-a6379f88240a"
+(registry / "workspace.json").write_text(json.dumps({
+    "unit": {"name": "workspace", "version": 2},
+    "global": {"initialized": True, "workspaceIds": [harness_id]},
+    "tables": {"workspaces": {harness_id: {"path": str(harness_project)}}},
+}))
+pi_project = home / "Projects/Pi Project"
+pi_project.mkdir()
+(pi_project / "edit.txt").write_bytes(b"draft" * 4096)
+pi_sessions = home / ".pi/agent/sessions/--fixture--"
+pi_sessions.mkdir(parents=True)
+(pi_sessions / "example.jsonl").write_text(json.dumps({
+    "type": "session", "version": 3, "id": "fixture-session", "cwd": str(pi_project),
+}) + "\n")
 kiro = home / ".kiro/sessions"
 kiro.mkdir(parents=True)
 models = home / ".lmstudio/models/Lumen/Sample Weight"

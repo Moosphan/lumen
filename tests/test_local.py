@@ -167,6 +167,37 @@ class LocalInventoryTests(unittest.TestCase):
                          sum(path.stat().st_blocks * 512 for path in
                              (root / "notes.txt", codex, alias.parent / "session.jsonl", shared)))
 
+    def test_deepseek_and_pi_inventory_shares_project_and_protects_tool_data(self):
+        project = self.write("Projects/film/notes.txt", b"scene").parent
+        workspace = "49fb9c05-a1c4-419e-9254-a6379f88240a"
+        self.write(".dsh/storages/workspace.json", json.dumps({
+            "unit": {"name": "workspace", "version": 2},
+            "global": {"initialized": True, "workspaceIds": [workspace]},
+            "tables": {"workspaces": {workspace: {"path": str(project)}}},
+        }).encode())
+        self.write("Applications/DeepSeek Harness.app/Contents/Info.plist", plistlib.dumps({
+            "CFBundleIdentifier": "com.deepseek.dsh", "CFBundleShortVersionString": "0.1.0",
+        }))
+        credential = self.write(".dsh/.env", b"fixture credential")
+        transcript = self.write(".pi/agent/sessions/--film--/example.jsonl", (json.dumps({
+            "type": "session", "version": 3, "id": "fixture-session", "cwd": str(project),
+        }) + "\n").encode())
+        report = self.call("scan_local", startup=True)
+        self.assertEqual(report["projects"][str(project)], ["DeepSeek Harness", "Pi"])
+        agents = {row["name"]: row for row in report["agent_inventory"]}
+        self.assertEqual(agents["DeepSeek Harness"]["installations"][0]["version"], "0.1.0")
+        self.assertTrue(any(row["bytes"] > 0 and row["path"] == str(transcript.parents[1])
+                            for row in agents["Pi"]["stores"]))
+        self.assertGreater(agents["DeepSeek Harness"]["stores"][0]["bytes"], 0)
+        self.assertEqual({row["decision"] for row in report["files"]
+                          if row["path"] in (str(credential), str(transcript))}, {"keep"})
+        report = self.call("scan", roots=[str(self.home / ".dsh"), str(transcript.parent)], deep=True)
+        blocked = self.call("run", paths=list(map(str, (credential, transcript))),
+                            scan_id=report["scan_id"], action="quarantine")
+        self.assertEqual([row["status"] for row in blocked["last_action"]["items"]], ["skipped", "skipped"])
+        self.assertEqual(credential.read_bytes(), b"fixture credential")
+        self.assertTrue(transcript.is_file())
+
     def test_session_index_cache_refreshes_changed_files_and_forgets_excluded_stores(self):
         old = self.write("Projects/old/notes.txt").parent
         new = self.write("Projects/new/notes.txt").parent
