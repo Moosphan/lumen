@@ -71,7 +71,7 @@ gemini = home / ".gemini"
 gemini.mkdir()
 (gemini / "projects.json").write_text(json.dumps({"projects": {str(gemini_project): "gemini-project"}}))
 continue_project = home / "Projects/Continue Project"
-continue_project.mkdir()
+continue_project.mkdir(parents=True)
 (continue_project / "notes.txt").write_text("Keep this local project.")
 continue_sessions = home / ".continue/sessions"
 continue_sessions.mkdir(parents=True)
