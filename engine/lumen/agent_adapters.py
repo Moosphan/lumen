@@ -13,7 +13,7 @@ from contextlib import closing, contextmanager
 from itertools import islice
 from pathlib import Path
 
-from . import agent_ide, agent_local_tools, project_discovery
+from . import agent_ide, agent_local_tools, project_discovery, zed
 from .actions import _directory
 from .integrations import recorded_path
 
@@ -334,19 +334,18 @@ def _active_sidecar(metadata, database, suffix):
         return False
 
 
-def _project_database(metadata, path, agent, queries):
-    result = {}
+def _read_database_metadata(metadata, path, agent, query):
     try:
         with metadata.open(path) as stream:
             if stream is None:
-                return result
+                return None
             before = os.fstat(stream.fileno())
             if before.st_size > metadata.database_limit:
                 metadata.issue(path, f'{agent} 数据库超过本次读取上限')
-                return result
+                return None
             if _active_sidecar(metadata, path, '-journal'):
                 metadata.issue(path, f'{agent} 数据库存在回滚日志，本次仅盘点占用')
-                return result
+                return None
             if _active_sidecar(metadata, path, '-wal'):
                 metadata.issue(path, f'{agent} 仅识别已写入主库的记录，部分会话可能待检查点写入')
             with _readonly_database(stream, before, metadata.database_limit) as database:
@@ -355,40 +354,53 @@ def _project_database(metadata, path, agent, queries):
                 database.execute('PRAGMA temp_store=MEMORY')
                 attempts = iter(range(100))
                 database.set_progress_handler(lambda: int(next(attempts, None) is None), 1000)
-                placeholders = ', '.join('?' for _ in queries)
-                tables = {name for (name,) in database.execute(
-                    f"SELECT name FROM sqlite_master WHERE type='table' AND rootpage > 0 "
-                    f"AND name IN ({placeholders})", tuple(queries)
-                )}
-                if not tables:
-                    metadata.issue(path, f'{agent} 数据库格式未受支持')
-                for table, columns in queries.items():
-                    if table not in tables:
-                        continue
-                    expressions = ', '.join(
-                        f'CASE WHEN length(CAST({column} AS BLOB)) > {32768 if column == "sandboxes" else 4096}'
-                        f" THEN '' ELSE {column} END" for column in columns
-                    )
-                    try:
-                        rows = database.execute(f'SELECT {expressions} FROM {table} LIMIT ?', (metadata.limit + 1,)).fetchall()
-                        if len(rows) > metadata.limit:
-                            metadata.issue(path, f'{agent} 数据库记录数超过本次读取上限')
-                        result[table] = rows[:metadata.limit]
-                    except (sqlite3.Error, UnicodeError):
-                        metadata.issue(path, f'{agent} 数据库的部分记录损坏或格式未受支持')
+                result = query(database)
             after = os.fstat(stream.fileno())
             if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (after.st_size, after.st_mtime_ns, after.st_ctime_ns):
                 metadata.issue(path, f'{agent} 数据库读取期间有变更')
-                return {}
+                return None
             if _active_sidecar(metadata, path, '-journal'):
                 metadata.issue(path, f'{agent} 数据库读取期间生成回滚日志')
-                return {}
+                return None
+            return result
     except OSError as error:
         metadata.failed(path, error)
     except (sqlite3.Error, ValueError):
         metadata.issue(path, f'{agent} 数据库损坏、过大或格式未受支持')
-        return {}
-    return result
+    return None
+
+
+def _metadata_tables(database, names):
+    placeholders = ', '.join('?' for _ in names)
+    return {name for (name,) in database.execute(
+        f"SELECT name FROM sqlite_master WHERE type='table' AND rootpage > 0 "
+        f"AND name IN ({placeholders})", tuple(names)
+    )}
+
+
+def _project_database(metadata, path, agent, queries):
+    def read_rows(database):
+        result = {}
+        tables = _metadata_tables(database, queries)
+        if not tables:
+            metadata.issue(path, f'{agent} 数据库格式未受支持')
+        for table, columns in queries.items():
+            if table not in tables:
+                continue
+            expressions = ', '.join(
+                f'CASE WHEN length(CAST({column} AS BLOB)) > {32768 if column == "sandboxes" else 4096}'
+                f" THEN '' ELSE {column} END" for column in columns
+            )
+            try:
+                rows = database.execute(f'SELECT {expressions} FROM {table} LIMIT ?', (metadata.limit + 1,)).fetchall()
+                if len(rows) > metadata.limit:
+                    metadata.issue(path, f'{agent} 数据库记录数超过本次读取上限')
+                result[table] = rows[:metadata.limit]
+            except (sqlite3.Error, UnicodeError):
+                metadata.issue(path, f'{agent} 数据库的部分记录损坏或格式未受支持')
+        return result
+
+    return _read_database_metadata(metadata, path, agent, read_rows) or {}
 
 
 def _database_worktrees(metadata, rows, agent, add):
@@ -569,7 +581,7 @@ def discover(home: Path, quick: bool, *, excluded=(), issues=None, authorized=()
                 and not any(_inside(path, root) for root in metadata.excluded)):
             projects[str(path)].add(agent)
 
-    readers = (_cursor, _gemini, _opencode, _kilo, _cline, *agent_ide.ADAPTERS, *agent_local_tools.ADAPTERS,
+    readers = (_cursor, _gemini, _opencode, _kilo, _cline, zed.discover_zed, *agent_ide.ADAPTERS, *agent_local_tools.ADAPTERS,
                project_discovery.discover_workspace_markers)
     for adapter in readers if adapters is None else adapters:
         reader = adapter.__name__

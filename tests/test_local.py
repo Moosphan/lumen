@@ -323,6 +323,43 @@ class LocalInventoryTests(unittest.TestCase):
                                action='quarantine')
             self.assertEqual([row['status'] for row in result['last_action']['items']], ['skipped', 'skipped'])
 
+    def test_zed_app_and_thread_stores_preserve_data_in_automatic_and_manual_scans(self):
+        project = self.write('Projects/Zed Project/source.swift').parent
+        bundle = self.write('Applications/Zed Preview.app/Contents/Info.plist', plistlib.dumps({
+            'CFBundleIdentifier': 'dev.zed.Zed-Preview', 'CFBundleShortVersionString': '1.30.2',
+        })).parents[1]
+        app_data = self.home / 'Library/Application Support/Zed'
+        database = app_data / 'db/0-preview/db.sqlite'
+        database.parent.mkdir(parents=True)
+        with closing(sqlite3.connect(database)) as db:
+            db.executescript('''
+                CREATE TABLE kv_store (key TEXT PRIMARY KEY, value TEXT);
+                INSERT INTO kv_store VALUES ('thread-metadata-remote-connection-backfill', '1');
+                CREATE TABLE sidebar_threads (folder_paths TEXT, folder_paths_order TEXT,
+                    main_worktree_paths TEXT, main_worktree_paths_order TEXT, remote_connection TEXT, updated_at TEXT);
+            ''')
+            db.execute('INSERT INTO sidebar_threads VALUES (?, ?, ?, ?, ?, ?)',
+                       (str(project), '0', None, None, None, '2026-11-26'))
+            db.commit()
+        history = self.write(app_data / 'threads/threads.db', b'opaque message body')
+        sidecar = self.write(app_data / 'threads/threads.db-wal', b'history WAL')
+        settings = self.write('.config/zed/settings.json', b'{ "private": true }')
+        originals = {path: path.read_bytes() for path in (database, history, sidecar, settings)}
+
+        manual = self.call('scan', roots=[str(app_data), str(settings.parent)], deep=True)
+        files = {row['path']: row for row in manual['files']}
+        self.assertTrue(all(files[str(path)]['decision'] == 'keep' for path in originals))
+        automatic = self.call('scan_local', startup=True)
+        self.assertEqual(automatic['projects'].get(str(project)), ['Zed'])
+        agent = next(row for row in automatic['agent_inventory'] if row['name'] == 'Zed')
+        self.assertEqual((agent['kind'], agent['installed']), ('ide', True))
+        self.assertEqual(agent['installations'][0]['path'], str(bundle))
+        self.assertTrue({str(app_data / 'threads'), str(app_data / 'db'), str(settings.parent)} <=
+                        {store['path'] for store in agent['stores']})
+        result = self.call('run', paths=list(map(str, originals)), scan_id=automatic['scan_id'], action='quarantine')
+        self.assertEqual([row['status'] for row in result['last_action']['items']], ['skipped'] * len(originals))
+        self.assertEqual({path: path.read_bytes() for path in originals}, originals)
+
     def test_crush_unregistered_project_and_manual_cleanup_protection(self):
         project = self.write('Projects/Crush Film/source.ts').parent
         data = project / '.crush'

@@ -113,6 +113,8 @@ TRAE CLI 2.0 在工作区单列，工具家族与 IDE 合计。扫描默认 `~/.
 
 接入 Charm Crush 后累计覆盖 23 个工具家族。从 v0.102.0 的全局工程登记识别存在的本机目录，受支持的 XDG 和自定义根沿用扫描授权。未登记工程可从默认位置的 SQLite 文件头识别。标准工程数据目录及自定义目录中的已知数据库、附属文件和配置按保留盘点。配置脚本仅统计占用，实际客户端、非标准日志归属和云端会话仍待验证。 [工程登记](https://github.com/charmbracelet/crush/blob/v0.102.0/internal/projects/projects.go) · [数据库位置](https://github.com/charmbracelet/crush/blob/v0.102.0/internal/db/connect.go) · [工单 #41](https://github.com/Moosphan/lumen/issues/41)
 
+接入 Zed 后累计覆盖 24 个工具家族。识别 Stable、Preview、Nightly 和 Dev 安装包及默认资料目录。从 v1.30.2 的会话索引读取已完成远程连接迁移的本机路径，识别多根工程和关联工作树。原生会话库、工作区索引、日志及配置按保留盘点，会话正文不会进入工程归属解析。旧索引、自定义数据目录、未写入 SQLite 主库的记录和远程会话暂不参与工程归属。 [macOS 路径](https://github.com/zed-industries/zed/blob/v1.30.2/crates/paths/src/paths.rs) · [会话索引](https://github.com/zed-industries/zed/blob/v1.30.2/crates/agent_ui/src/thread_metadata_store.rs) · [工单 #42](https://github.com/Moosphan/lumen/issues/42)
+
 ## 功能和验收清单
 
 | 编号 | 交付 | 依赖 | 验收 |

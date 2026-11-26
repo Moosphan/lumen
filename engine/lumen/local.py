@@ -30,10 +30,14 @@ AGENT_BUNDLES = {
     'com.ampcode.amp.macos': 'Amp',
     'com.trae.app': 'Trae',
     'cn.trae.solo.app': 'TraeWork',
+    'dev.zed.Zed': 'Zed',
+    'dev.zed.Zed-Preview': 'Zed',
+    'dev.zed.Zed-Nightly': 'Zed',
+    'dev.zed.Zed-Dev': 'Zed',
 }
 AGENT_KINDS = {
     'Claude Desktop': 'desktop', 'TraeWork': 'desktop',
-    'Cursor': 'ide', 'Windsurf': 'ide', 'Kiro': 'ide', 'Trae': 'ide',
+    'Cursor': 'ide', 'Windsurf': 'ide', 'Kiro': 'ide', 'Trae': 'ide', 'Zed': 'ide',
     'Cline': 'extension', 'Roo Code': 'extension', 'GitHub Copilot VS Code': 'extension',
     'Continue': 'extension', 'Kilo Code VS Code': 'extension',
     'Claude Code': 'cli', 'OpenCode': 'cli', 'Gemini CLI': 'cli', 'Aider': 'cli',

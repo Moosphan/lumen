@@ -221,6 +221,24 @@ with closing(sqlite3.connect(crush_database)) as db:
     db.execute("CREATE TABLE sessions (id TEXT PRIMARY KEY)")
     db.commit()
 (crush_project / "source.ts").write_text("/* synthetic project */")
+zed_project = home / "Documents/Zed Project"
+zed_project.mkdir(parents=True)
+(zed_project / "source.rs").write_text("// synthetic project")
+zed_data = home / "Library/Application Support/Zed"
+zed_database = zed_data / "db/0-stable/db.sqlite"
+zed_database.parent.mkdir(parents=True)
+with closing(sqlite3.connect(zed_database)) as db:
+    db.executescript("""
+        CREATE TABLE kv_store (key TEXT PRIMARY KEY, value TEXT);
+        INSERT INTO kv_store VALUES ('thread-metadata-remote-connection-backfill', '1');
+        CREATE TABLE sidebar_threads (folder_paths TEXT, folder_paths_order TEXT,
+            main_worktree_paths TEXT, main_worktree_paths_order TEXT, remote_connection TEXT, updated_at TEXT);
+    """)
+    db.execute("INSERT INTO sidebar_threads VALUES (?, ?, ?, ?, ?, ?)",
+               (str(zed_project), "0", None, None, None, "2026-11-26"))
+    db.commit()
+(zed_data / "threads").mkdir()
+(zed_data / "threads/threads.db").write_bytes(b"Opaque Zed conversation storage fixture.")
 trae_cli = home / ".trae/cli"
 for index, (relative, workspace) in enumerate([
     ("sessions/2026/11/26", aider_project), ("archived_sessions", continue_project),

@@ -208,6 +208,63 @@ class AgentAdapterTests(unittest.TestCase):
             with patch.dict(os.environ, {'KILO_DB': 'linked.db'}):
                 self.assertEqual(self.scan(cache=cache, authorized=(data,))[1], {})
 
+    def test_zed_requires_migrated_local_thread_rows_and_unambiguous_path_lists(self):
+        root = self.home / 'Library/Application Support/Zed/db'
+        database = root / '0-stable/db.sqlite'
+        database.parent.mkdir(parents=True)
+        main = self.home / 'Worktrees/Main'
+        current = self.home / 'Worktrees/Linked'
+        remote = self.home / 'Projects/Remote Collision'
+        ambiguous = self.home / 'Projects/Invalid Order'
+        fresh = self.home / 'Projects/WAL Only'
+        ordered = '\n'.join(sorted(map(str, (self.project, current))))
+        cache, issues = {}, set()
+        db = sqlite3.connect(database)
+        self.addCleanup(db.close)
+        db.execute('PRAGMA journal_mode=WAL')
+        db.executescript('''
+            CREATE TABLE kv_store (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE sidebar_threads (folder_paths TEXT, folder_paths_order TEXT,
+                main_worktree_paths TEXT, main_worktree_paths_order TEXT, remote_connection TEXT,
+                updated_at TEXT, title TEXT);
+        ''')
+        db.executemany('INSERT INTO sidebar_threads VALUES (?, ?, ?, ?, ?, ?, ?)', (
+            (ordered, '1,0', str(main), '0', None, '2026-11-26', 'private thread title'),
+            (str(remote), '0', None, None, 'private remote record', '2026-11-26', 'remote'),
+            (f'{ambiguous}\n{remote}', '0', None, None, None, '2026-11-26', 'ambiguous'),
+        ))
+        db.commit()
+        db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+        self.assertEqual(self.scan(cache=cache, issues=issues)[1], {})
+        self.assertTrue(any('迁移' in issue for issue in issues))
+
+        db.execute("INSERT INTO kv_store VALUES ('thread-metadata-remote-connection-backfill', '1')")
+        db.commit()
+        db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+        db.execute('INSERT INTO sidebar_threads VALUES (?, ?, ?, ?, ?, ?, ?)',
+                   (str(fresh), '0', None, None, None, '2026-11-27', 'pending title'))
+        db.commit()
+        legacy = root / '0-preview/db.sqlite'
+        legacy.parent.mkdir()
+        with sqlite3.connect(legacy) as other:
+            other.execute('CREATE TABLE sidebar_threads (folder_paths TEXT, folder_paths_order TEXT)')
+            other.execute('INSERT INTO sidebar_threads VALUES (?, ?)', (str(ambiguous), '0'))
+        other.close()
+        linked = root / '0-nightly'
+        linked.symlink_to(database.parent, target_is_directory=True)
+        wal = database.with_name(database.name + '-wal')
+        original = {path: path.read_bytes() for path in (database, wal)}
+        expected = {path: {'Zed'} for path in (self.project, current, main)}
+        issues.clear()
+        self.assertEqual(self.scan(cache=cache, issues=issues)[1], expected)
+        self.assertTrue(any('检查点' in issue for issue in issues))
+        self.assertNotIn('private thread title', json.dumps(cache))
+        self.assertNotIn('private remote record', json.dumps(cache))
+        self.assertEqual({path: path.read_bytes() for path in original}, original)
+        self.assertEqual(self.scan(cache=cache, excluded=(database,))[1], {})
+        db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+        self.assertEqual(self.scan(cache=cache)[1], {**expected, fresh: {'Zed'}})
+
     def test_ignored_symlinks_and_exclusions_cannot_supply_metadata(self):
         outside = self.base / 'outside'
         outside.mkdir()
