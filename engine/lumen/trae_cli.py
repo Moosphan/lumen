@@ -154,19 +154,10 @@ def _thread_rows(database, limit):
     ).fetchall()
 
 
-def _active_sidecar(metadata, database, suffix):
-    path = database.with_name(database.name + suffix)
-    try:
-        with metadata.open(path) as stream:
-            return stream is not None and os.fstat(stream.fileno()).st_size > 0
-    except (FileNotFoundError, NotADirectoryError):
-        return False
-
-
 def _database_projects(metadata, path):
     # Embedded migrations in the TRAE CLI 0.216.0 public release.
     # https://lf-cdn.trae.com.cn/obj/trae-com-cn/trae-cli/v2/public/stable/latest.json
-    from .agent_adapters import _readonly_database
+    from .agent_adapters import _active_sidecar, _readonly_database
 
     try:
         with metadata.open(path) as stream:

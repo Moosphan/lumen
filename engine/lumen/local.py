@@ -35,16 +35,17 @@ AGENT_KINDS = {
     'Claude Desktop': 'desktop', 'TraeWork': 'desktop',
     'Cursor': 'ide', 'Windsurf': 'ide', 'Kiro': 'ide', 'Trae': 'ide',
     'Cline': 'extension', 'Roo Code': 'extension', 'GitHub Copilot VS Code': 'extension',
-    'Continue': 'extension',
+    'Continue': 'extension', 'Kilo Code VS Code': 'extension',
     'Claude Code': 'cli', 'OpenCode': 'cli', 'Gemini CLI': 'cli', 'Aider': 'cli',
     'GitHub Copilot CLI': 'cli', 'OpenClaw': 'cli', 'Qwen Code': 'cli', 'goose': 'cli',
     'DeepSeek Harness': 'desktop', 'Pi': 'cli',
     'Conductor': 'workspace-manager',
-    'Amp': 'cli', 'Kiro CLI': 'cli', 'Trae CLI': 'cli',
+    'Amp': 'cli', 'Kiro CLI': 'cli', 'Trae CLI': 'cli', 'Kilo Code CLI': 'cli',
 }
 AGENT_FAMILIES = {
     'GitHub Copilot CLI': 'GitHub Copilot', 'GitHub Copilot VS Code': 'GitHub Copilot',
     'Kiro CLI': 'Kiro', 'Trae CLI': 'Trae', 'TraeWork': 'Trae',
+    'Kilo Code CLI': 'Kilo Code', 'Kilo Code VS Code': 'Kilo Code',
 }
 HIDDEN_SCOPE_NAMES = {'.git', '.Trash', '.Trashes', f'.lumen-vault-{os.getuid()}'}
 

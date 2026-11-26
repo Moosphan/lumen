@@ -200,6 +200,20 @@ old_stub.mkdir()
     f"This project was migrated to:\n\n{migrated_project}\n\n"
     "Use the target directory above. This directory only records migration state.\n"
 )
+kilo_project = home / "Documents/Kilo Project"
+kilo_project.mkdir(parents=True)
+(kilo_project / "source.css").write_text("/* synthetic project */")
+kilo_db = home / ".local/share/kilo/kilo.db"
+kilo_db.parent.mkdir(parents=True)
+with closing(sqlite3.connect(kilo_db)) as db:
+    db.execute("CREATE TABLE session (project_id TEXT, directory TEXT, workspace_id TEXT)")
+    db.execute("INSERT INTO session VALUES (?, ?, ?)", ("global", str(kilo_project), None))
+    db.commit()
+kilo_extension = home / ".vscode/extensions/kilocode.kilo-code-7.8.32"
+kilo_extension.mkdir(parents=True, exist_ok=True)
+(kilo_extension / "package.json").write_text(json.dumps({
+    "publisher": "kilocode", "name": "kilo-code", "version": "7.8.32",
+}))
 trae_cli = home / ".trae/cli"
 for index, (relative, workspace) in enumerate([
     ("sessions/2026/11/26", aider_project), ("archived_sessions", continue_project),

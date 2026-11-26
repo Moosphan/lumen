@@ -109,6 +109,8 @@ TRAE CLI 2.0 在工作区单列，工具家族与 IDE 合计。扫描默认 `~/.
 
 融合版从 `Trae` 和 `Trae CN` 资料目录识别标准 Work 模式本机项目，单独盘点 VM 工作环境。旧目录只有已支持格式的迁移提示，且指向已核验的同 ID 本机项目时，项目列表展示目标位置，旧提示仍计入旧版数据。含实际产物的旧目录继续单列，原文件在清理时保留。 [已观察到的迁移提示](https://forum.trae.cn/t/topic/183817) · [工单 #39](https://github.com/Moosphan/lumen/issues/39)
 
+接入 Kilo Code 后累计覆盖 22 个工具家族。从 v7.8.32 格式的本地 SQLite 主库读取工程根、登记目录、工作树及未关联远程工作区的无 Git 会话。CLI 与 VS Code／Insiders 扩展单列，共享运行时计入 CLI。支持默认 XDG 数据目录及扫描范围内的 `KILO_DB` 覆盖。配置、运行状态、扩展数据、会话库及附属文件按保留盘点。待写入主库的 WAL 会话、其他通道的自动发现、旧扩展格式和云端会话留待验证。 [本地会话存储](https://kilo.ai/docs/code-with-ai/agents/session-history) · [v7.8.32 项目表](https://github.com/Kilo-Org/kilocode/blob/v7.8.32/packages/core/src/project/sql.ts) · [工单 #40](https://github.com/Moosphan/lumen/issues/40)
+
 ## 功能和验收清单
 
 | 编号 | 交付 | 依赖 | 验收 |

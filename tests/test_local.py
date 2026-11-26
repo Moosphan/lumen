@@ -323,6 +323,58 @@ class LocalInventoryTests(unittest.TestCase):
                                action='quarantine')
             self.assertEqual([row['status'] for row in result['last_action']['items']], ['skipped', 'skipped'])
 
+    def test_kilo_extension_and_custom_runtime_share_one_family_and_preserve_wal(self):
+        local = self.write('Projects/Kilo Film/local.ts').parent
+        pending = self.write('Projects/Pending/src.ts').parent
+        custom = self.base / 'Custom Kilo'
+        custom.mkdir()
+        database = custom / 'agent.db'
+        ordinary = self.write(custom / 'unrelated.txt', b'user file')
+        config = self.write('.config/kilo/kilo.json', b'{}')
+        cache_file = self.write('.cache/kilo/bin/linter', b'cached tool')
+        extension = self.write('.vscode-insiders/extensions/kilocode.kilo-code-7.8.32/package.json', json.dumps({
+            'publisher': 'kilocode', 'name': 'kilo-code', 'version': '7.8.32',
+        }).encode())
+        editor_state = self.write('Library/Application Support/Code - Insiders/User/globalStorage/'
+                                  'kilocode.kilo-code/settings.json', b'{}')
+        with closing(sqlite3.connect(database)) as db:
+            db.execute('PRAGMA journal_mode=WAL')
+            db.execute('CREATE TABLE session (project_id TEXT, directory TEXT, workspace_id TEXT)')
+            db.execute('INSERT INTO session VALUES (?, ?, ?)', ('global', str(local), None))
+            db.commit()
+            db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+            db.execute('INSERT INTO session VALUES (?, ?, ?)', ('global', str(pending), None))
+            db.commit()
+            wal = Path(str(database) + '-wal')
+            shm = Path(str(database) + '-shm')
+            before = {path: path.read_bytes() for path in (database, wal, shm)}
+            with patch.dict(os.environ, {'KILO_DB': str(database), 'XDG_CONFIG_HOME': '', 'XDG_CACHE_HOME': ''}):
+                unauthorized = self.call('scan_local', startup=True)
+                self.assertNotIn(str(local), unauthorized['projects'])
+                self.assertTrue(any('KILO_DB' in issue for issue in unauthorized['issues']))
+                self.call('scan', roots=[str(custom)], deep=False)
+                report = self.call('scan_local', startup=True)
+                self.assertEqual(report['projects'].get(str(local)), ['Kilo Code CLI'])
+                self.assertNotIn(str(pending), report['projects'])
+                names = {row['name']: row for row in report['agent_inventory']}
+                cli, vscode = names['Kilo Code CLI'], names['Kilo Code VS Code']
+                self.assertEqual((cli['family'], vscode['family']), ('Kilo Code', 'Kilo Code'))
+                self.assertFalse(cli['installed'])
+                self.assertTrue(cli['partial'])
+                self.assertTrue(vscode['installed'])
+                self.assertEqual(vscode['installations'][0]['path'], str(extension.parent))
+                rows = {row['path']: row for row in report['files']}
+                self.assertFalse(rows[str(ordinary)]['agents'])
+                protected = (database, wal, shm, config, cache_file, editor_state)
+                for path in protected:
+                    self.assertEqual(rows[str(path)]['decision'], 'keep')
+                result = self.call('run', paths=list(map(str, protected)), scan_id=report['scan_id'], action='quarantine')
+                self.assertEqual([row['status'] for row in result['last_action']['items']], ['skipped'] * len(protected))
+                self.assertEqual({path: path.read_bytes() for path in before}, before)
+                db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+                refreshed = self.call('scan_local', startup=True)
+                self.assertEqual(refreshed['projects'].get(str(pending)), ['Kilo Code CLI'])
+
     def test_trae_cli_keeps_coco_sessions_in_manual_cache_scan(self):
         project = self.write('Projects/Legacy Trailer/source.ts').parent
         identity = '019fbcca-9fd4-7d20-83dc-0762b2f839b0'

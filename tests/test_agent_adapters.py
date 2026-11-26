@@ -141,6 +141,73 @@ class AgentAdapterTests(unittest.TestCase):
         self.assertEqual(database.read_bytes(), contents)
         self.assertEqual(sorted(p.name for p in database.parent.iterdir()), ['opencode.db', 'storage'])
 
+    def test_kilo_projects_and_plain_sessions_are_read_without_mutating_the_database(self):
+        directory = self.home / '.local/share/kilo'
+        directory.mkdir(parents=True)
+        database = directory / 'kilo.db'
+        alternate = self.home / 'Worktrees/alternate'
+        checkout = self.home / 'Projects/a separate checkout'
+        plain = self.home / 'Projects/without git'
+        cloud = self.home / 'Projects/cloud lookalike'
+        oversized_remote = self.home / 'Projects/oversized remote lookalike'
+        with sqlite3.connect(database) as db:
+            db.executescript('''
+                CREATE TABLE project (id TEXT PRIMARY KEY, worktree TEXT, sandboxes TEXT);
+                CREATE TABLE project_directory (project_id TEXT, directory TEXT, type TEXT);
+                CREATE TABLE session (project_id TEXT, directory TEXT, workspace_id TEXT);
+            ''')
+            db.execute('INSERT INTO project VALUES (?, ?, ?)', ('project', str(self.project), json.dumps([str(alternate)])))
+            db.execute('INSERT INTO project_directory VALUES (?, ?, ?)', ('project', str(checkout), 'git_worktree'))
+            db.execute('INSERT INTO session VALUES (?, ?, ?)', ('global', str(plain), None))
+            db.execute('INSERT INTO session VALUES (?, ?, ?)', ('global', str(cloud), 'workspace-remote'))
+            db.execute('INSERT INTO session VALUES (?, ?, ?)', ('global', str(oversized_remote), 'x' * 4097))
+            db.execute('INSERT INTO session VALUES (?, ?, ?)', ('global', 'vscode-remote://ssh-remote+host/repo', None))
+            db.execute('INSERT INTO session VALUES (?, ?, ?)', ('project', str(self.project / 'subdir'), None))
+        db.close()
+        original = database.read_bytes()
+        cache = {}
+        with patch.dict(os.environ, {'KILO_DB': ''}):
+            stores, projects = self.scan(cache=cache)
+            expected = {p: {'Kilo Code CLI'} for p in (self.project, alternate, checkout, plain)}
+            self.assertEqual(projects, expected)
+            self.assertEqual([(name, path) for name, path, _ in stores], [('Kilo Code CLI', directory)])
+            self.assertEqual(database.read_bytes(), original)
+            self.assertEqual(list(directory.iterdir()), [database])
+            with sqlite3.connect(database) as db:
+                db.execute('UPDATE session SET directory = ? WHERE directory = ?', (str(cloud), str(plain)))
+            db.close()
+            expected[cloud] = expected.pop(plain)
+            self.assertEqual(self.scan(cache=cache)[1], expected)
+            journal = database.with_name(database.name + '-journal')
+            journal.write_bytes(b'rollback in progress')
+            issues = set()
+            self.assertEqual(self.scan(cache=cache, issues=issues)[1], {})
+            self.assertTrue(any('回滚日志' in issue for issue in issues))
+            self.assertEqual(journal.read_bytes(), b'rollback in progress')
+            journal.unlink()
+            self.assertEqual(self.scan(cache=cache)[1], expected)
+
+    def test_kilo_relative_database_uses_authorized_xdg_root_and_rejects_links(self):
+        data = self.base / 'xdg'
+        root = data / 'kilo'
+        root.mkdir(parents=True)
+        database = root / 'profile.db'
+        fallback = self.home / '.local/share/kilo/profile.db'
+        fallback.parent.mkdir(parents=True)
+        for path, project in ((database, self.project), (fallback, self.home / 'Incorrect Legacy Fallback')):
+            with sqlite3.connect(path) as db:
+                db.execute('CREATE TABLE session (project_id TEXT, directory TEXT, workspace_id TEXT)')
+                db.execute('INSERT INTO session VALUES (?, ?, ?)', ('global', str(project), None))
+            db.close()
+        link = root / 'linked.db'
+        link.symlink_to(database)
+        cache = {}
+        with patch.dict(os.environ, {'XDG_DATA_HOME': str(data), 'KILO_DB': 'profile.db'}):
+            self.assertEqual(self.scan(cache=cache)[1], {})
+            self.assertEqual(self.scan(cache=cache, authorized=(data,))[1], {self.project: {'Kilo Code CLI'}})
+            with patch.dict(os.environ, {'KILO_DB': 'linked.db'}):
+                self.assertEqual(self.scan(cache=cache, authorized=(data,))[1], {})
+
     def test_ignored_symlinks_and_exclusions_cannot_supply_metadata(self):
         outside = self.base / 'outside'
         outside.mkdir()

@@ -249,6 +249,9 @@ private func fallbackReport(_ pid: pid_t) {
                   projects.contains(where: {
                       $0.key.hasSuffix("/Pi Project") && $0.value == ["Pi", "Trae CLI"]
                   }),
+                  projects.contains(where: {
+                      $0.key.hasSuffix("/Kilo Project") && $0.value == ["Kilo Code CLI"]
+                  }),
                   let agents = report["agent_inventory"] as? [[String: Any]],
                   agents.contains(where: { row in
                       row["name"] as? String == "Gemini CLI" &&
@@ -260,6 +263,14 @@ private func fallbackReport(_ pid: pid_t) {
                           && ($0["bytes"] as? Int ?? 0) > 0
                   }),
                   agents.contains(where: { $0["name"] as? String == "Amp" && ($0["bytes"] as? Int ?? 0) > 0 }),
+                  agents.contains(where: {
+                      $0["name"] as? String == "Kilo Code CLI" && $0["family"] as? String == "Kilo Code"
+                          && ($0["bytes"] as? Int ?? 0) > 0
+                  }),
+                  agents.contains(where: {
+                      $0["name"] as? String == "Kilo Code VS Code" && $0["family"] as? String == "Kilo Code"
+                          && $0["installed"] as? Bool == true
+                  }),
                   agents.contains(where: {
                       $0["name"] as? String == "Trae" && $0["installed"] as? Bool == true
                           && ($0["bytes"] as? Int ?? 0) > 0
@@ -308,6 +319,10 @@ private func fallbackReport(_ pid: pid_t) {
                       ($0["path"] as? String)?.hasSuffix("/TRAE_PROJECT_MOVED_6a4db2ef0f25b4742bf9cdc8.md") == true
                           && $0["decision"] as? String == "keep"
                   }),
+                  files.contains(where: {
+                      ($0["path"] as? String)?.hasSuffix("/kilo/kilo.db") == true
+                          && $0["decision"] as? String == "keep"
+                  }),
                   agents.contains(where: {
                       $0["name"] as? String == "Conductor" && $0["kind"] as? String == "workspace-manager"
                           && ($0["bytes"] as? Int ?? 0) > 0
@@ -330,6 +345,7 @@ private func fallbackReport(_ pid: pid_t) {
             return true
         }
         print("Packaged app inventoried a migrated TRAE Work project and retained the standalone migration marker.")
+        print("Packaged app attributed a Kilo Code project, recognized the VS Code extension and retained the database.")
         guard AXIsProcessTrusted() else {
             fallbackReport(pid)
             return

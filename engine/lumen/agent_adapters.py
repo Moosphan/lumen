@@ -26,6 +26,7 @@ EXTENSIONS = {
     ('github', 'copilot-chat'): 'GitHub Copilot VS Code',
     ('rooveterinaryinc', 'roo-cline'): 'Roo Code',
     ('continue', 'continue'): 'Continue',
+    ('kilocode', 'kilo-code'): 'Kilo Code VS Code',
 }
 
 
@@ -324,16 +325,16 @@ def _readonly_database(stream, info, limit):
             yield database
 
 
-def _opencode_sqlite(metadata, path):
-    # v1 project/session tables and v2 session_v2/worktree tables.
-    # https://github.com/anomalyco/opencode/blob/v1.2.15/packages/opencode/src/project/project.sql.ts
-    # https://github.com/anomalyco/opencode/blob/dev/packages/core/src/worktree/sql.ts
-    queries = {
-        'project': ('id', 'worktree', 'sandboxes'),
-        'worktree': ('project_id', 'directory'),
-        'session': ('project_id', 'directory'),
-        'session_v2': ('project_id', 'directory'),
-    }
+def _active_sidecar(metadata, database, suffix):
+    path = database.with_name(database.name + suffix)
+    try:
+        with metadata.open(path) as stream:
+            return stream is not None and os.fstat(stream.fileno()).st_size > 0
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+
+
+def _project_database(metadata, path, agent, queries):
     result = {}
     try:
         with metadata.open(path) as stream:
@@ -341,52 +342,66 @@ def _opencode_sqlite(metadata, path):
                 return result
             before = os.fstat(stream.fileno())
             if before.st_size > metadata.database_limit:
-                metadata.issue(path, 'OpenCode 数据库超过本次读取上限')
+                metadata.issue(path, f'{agent} 数据库超过本次读取上限')
                 return result
-            try:
-                wal = path.with_name(path.name + '-wal')
-                if metadata.allowed(wal):
-                    metadata.watch(wal)
-                    with _directory(wal.parent) as fd:
-                        if os.stat(wal.name, dir_fd=fd, follow_symlinks=False).st_size:
-                            metadata.issue(path, 'OpenCode 仅识别已写入主库的记录，部分会话可能待同步')
-            except OSError as error:
-                metadata.failed(wal, error)
+            if _active_sidecar(metadata, path, '-journal'):
+                metadata.issue(path, f'{agent} 数据库存在回滚日志，本次仅盘点占用')
+                return result
+            if _active_sidecar(metadata, path, '-wal'):
+                metadata.issue(path, f'{agent} 仅识别已写入主库的记录，部分会话可能待检查点写入')
             with _readonly_database(stream, before, metadata.database_limit) as database:
                 database.execute('PRAGMA trusted_schema=OFF')
                 database.execute('PRAGMA query_only=ON')
                 database.execute('PRAGMA temp_store=MEMORY')
                 attempts = iter(range(100))
                 database.set_progress_handler(lambda: int(next(attempts, None) is None), 1000)
+                placeholders = ', '.join('?' for _ in queries)
                 tables = {name for (name,) in database.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('project','worktree','session','session_v2')"
+                    f"SELECT name FROM sqlite_master WHERE type='table' AND rootpage > 0 "
+                    f"AND name IN ({placeholders})", tuple(queries)
                 )}
                 if not tables:
-                    metadata.issue(path, 'OpenCode 数据库格式未受支持')
+                    metadata.issue(path, f'{agent} 数据库格式未受支持')
                 for table, columns in queries.items():
                     if table not in tables:
                         continue
                     expressions = ', '.join(
-                        f'CASE WHEN length(CAST({column} AS BLOB)) <= {32768 if column == "sandboxes" else 4096}'
-                        f' THEN {column} END' for column in columns
+                        f'CASE WHEN length(CAST({column} AS BLOB)) > {32768 if column == "sandboxes" else 4096}'
+                        f" THEN '' ELSE {column} END" for column in columns
                     )
                     try:
                         rows = database.execute(f'SELECT {expressions} FROM {table} LIMIT ?', (metadata.limit + 1,)).fetchall()
                         if len(rows) > metadata.limit:
-                            metadata.issue(path, 'OpenCode 数据库记录数超过本次读取上限')
+                            metadata.issue(path, f'{agent} 数据库记录数超过本次读取上限')
                         result[table] = rows[:metadata.limit]
                     except (sqlite3.Error, UnicodeError):
-                        metadata.issue(path, 'OpenCode 数据库的部分记录损坏或格式未受支持')
+                        metadata.issue(path, f'{agent} 数据库的部分记录损坏或格式未受支持')
             after = os.fstat(stream.fileno())
             if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (after.st_size, after.st_mtime_ns, after.st_ctime_ns):
-                metadata.issue(path, 'OpenCode 数据库读取期间有变更')
+                metadata.issue(path, f'{agent} 数据库读取期间有变更')
+                return {}
+            if _active_sidecar(metadata, path, '-journal'):
+                metadata.issue(path, f'{agent} 数据库读取期间生成回滚日志')
                 return {}
     except OSError as error:
         metadata.failed(path, error)
     except (sqlite3.Error, ValueError):
-        metadata.issue(path, 'OpenCode 数据库损坏、过大或格式未受支持')
+        metadata.issue(path, f'{agent} 数据库损坏、过大或格式未受支持')
         return {}
     return result
+
+
+def _database_worktrees(metadata, rows, agent, add):
+    for _, worktree, sandboxes in rows.get('project', ()):
+        add(worktree, agent)
+        if isinstance(sandboxes, str):
+            try:
+                sandboxes = json.loads(sandboxes)
+            except (ValueError, RecursionError):
+                continue
+            if isinstance(sandboxes, list):
+                for sandbox in islice(sandboxes, metadata.limit):
+                    add(sandbox, agent)
 
 
 def _opencode(metadata, store, add):
@@ -400,17 +415,16 @@ def _opencode(metadata, store, add):
         root = directory / 'opencode'
         if not store('OpenCode', root, 'OpenCode 项目、会话与日志存储'):
             continue
-        rows = _opencode_sqlite(metadata, root / 'opencode.db')
-        for _, worktree, sandboxes in rows.get('project', ()):
-            add(worktree, 'OpenCode')
-            if isinstance(sandboxes, str):
-                try:
-                    sandboxes = json.loads(sandboxes)
-                except (ValueError, RecursionError):
-                    continue
-                if isinstance(sandboxes, list):
-                    for sandbox in islice(sandboxes, metadata.limit):
-                        add(sandbox, 'OpenCode')
+        # v1 project/session tables and v2 session_v2/worktree tables.
+        # https://github.com/anomalyco/opencode/blob/v1.2.15/packages/opencode/src/project/project.sql.ts
+        # https://github.com/anomalyco/opencode/blob/dev/packages/core/src/worktree/sql.ts
+        rows = _project_database(metadata, root / 'opencode.db', 'OpenCode', {
+            'project': ('id', 'worktree', 'sandboxes'),
+            'worktree': ('project_id', 'directory'),
+            'session': ('project_id', 'directory'),
+            'session_v2': ('project_id', 'directory'),
+        })
+        _database_worktrees(metadata, rows, 'OpenCode', add)
         for _, worktree in rows.get('worktree', ()):
             add(worktree, 'OpenCode')
         for table in ('session', 'session_v2'):
@@ -436,6 +450,82 @@ def _opencode(metadata, store, add):
         caches.append(configured)
     for directory in dict.fromkeys(caches):
         store('OpenCode', directory / 'opencode', 'OpenCode 缓存存储')
+
+
+def _kilo_database_override(metadata, data):
+    value = metadata.setting('KILO_DB')
+    if not value or value == ':memory:':
+        return None
+    if not value.startswith('/'):
+        if data is None:
+            return None
+        value = str(data / value)
+    path = recorded_path(value)
+    if path is not None and metadata.allowed(path):
+        return path
+    if path is not None:
+        metadata.issue(path, 'KILO_DB 指向未授权或已排除的数据库')
+    return None
+
+
+def _kilo(metadata, store, add):
+    # https://github.com/Kilo-Org/kilocode/blob/v7.8.32/packages/core/src/global.ts
+    # https://github.com/Kilo-Org/kilocode/blob/v7.8.32/packages/opencode/src/storage/db.ts
+    agent = 'Kilo Code CLI'
+    home = metadata.home
+    data = home / '.local/share/kilo'
+    custom = metadata.configured('XDG_DATA_HOME')
+    data_roots = {data: None}
+    active_data = data
+    if custom is not None:
+        active_data = custom / 'kilo'
+        data_roots[active_data] = None
+    elif metadata.setting('XDG_DATA_HOME'):
+        active_data = None
+    databases = []
+    for root in data_roots:
+        if store(agent, root, 'Kilo Code 共享运行时、会话与项目数据'):
+            databases.append(root / 'kilo.db')
+    override = _kilo_database_override(metadata, active_data)
+    if override is not None and override not in databases:
+        if any(_inside(override, root) for root in data_roots):
+            databases.append(override)
+        elif store(agent, override, 'Kilo Code 自定义 SQLite 会话库', file=True):
+            for suffix in ('-wal', '-shm', '-journal'):
+                store(agent, override.with_name(override.name + suffix), 'Kilo Code 会话库附属文件', file=True)
+            databases.append(override)
+
+    for path in databases:
+        # Only path columns. A non-null workspace ID may reference a remote workspace.
+        # https://github.com/Kilo-Org/kilocode/blob/v7.8.32/packages/core/src/project/sql.ts
+        # https://github.com/Kilo-Org/kilocode/blob/v7.8.32/packages/core/src/session/sql.ts
+        rows = _project_database(metadata, path, agent, {
+            'project': ('id', 'worktree', 'sandboxes'),
+            'project_directory': ('project_id', 'directory'),
+            'session': ('project_id', 'directory', 'workspace_id'),
+        })
+        _database_worktrees(metadata, rows, agent, add)
+        for project, directory in rows.get('project_directory', ()):
+            if isinstance(project, str) and project and project != 'global':
+                add(directory, agent)
+        for project, directory, workspace in rows.get('session', ()):
+            if project == 'global' and workspace is None:
+                add(directory, agent)
+
+    for variable, default, title in (
+        ('XDG_CONFIG_HOME', '.config', 'Kilo Code 配置'),
+        ('XDG_CACHE_HOME', '.cache', 'Kilo Code 工具缓存'),
+        ('XDG_STATE_HOME', '.local/state', 'Kilo Code 运行状态'),
+    ):
+        store(agent, home / default / 'kilo', title)
+        custom = metadata.configured(variable)
+        if custom is not None and custom != home / default:
+            store(agent, custom / 'kilo', title)
+    for folder in ('.kilo', '.kilocode'):
+        store(agent, home / folder, 'Kilo Code 用户配置和规则')
+    for editor in ('Code', 'Code - Insiders'):
+        store('Kilo Code VS Code', home / 'Library/Application Support' / editor /
+              'User/globalStorage/kilocode.kilo-code', f'{editor} 的 Kilo Code 扩展数据')
 
 
 def _current(metadata, stamps, variables):
@@ -479,7 +569,7 @@ def discover(home: Path, quick: bool, *, excluded=(), issues=None, authorized=()
                 and not any(_inside(path, root) for root in metadata.excluded)):
             projects[str(path)].add(agent)
 
-    readers = (_cursor, _gemini, _opencode, _cline, *agent_ide.ADAPTERS, *agent_local_tools.ADAPTERS,
+    readers = (_cursor, _gemini, _opencode, _kilo, _cline, *agent_ide.ADAPTERS, *agent_local_tools.ADAPTERS,
                project_discovery.discover_project_markers)
     for adapter in readers if adapters is None else adapters:
         reader = adapter.__name__
