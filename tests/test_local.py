@@ -323,6 +323,40 @@ class LocalInventoryTests(unittest.TestCase):
                                action='quarantine')
             self.assertEqual([row['status'] for row in result['last_action']['items']], ['skipped', 'skipped'])
 
+    def test_oh_my_pi_does_not_double_count_the_shared_pi_directory_setting(self):
+        primary = self.write('Projects/OMP workspace/source.ts').parent
+        original_pi = self.write('Projects/Pi workspace/source.ts').parent
+        agent_dir = self.home / '.omp/custom-agent'
+        session_root = agent_dir / 'custom-sessions'
+        sid = '019c625b-b900-7000-8000-000000000001'
+        timestamp = '2026-11-26T20:40:10.000Z'
+        session = self.write(session_root / ('2026-11-26T20-40-10-000Z_' + sid + '.jsonl'), (
+            json.dumps(dict(type='session', version=3, id=sid, timestamp=timestamp, cwd=str(primary))) + '\n'
+        ).encode())
+        self.write('.pi/agent/sessions/session.jsonl', (
+            json.dumps(dict(type='session', version=3, id='separate-pi', cwd=str(original_pi))) + '\n'
+        ).encode())
+        credentials = self.write(agent_dir / 'auth.json', b'synthetic credentials')
+        archive = self.write(session_root / 'old.jsonl.gz', b'opaque archive')
+        worktree = self.write('.omp/wt/synthetic/source.ts', b'synthetic worktree')
+        originals = {path: path.read_bytes() for path in (session, credentials, archive, worktree)}
+        with patch.dict(os.environ, {'PI_CODING_AGENT_DIR': str(agent_dir),
+                                     'PI_CODING_AGENT_SESSION_DIR': str(session_root)}):
+            manual = self.call('scan', roots=[str(self.home / '.omp')], deep=True)
+            manual_files = {row['path']: row for row in manual['files']}
+            self.assertTrue(all(manual_files[str(path)]['decision'] == 'keep' for path in originals))
+            report = self.call('scan_local', startup=True)
+            self.assertEqual(report['projects'].get(str(primary)), ['Oh My Pi'])
+            self.assertEqual(report['projects'].get(str(original_pi)), ['Pi'])
+            tools = {row['name']: row for row in report['agent_inventory']}
+            self.assertEqual(tools['Oh My Pi']['kind'], 'cli')
+            self.assertNotIn(str(session_root), {store['path'] for store in tools['Pi']['stores']})
+            rows = {row['path']: row for row in report['files']}
+            self.assertTrue(all(rows[str(path)]['agents'] == ['Oh My Pi'] for path in originals))
+            action = self.call('run', paths=list(map(str, originals)), scan_id=report['scan_id'], action='quarantine')
+            self.assertEqual([row['status'] for row in action['last_action']['items']], ['skipped'] * len(originals))
+            self.assertEqual({path: path.read_bytes() for path in originals}, originals)
+
     def test_vibe_custom_session_root_keeps_verified_data_without_claiming_its_neighbors(self):
         project = self.write('Projects/Vibe Project/source.py').parent
         sessions = self.base / 'Custom Vibe Sessions'

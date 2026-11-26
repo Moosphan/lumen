@@ -5,7 +5,7 @@ import re
 import sqlite3
 from itertools import islice
 
-from . import amp, crush, deepseek_sessions, kiro_cli, trae_cli
+from . import amp, crush, deepseek_sessions, kiro_cli, oh_my_pi, trae_cli
 from .integrations import recorded_path
 
 
@@ -443,13 +443,16 @@ def _pi_session_header(metadata, path):
     return recorded_path(value.get('cwd'))
 
 
-def _pi(metadata, store, add):
+def _pi_inventory(metadata, store, add):
     # https://github.com/earendil-works/pi/blob/bfafd8ed5168bca1f1ca88ef0529cfd326664d16/packages/coding-agent/docs/session-format.md
     agent = 'Pi'
     default = metadata.home / '.pi/agent'
     configured = metadata.configured('PI_CODING_AGENT_DIR') or default
     session_override = metadata.configured('PI_CODING_AGENT_SESSION_DIR')
-    roots = tuple(root for root in dict.fromkeys((default, configured)) if root != metadata.home)
+    if oh_my_pi.inside_default(session_override, metadata.home):
+        session_override = None
+    roots = tuple(root for root in dict.fromkeys((default, configured))
+                  if root != metadata.home and not oh_my_pi.inside_default(root, metadata.home))
     sessions = [root / 'sessions' for root in roots]
     for root in roots:
         if store(agent, root, 'Pi 配置、扩展与会话数据'):
@@ -459,7 +462,8 @@ def _pi(metadata, store, add):
                 sessions.append(path)
     if session_override is not None:
         sessions.append(session_override)
-    sessions = tuple(path for path in dict.fromkeys(sessions) if path != metadata.home)
+    sessions = tuple(path for path in dict.fromkeys(sessions)
+                     if path != metadata.home and not oh_my_pi.inside_default(path, metadata.home))
     remaining = metadata.limit
     for root in sessions:
         if not store(agent, root, 'Pi 本机会话存储'):
@@ -518,5 +522,6 @@ def conductor_user_data(path):
 
 
 ADAPTERS = (_claude_desktop, _openclaw, _qwen_code, _goose, _continue, _deepseek_harness, _deepseek_headless,
-            _pi, _conductor, amp.discover_amp, kiro_cli.discover_kiro_cli, trae_cli.discover_trae_cli_history,
+            _pi_inventory, oh_my_pi.discover_oh_my_pi, _conductor, amp.discover_amp, kiro_cli.discover_kiro_cli,
+            trae_cli.discover_trae_cli_history,
             crush.discover_crush)

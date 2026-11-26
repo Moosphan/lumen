@@ -48,7 +48,7 @@ AGENT_KINDS = {
     'DeepSeek Harness': 'desktop', 'Pi': 'cli',
     'Conductor': 'workspace-manager',
     'Amp': 'cli', 'Kiro CLI': 'cli', 'Trae CLI': 'cli', 'Kilo Code CLI': 'cli', 'Crush': 'cli',
-    'Mistral Vibe': 'cli',
+    'Mistral Vibe': 'cli', 'Oh My Pi': 'cli',
 }
 AGENT_FAMILIES = {
     'GitHub Copilot CLI': 'GitHub Copilot', 'GitHub Copilot VS Code': 'GitHub Copilot',

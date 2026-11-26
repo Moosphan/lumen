@@ -552,6 +552,53 @@ class LocalAgentToolTests(unittest.TestCase):
         self.assertEqual(self.scan(cache=cache)[1], {})
         self.assertNotIn('ignored private body', json.dumps(cache))
 
+    def test_oh_my_pi_recognizes_fixed_byte_title_slots_and_profile_workspaces(self):
+        root = self.home / '.omp'
+        additional = self.home / 'Projects/Second Folder'
+        moved = self.home / 'Projects/Replacement'
+        ignored = self.home / 'Projects/Invalid'
+        legacy = self.home / 'Projects/Legacy'
+        timestamp = '2026-11-26T20:40:10.000Z'
+        stamp = '2026-11-26T20-40-10-000Z'
+
+        def session(bucket, suffix, cwd, *, slot=True, short=False, identity=None, **fields):
+            sid = f'019c625b-b900-7000-8000-00000000000{suffix}'
+            header = dict(type='session', id=identity or sid, timestamp=timestamp, cwd=str(cwd), **fields)
+            prefix = b''
+            if slot:
+                first = dict(type='title', v=1, title='私人会话标题', updatedAt=timestamp, pad='')
+                encoded = json.dumps(first, ensure_ascii=False, separators=(',', ':')).encode()
+                first['pad'] = ' ' * (255 - len(encoded) - int(short))
+                prefix = json.dumps(first, ensure_ascii=False, separators=(',', ':')).encode() + b'\n'
+            return self.write(bucket / f'{stamp}_{sid}.jsonl',
+                              prefix + json.dumps(header).encode() + b'\n' + b'TRANSCRIPT_SENTINEL' * 30_000)
+
+        current = root / 'agent/sessions/-Projects-film'
+        archived_name = 'home-legacy-' + 'd' * 64
+        named = root / 'profiles/audit.team/agent/sessions' / archived_name
+        source = session(current, 1, self.project, version=3, additionalDirectories=[str(additional), 'ssh://remote/x'])
+        session(named, 2, legacy, slot=False)
+        session(current, 3, ignored, short=True, version=3)
+        session(current, 4, ignored, version=4)
+        session(current, 5, ignored, identity='mismatch', version=3)
+        session(current, 6, 'ssh://remote/repo', version=3, additionalDirectories=[str(ignored)])
+        linked = session(current, 7, ignored, version=3)
+        target = linked.rename(self.base / 'external.jsonl')
+        linked.symlink_to(target)
+        cache = {}
+        expected = {path: {'Oh My Pi'} for path in (self.project, additional, legacy)}
+        stores, projects = self.scan(cache=cache)
+        self.assertEqual(projects, expected)
+        self.assertIn(('Oh My Pi', named.parent), {(name, path) for name, path, _ in stores})
+        self.assertNotIn('私人会话标题', json.dumps(cache, ensure_ascii=False))
+        self.assertNotIn('TRANSCRIPT_SENTINEL', json.dumps(cache))
+        lines = source.read_bytes().split(b'\n', 2)
+        changed = json.loads(lines[1])
+        changed['cwd'] = str(moved)
+        source.write_bytes(b'\n'.join((lines[0], json.dumps(changed).encode(), lines[2])))
+        expected[moved] = expected.pop(self.project)
+        self.assertEqual(self.scan(cache=cache)[1], expected)
+
     def test_pi_uses_only_session_headers_for_default_and_authorized_custom_storage(self):
         header = {'type': 'session', 'version': 3, 'id': 'session-123', 'cwd': str(self.project)}
         legacy = {key: value for key, value in header.items() if key != 'version'}

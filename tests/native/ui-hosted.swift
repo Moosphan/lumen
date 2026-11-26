@@ -267,6 +267,12 @@ private func fallbackReport(_ pid: pid_t) {
                   projects.contains(where: {
                       $0.key.hasSuffix("/Vibe Origin") && $0.value == ["Mistral Vibe"]
                   }),
+                  projects.contains(where: {
+                      $0.key.hasSuffix("/Oh My Pi Project") && $0.value == ["Oh My Pi"]
+                  }),
+                  projects.contains(where: {
+                      $0.key.hasSuffix("/Oh My Pi Additional") && $0.value == ["Oh My Pi"]
+                  }),
                   let agents = report["agent_inventory"] as? [[String: Any]],
                   agents.contains(where: { row in
                       row["name"] as? String == "Gemini CLI" &&
@@ -303,6 +309,10 @@ private func fallbackReport(_ pid: pid_t) {
                   }),
                   agents.contains(where: {
                       $0["name"] as? String == "Mistral Vibe" && $0["kind"] as? String == "cli"
+                          && ($0["bytes"] as? Int ?? 0) > 0
+                  }),
+                  agents.contains(where: {
+                      $0["name"] as? String == "Oh My Pi" && $0["kind"] as? String == "cli"
                           && ($0["bytes"] as? Int ?? 0) > 0
                   }),
                   agents.contains(where: {
@@ -373,6 +383,10 @@ private func fallbackReport(_ pid: pid_t) {
                       ($0["path"] as? String)?.hasSuffix("/d4679b0e-ea09-47a9-8944-7aae071b12c2/CURRENT") == true
                           && $0["decision"] as? String == "keep"
                   }),
+                  files.contains(where: {
+                      ($0["path"] as? String)?.hasSuffix("_019c625b-b900-7000-8000-000000000001.jsonl") == true
+                          && $0["decision"] as? String == "keep"
+                  }),
                   agents.contains(where: {
                       $0["name"] as? String == "Conductor" && $0["kind"] as? String == "workspace-manager"
                           && ($0["bytes"] as? Int ?? 0) > 0
@@ -400,6 +414,7 @@ private func fallbackReport(_ pid: pid_t) {
         print("Packaged app attributed a local Zed project and kept the native conversation database.")
         print("Packaged app attributed a Hermes profile workspace and kept the session database.")
         print("Packaged app attributed both Mistral Vibe session folders and retained the generation pointer.")
+        print("Packaged app attributed both Oh My Pi workspace folders and retained the profile session.")
         guard AXIsProcessTrusted() else {
             fallbackReport(pid)
             return

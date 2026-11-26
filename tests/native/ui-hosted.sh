@@ -280,6 +280,24 @@ manifest.write_bytes(manifest_body + b"\n")
     "runtime": "local", "session_id": vibe_id, "origin_directory": str(vibe_origin),
     "environment": {"working_directory": str(vibe_project)},
 }))
+omp_project = home / "Documents/Oh My Pi Project"
+omp_additional = home / "Documents/Oh My Pi Additional"
+for project in (omp_project, omp_additional):
+    project.mkdir(parents=True)
+    (project / "source.ts").write_text("// synthetic")
+omp_id = "019c625b-b900-7000-8000-000000000001"
+omp_timestamp = "2026-11-26T20:40:10.000Z"
+omp_session = (home / ".omp/profiles/coder/agent/sessions/-Documents-Oh My Pi Project"
+               / f"2026-11-26T20-40-10-000Z_{omp_id}.jsonl")
+omp_session.parent.mkdir(parents=True)
+omp_title = {"type": "title", "v": 1, "title": "隔离会话", "updatedAt": omp_timestamp, "pad": ""}
+def encode_json(value):
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode() + b"\n"
+omp_title["pad"] = " " * (256 - len(encode_json(omp_title)))
+omp_session.write_bytes(encode_json(omp_title) + encode_json({
+    "type": "session", "version": 3, "id": omp_id, "timestamp": omp_timestamp,
+    "cwd": str(omp_project), "additionalDirectories": [str(omp_additional)],
+}))
 trae_cli = home / ".trae/cli"
 for index, (relative, workspace) in enumerate([
     ("sessions/2026/11/26", aider_project), ("archived_sessions", continue_project),

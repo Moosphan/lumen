@@ -119,6 +119,8 @@ TRAE CLI 2.0 在工作区单列，工具家族与 IDE 合计。扫描默认 `~/.
 
 接入 Mistral Vibe 后累计覆盖 26 个工具家族。支持 v3.1.5 的统一存储及 v2.26.1 的默认前缀历史目录。新版核验 CURRENT 与当前清单，旧版核验会话目录标识及会话日志存在性，随后从会话元数据关联当前和起始本机目录。默认资料、管理的工作树和临时工作区按保留盘点。外部会话根可通过已授权的 `VIBE_HOME` 或绝对路径 `VIBE_SESSION_LOGGING__SAVE_DIR` 发现，作用于已识别的会话目录。较早的单 JSON 会话、旧版自定义前缀、TOML 指定的自定义会话根、远程会话和工作树与工程的进一步关联仍待验证。 [会话架构](https://github.com/mistralai/mistral-vibe/blob/v3.1.5/docs/adr/0006-local-sessions.md) · [旧版数据写入](https://github.com/mistralai/mistral-vibe/blob/v2.26.1/vibe/core/session/session_logger.py) · [工单 #44](https://github.com/Moosphan/lumen/issues/44)
 
+接入 Oh My Pi 后累计覆盖 27 个工具家族。支持 v19.2.1 的 256 字节标题槽、旧版直接以会话头开头的 JSONL，以及标准位置的命名配置档。按工作目录和附加目录归属，文件名和会话标识必须吻合。位于 `~/.omp` 内的共用 Pi 环境变量路径由 Oh My Pi 盘点。配置、会话、共享附件和默认工作树按保留盘点。该范围外的自定义位置、压缩归档里的工作目录及工作树与工程的一一对应仍待验证。 [会话格式](https://github.com/can1357/oh-my-pi/blob/v19.2.1/docs/session.md) · [配置路径](https://github.com/can1357/oh-my-pi/blob/v19.2.1/packages/utils/src/dirs.ts) · [工单 #45](https://github.com/Moosphan/lumen/issues/45)
+
 ## 功能和验收清单
 
 | 编号 | 交付 | 依赖 | 验收 |
