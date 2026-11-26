@@ -234,6 +234,13 @@ private func fallbackReport(_ pid: pid_t) {
                   projects.contains(where: {
                       $0.key.hasSuffix("/work-mode-projects/6a4db2ef0f25b4742bf9cdc2") && $0.value == ["TraeWork"]
                   }),
+                  projects.contains(where: {
+                      $0.key.hasSuffix("/Trae CN/ModularData/ai-agent/work-mode-projects/6a4db2ef0f25b4742bf9cdc8")
+                          && $0.value == ["Trae"]
+                  }),
+                  !projects.keys.contains(where: {
+                      $0.hasSuffix("/TRAE SOLO CN/ModularData/ai-agent/work-mode-projects/6a4db2ef0f25b4742bf9cdc8")
+                  }),
                   projects.values.contains(["Aider", "Amp", "Trae", "Trae CLI"]),
                   projects.values.contains(["DeepSeek Harness"]),
                   projects.contains(where: {
@@ -297,6 +304,10 @@ private func fallbackReport(_ pid: pid_t) {
                       ($0["path"] as? String)?.hasSuffix("/6a4db2ef0f25b4742bf9cdc2/delivery.html") == true
                           && $0["decision"] as? String == "keep"
                   }),
+                  files.contains(where: {
+                      ($0["path"] as? String)?.hasSuffix("/TRAE_PROJECT_MOVED_6a4db2ef0f25b4742bf9cdc8.md") == true
+                          && $0["decision"] as? String == "keep"
+                  }),
                   agents.contains(where: {
                       $0["name"] as? String == "Conductor" && $0["kind"] as? String == "workspace-manager"
                           && ($0["bytes"] as? Int ?? 0) > 0
@@ -318,7 +329,7 @@ private func fallbackReport(_ pid: pid_t) {
                   (data["roots"] as? [String])?.isEmpty == true else { return nil as Bool? }
             return true
         }
-        print("Packaged app inventoried standalone TraeWork projects and retained their deliverables and runtime.")
+        print("Packaged app inventoried a migrated TRAE Work project and retained the standalone migration marker.")
         guard AXIsProcessTrusted() else {
             fallbackReport(pid)
             return

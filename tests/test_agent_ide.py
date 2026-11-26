@@ -256,14 +256,43 @@ class AgentIDEAdapterTests(unittest.TestCase):
                    {'folder': 'vscode-remote://ssh-remote+example/home/remote'})
         cache = {}
         stores, found = self.scan(cache=cache)
-        self.assertEqual(found, {project: {'TraeWork'}, self.project: {'TraeWork'}})
+        self.assertEqual(found, {project: {'TraeWork'}, self.project: {'TraeWork'}, copy.parent: {'Trae'}})
         locations = {path for agent, path, _ in stores if agent == 'TraeWork'}
         self.assertTrue({root, disk.parents[1], projects}.issubset(locations))
         self.assertNotIn('private local deliverable', json.dumps(cache))
         self.assertNotIn('private runtime state', json.dumps(cache))
-        self.assertEqual(self.scan(excluded=(project,))[1], {self.project: {'TraeWork'}})
+        self.assertEqual(self.scan(excluded=(project,))[1], {self.project: {'TraeWork'}, copy.parent: {'Trae'}})
         project.rename(projects / '6a4db2ef0f25b4742bf9cdc5')
         self.assertNotIn(project, self.scan(cache=cache)[1])
+
+    def test_trae_work_projects_keep_real_copies_and_only_collapse_verified_migration_stubs(self):
+        identity = '6a4db2ef0f25b4742bf9cdc2'
+        relative = f'ModularData/ai-agent/work-mode-projects/{identity}'
+        support = self.home / 'Library/Application Support'
+        old = support / 'TRAE SOLO CN' / relative
+        new = support / 'Trae CN' / relative
+        target = self.write(new / 'video-preview.html', b'current deliverable')
+        marker = self.write(old / f'TRAE_PROJECT_MOVED_{identity}.md', (
+            f'This project was migrated to:\n\n{new}\n\nUse the target directory above. '
+            'This directory only records migration state.\n'
+        ).encode())
+        self.write(support / 'TRAE SOLO CN/User/workspaceStorage/migrated/workspace.json',
+                   {'folder': old.as_uri()})
+        cache = {}
+        self.assertEqual(self.scan(cache=cache)[1], {new: {'Trae'}})
+        self.assertEqual(self.scan(excluded=(new,))[1], {old: {'TraeWork'}})
+        extra = self.write(old / 'hidden-local-copy.txt', b'unmigrated')
+        self.assertEqual(self.scan(cache=cache)[1], {old: {'TraeWork'}, new: {'Trae'}})
+        extra.unlink()
+        self.assertEqual(self.scan(cache=cache)[1], {new: {'Trae'}})
+        target.unlink()
+        new.rmdir()
+        self.assertEqual(self.scan(cache=cache)[1], {old: {'TraeWork'}})
+        outside = self.write(self.base / identity / 'other.txt', b'external').parent
+        new.symlink_to(outside, target_is_directory=True)
+        self.assertEqual(self.scan(authorized=(outside,), cache=cache)[1], {old: {'TraeWork'}})
+        self.write(marker, f'This project was migrated to:\n\n{outside}\n'.encode())
+        self.assertEqual(self.scan(authorized=(outside,), cache=cache)[1], {old: {'TraeWork'}})
 
     def test_roo_uses_per_task_workspace_and_ignores_stale_index_and_messages(self):
         root = 'Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline'

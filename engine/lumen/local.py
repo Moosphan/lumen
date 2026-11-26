@@ -171,7 +171,7 @@ def project_locations(home, sources, excluded, issues, quick=False, metadata_cac
             scoped_home = bool(parts) and not any(
                 p.casefold() in {'library', 'applications', '.git', 'node_modules'} or p.startswith('.')
                 for p in checked)
-            managed_project = agent == 'TraeWork' and agent_ide.is_traework_managed_project(path, home)
+            managed_project = agent_ide.is_trae_managed_project(path, home, agent)
             if not (scoped_home or managed_project or any(within(path, root) for root in authorized)):
                 if path != Path('/') and not within(path, home) and not str(path).startswith(
                         ('/System/', '/Library/', '/private/', '/var/', '/tmp/', '/usr/')):

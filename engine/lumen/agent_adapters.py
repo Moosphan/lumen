@@ -113,6 +113,18 @@ class _Metadata:
             self.failed(path, error)
             return []
 
+    def has_only_entry(self, path, name):
+        if not self.allowed(path):
+            return False
+        self.watch(path)
+        try:
+            with _directory(path) as fd, os.scandir(fd) as entries:
+                first = next(entries, None)
+                return first is not None and first.name == name and next(entries, None) is None
+        except OSError as error:
+            self.failed(path, error)
+            return False
+
     @contextmanager
     def open(self, path, *, gitfile=False):
         if not self.allowed(path, gitfile=gitfile):

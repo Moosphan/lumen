@@ -234,6 +234,31 @@ class LocalInventoryTests(unittest.TestCase):
         result = self.call('run', paths=list(map(str, protected)), scan_id=report['scan_id'], action='quarantine')
         self.assertEqual([row['status'] for row in result['last_action']['items']], ['skipped'] * len(protected))
 
+    def test_trae_inventories_managed_work_projects_and_preserves_migration_state(self):
+        identity = '6a4db2ef0f25b4742bf9cdc2'
+        relative = f'ModularData/ai-agent/work-mode-projects/{identity}'
+        profile = self.home / 'Library/Application Support/Trae CN'
+        project = profile / relative
+        delivery = self.write(project / 'presentation.html', b'preserve migrated deliverable')
+        disk = self.write(profile / 'ModularData/ai-agent/vm/vms/workspace.img', b'preserve fused VM')
+        legacy = self.home / 'Library/Application Support/TRAE SOLO CN' / relative
+        marker = self.write(legacy / f'TRAE_PROJECT_MOVED_{identity}.md', (
+            f'This project was migrated to:\n\n{project}\n\nUse the target directory above. '
+            'This directory only records migration state.\n'
+        ).encode())
+        report = self.call('scan_local', startup=True)
+        self.assertEqual(report['projects'].get(str(project)), ['Trae'])
+        self.assertNotIn(str(legacy), report['projects'])
+        by_path = {row['path']: row for row in report['files']}
+        self.assertEqual(by_path[str(delivery)]['projects'], [str(project)])
+        self.assertEqual(by_path[str(marker)]['agents'], ['TraeWork'])
+        candidates = [delivery, disk, marker]
+        self.assertEqual([by_path[str(path)]['decision'] for path in candidates], ['keep'] * len(candidates))
+        agent = next(row for row in report['agent_inventory'] if row['name'] == 'Trae')
+        self.assertTrue(any(row['path'] == str(disk.parents[1]) and row['bytes'] > 0 for row in agent['stores']))
+        result = self.call('run', paths=list(map(str, candidates)), scan_id=report['scan_id'], action='quarantine')
+        self.assertEqual([row['status'] for row in result['last_action']['items']], ['skipped'] * len(candidates))
+
     def test_trae_cli_shares_ide_family_and_preserves_custom_history_and_state(self):
         project = self.write('Projects/Trae Film/source.ts').parent
         self.write('Library/Application Support/Trae/User/workspaceStorage/fixture/workspace.json',

@@ -189,6 +189,17 @@ work_runtime.write_bytes(b"Protected local runtime fixture.")
 work_storage = traework / "User/workspaceStorage/fixture"
 work_storage.mkdir(parents=True)
 (work_storage / "workspace.json").write_text(json.dumps({"folder": continue_project.as_uri()}))
+migrated_id = "6a4db2ef0f25b4742bf9cdc8"
+work_relative = Path("ModularData/ai-agent/work-mode-projects") / migrated_id
+migrated_project = trae_data / work_relative
+migrated_project.mkdir(parents=True)
+(migrated_project / "migrated-delivery.html").write_text("Protected migrated delivery.")
+old_stub = traework / work_relative
+old_stub.mkdir()
+(old_stub / f"TRAE_PROJECT_MOVED_{migrated_id}.md").write_text(
+    f"This project was migrated to:\n\n{migrated_project}\n\n"
+    "Use the target directory above. This directory only records migration state.\n"
+)
 trae_cli = home / ".trae/cli"
 for index, (relative, workspace) in enumerate([
     ("sessions/2026/11/26", aider_project), ("archived_sessions", continue_project),

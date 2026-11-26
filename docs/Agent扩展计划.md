@@ -58,7 +58,7 @@
 | Roo Code | 默认 VS Code 扩展清单、3.53.0 独立任务工作区元数据 | 旧版索引、自定义及其他编辑器配置 |
 | Kiro IDE / KAS 共享 | IDE 应用标识符、默认或已授权的 `KIRO_HOME` 中的本地 KAS 工程路径、旧版 IDE 会话和日志目录 | 旧版 IDE 工程归属、客户端标记及远程会话 |
 | Kiro CLI | 旧版成对 JSON 和 JSONL 的本地工程目录，以及 macOS 已写入 SQLite 主库的工程键 | CLI 安装状态、未写入主库的会话、真实客户端与云端会话 |
-| TRAE IDE | 已核对的 macOS 应用标识，`Trae` 和 `Trae CN` 资料目录。本地单目录、已保存多根及落盘的未保存工作区 | 实际客户端生成的工作区、融合版任务和远程工程 |
+| TRAE IDE / 融合版 | 已核对的 macOS 应用标识，`Trae` 和 `Trae CN` 资料目录。支持编辑器工作区和 Work 模式本机项目 | 实际客户端生成的工作区、融合版任务会话归属、其他目录布局和远程工程 |
 | TraeWork | 中国独立版 `cn.trae.solo.app`、本机应用内项目目录和编辑器工作区。单独盘点会话、快照和工作环境 | 实际客户端、云端任务、会话与项目之间的关系、其他独立版布局 |
 | TRAE CLI 2.0 | 默认或已授权目录中的活动、归档 JSONL 和 `.jsonl.zst` 首行，以及已写入 `state_5.sqlite` 主库的会话 ID 和本机工作目录 | 仅存于 WAL 的会话、其他主库格式、CLI 实际运行 |
 | TRAE CLI 1.x CoCo | 标准缓存和旧迁移目录中的 `session.json`，核对会话 ID 和本机工作目录 | 其他旧版布局、CLI 实际运行 |
@@ -106,6 +106,8 @@ TRAE CLI 2.0 在工作区单列，工具家族与 IDE 合计。扫描默认 `~/.
 旧版 CoCo 从 `~/Library/Caches/coco/sessions`、`~/.cache/coco/sessions` 和 `~/Library/Caches/trae-cli/sessions` 中的 `session.json` 识别本机工程。核验通过的旧版记录与 2.0 同归 TRAE CLI。历史会话、追踪日志和已知 CoCo 提示词历史计入占用，保留原文件。 [官方迁移说明](https://docs.trae.cn/cli_upgrade-trae-cli) · [工单 #37](https://github.com/Moosphan/lumen/issues/37)
 
 独立 TraeWork 以应用标识和 `TRAE SOLO CN` 资料目录区分。本机 Work 模式项目沿用原目录，项目产物、会话、快照和 VM 环境计入占用并保留。IDE、CLI 和 TraeWork 按同一 TRAE 家族计数。 [TraeWork 运行环境](https://docs.trae.cn/work_troubleshooting) · [官方融合与迁移说明](https://docs.trae.cn/ide_traework-to-traecode-data-migration) · [工单 #38](https://github.com/Moosphan/lumen/issues/38)
+
+融合版从 `Trae` 和 `Trae CN` 资料目录识别标准 Work 模式本机项目，单独盘点 VM 工作环境。旧目录只有已支持格式的迁移提示，且指向已核验的同 ID 本机项目时，项目列表展示目标位置，旧提示仍计入旧版数据。含实际产物的旧目录继续单列，原文件在清理时保留。 [已观察到的迁移提示](https://forum.trae.cn/t/topic/183817) · [工单 #39](https://github.com/Moosphan/lumen/issues/39)
 
 ## 功能和验收清单
 

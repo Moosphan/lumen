@@ -17,6 +17,7 @@ _TRAEWORK_EDITOR = 'TRAE SOLO CN'
 _TRAE_PROFILE_NAMES = frozenset(name.casefold() for name in (*_TRAE_EDITORS, _TRAEWORK_EDITOR))
 _TRAEWORK_PROJECTS = 'ModularData/ai-agent/work-mode-projects'
 _TRAEWORK_PROJECT_ID = re.compile(r'[0-9a-f]{24}')
+_TRAE_PROJECT_EDITORS = {'Trae': _TRAE_EDITORS, 'TraeWork': (_TRAEWORK_EDITOR,)}
 _TRAE_HOME_NAMES = ('.trae', '.trae-cn')
 _WORKSPACE_HASH = re.compile(r'[0-9a-f]{16}')
 _UNTITLED_ID = re.compile(r'[0-9]{13}')
@@ -130,9 +131,13 @@ def is_trae_user_data(path):
                    for index in range(len(parts) - 2)))
 
 
-def is_traework_managed_project(path, home):
-    root = home / 'Library/Application Support' / _TRAEWORK_EDITOR / _TRAEWORK_PROJECTS
-    return path.parent == root and _TRAEWORK_PROJECT_ID.fullmatch(path.name) is not None
+def is_trae_managed_project(path, home, agent):
+    editors = _TRAE_PROJECT_EDITORS.get(agent)
+    if not editors or _TRAEWORK_PROJECT_ID.fullmatch(path.name) is None:
+        return False
+    support = home / 'Library/Application Support'
+    parent = path.parent
+    return any(parent == support / editor / _TRAEWORK_PROJECTS for editor in editors)
 
 
 def _workspace_folders(metadata, path):
@@ -211,20 +216,51 @@ def _windsurf_workspaces(metadata, store, add):
     _editor_workspaces(metadata, store, add, agent, _WINDSURF_EDITORS)
 
 
-def _trae_ide(metadata, store, add):
+def _trae_work_projects(metadata, store, profile, agent):
+    store(agent, profile / 'ModularData/ai-agent/vm', f'{agent} 本地工作环境')
+    root = profile / _TRAEWORK_PROJECTS
+    if not store(agent, root, f'{agent} 本地项目存储'):
+        return []
+    return [path for path in metadata.children(root, directories=True) if _TRAEWORK_PROJECT_ID.fullmatch(path.name)]
+
+
+def _trae_desktop_workspaces(metadata, store, add):
     # https://docs.trae.cn/ide_troubleshoot-general-issues
     # https://forum.trae.cn/t/topic/325625
     agent = 'Trae'
     for editor in _TRAE_EDITORS:
         profile = metadata.home / 'Library/Application Support' / editor
-        store(agent, profile, f'{editor} 应用数据')
-        store(agent, profile / 'ModularData', f'{editor} 会话与快照')
+        if store(agent, profile, f'{editor} 应用数据'):
+            store(agent, profile / 'ModularData', f'{editor} 会话与快照')
+            for directory in _trae_work_projects(metadata, store, profile, agent):
+                add(str(directory), agent)
     for name in _TRAE_HOME_NAMES:
         store(agent, metadata.home / name, 'TRAE 家族共享的扩展与用户配置')
     _editor_workspaces(metadata, store, add, agent, _TRAE_EDITORS)
 
 
-def _traework(metadata, store, add):
+def _trae_migration_target(metadata, directory):
+    # https://forum.trae.cn/t/topic/183817
+    marker = f'TRAE_PROJECT_MOVED_{directory.name}.md'
+    payload = metadata.read(directory / marker, 4096)
+    if payload is None:
+        return None
+    try:
+        lines = [line for line in payload.decode('utf-8').splitlines() if line]
+    except UnicodeError:
+        return None
+    if (len(lines) != 3 or lines[0] != 'This project was migrated to:' or
+            lines[2] != 'Use the target directory above. This directory only records migration state.'):
+        return None
+    target = recorded_path(lines[1])
+    if (target is not None and target.name == directory.name and
+            is_trae_managed_project(target, metadata.home, 'Trae') and
+            metadata.directory(target) and metadata.has_only_entry(directory, marker)):
+        return target
+    return None
+
+
+def _standalone_traework(metadata, store, add):
     # The standalone 0.2.2 bundle keeps the TRAE SOLO CN profile name.
     # https://forum.trae.cn/t/topic/183651/12
     # https://forum.trae.cn/t/topic/94901
@@ -233,13 +269,20 @@ def _traework(metadata, store, add):
     if not store(agent, profile, 'TraeWork 独立客户端数据'):
         return
     store(agent, profile / 'ModularData', 'TraeWork 会话与快照')
-    store(agent, profile / 'ModularData/ai-agent/vm', 'TraeWork 本地工作环境')
-    projects = profile / _TRAEWORK_PROJECTS
-    if store(agent, projects, 'TraeWork 本地项目存储'):
-        for directory in metadata.children(projects, directories=True):
-            if _TRAEWORK_PROJECT_ID.fullmatch(directory.name):
-                add(str(directory), agent)
-    _editor_workspaces(metadata, store, add, agent, (_TRAEWORK_EDITOR,))
+    redirected = set()
+    for directory in _trae_work_projects(metadata, store, profile, agent):
+        target = _trae_migration_target(metadata, directory)
+        if target is None:
+            add(str(directory), agent)
+        else:
+            redirected.add(directory)
+            add(str(target), 'Trae')
+
+    def add_workspace(value, owner):
+        if recorded_path(value) not in redirected:
+            add(value, owner)
+
+    _editor_workspaces(metadata, store, add_workspace, agent, (_TRAEWORK_EDITOR,))
 
 
 def _roo_code(metadata, store, add):
@@ -293,4 +336,5 @@ def _kiro_sessions(metadata, root, store, add):
                 add(workspace, 'Kiro')
 
 
-ADAPTERS = (_copilot_cli, _copilot_vscode, _windsurf_workspaces, _roo_code, _kiro_kas, _trae_ide, _traework)
+ADAPTERS = (_copilot_cli, _copilot_vscode, _windsurf_workspaces, _roo_code, _kiro_kas,
+            _trae_desktop_workspaces, _standalone_traework)
