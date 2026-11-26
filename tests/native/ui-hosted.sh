@@ -179,9 +179,17 @@ for index, (relative, workspace) in enumerate([
     session_id = f"019fbcca-9fd4-7d20-83dc-0762b2f839b{index}"
     rollout = trae_cli / relative / f"rollout-2026-11-26T11-22-33-{session_id}.jsonl"
     rollout.parent.mkdir(parents=True)
-    rollout.write_text(json.dumps({"type": "session_meta", "payload": {
+    metadata_line = (json.dumps({"type": "session_meta", "payload": {
         "id": session_id, "cwd": str(workspace),
-    }}) + "\n")
+    }}) + "\n").encode()
+    if relative == "archived_sessions":
+        blocks = [metadata_line, *([b"keep archived transcript " * 4000] * 4)]
+        frame = bytes.fromhex("28b52ffda0") + struct.pack("<I", sum(map(len, blocks)))
+        for position, block in enumerate(blocks):
+            frame += (len(block) * 8 + (position == len(blocks) - 1)).to_bytes(3, "little") + block
+        rollout.with_suffix(".jsonl.zst").write_bytes(frame)
+    else:
+        rollout.write_bytes(metadata_line)
 (trae_cli / "history.jsonl").write_text("Keep the CLI history.")
 models = home / ".lmstudio/models/Lumen/Sample Weight"
 models.mkdir(parents=True)

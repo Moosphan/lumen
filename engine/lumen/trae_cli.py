@@ -4,6 +4,7 @@ import os
 import re
 
 from .integrations import recorded_path
+from .zstd_header import first_line
 
 
 _AGENT = 'Trae CLI'
@@ -17,6 +18,7 @@ _ROLLOUT = re.compile(
 )
 _DATE_PARTS = tuple(re.compile(pattern) for pattern in (r'[0-9]{4}', r'0[1-9]|1[0-2]', r'0[1-9]|[12][0-9]|3[01]'))
 _HEADER_LIMIT = 32 * 1024
+_COMPRESSED_INPUT_LIMIT = 256 * 1024
 
 
 def custom_home(home, setting=os.environ.get):
@@ -64,14 +66,18 @@ def _rollouts(metadata, root, dated):
             yield path, match[1], bool(match[2])
 
 
-def _project(metadata, path, identity):
+def _project(metadata, path, identity, compressed):
     try:
         with metadata.open(path) as stream:
             if stream is None:
                 return None
-            header = stream.readline(min(metadata.budget, _HEADER_LIMIT))
-            metadata.budget -= len(header)
-        if not header.endswith(b'\n'):
+            if compressed:
+                header, spent = first_line(stream, min(metadata.budget, _COMPRESSED_INPUT_LIMIT), _HEADER_LIMIT)
+            else:
+                header = stream.readline(min(metadata.budget, _HEADER_LIMIT))
+                spent = len(header)
+            metadata.budget -= spent
+        if header is None or not header.endswith(b'\n'):
             return None
         record = json.loads(header)
         payload = record.get('payload') if isinstance(record, dict) and record.get('type') == 'session_meta' else None
@@ -84,7 +90,7 @@ def _project(metadata, path, identity):
     return None
 
 
-def discover_trae_cli(metadata, store, add):
+def discover_trae_cli_rollouts(metadata, store, add):
     # https://docs.trae.cn/cli_command-line-parameters
     # https://github.com/kenn-io/agentsview/tree/d92f8630a496c9237e4fa8316aa60c3387a59f59/internal/parser/testdata/data-version-corpus/traex
     default = metadata.home / _DEFAULT
@@ -101,12 +107,10 @@ def discover_trae_cli(metadata, store, add):
             if not store(_AGENT, root, title):
                 continue
             for path, identity, compressed in _rollouts(metadata, root, dated=name == 'sessions'):
-                if compressed:
-                    metadata.issue(root, 'TRAE CLI 压缩会话仅盘点占用')
-                    continue
-                project = _project(metadata, path, identity)
+                project = _project(metadata, path, identity, compressed)
                 if project is None:
-                    metadata.issue(root, '部分 TRAE CLI 会话标识或工作目录无法核验')
+                    subject = '压缩会话' if compressed else '会话'
+                    metadata.issue(root, f'部分 TRAE CLI {subject}首行或工作目录无法核验')
                     continue
                 if found.setdefault(identity, project) != project:
                     found[identity] = None

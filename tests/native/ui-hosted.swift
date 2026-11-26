@@ -259,6 +259,10 @@ private func fallbackReport(_ pid: pid_t) {
                                   && ($0["count"] as? Int ?? 0) > 0
                           }) == true
                   }),
+                  let files = report["files"] as? [[String: Any]], files.contains(where: {
+                      ($0["path"] as? String)?.hasSuffix("0762b2f839b1.jsonl.zst") == true
+                          && $0["decision"] as? String == "keep"
+                  }),
                   agents.contains(where: {
                       $0["name"] as? String == "Conductor" && $0["kind"] as? String == "workspace-manager"
                           && ($0["bytes"] as? Int ?? 0) > 0
@@ -280,7 +284,7 @@ private func fallbackReport(_ pid: pid_t) {
                   (data["roots"] as? [String])?.isEmpty == true else { return nil as Bool? }
             return true
         }
-        print("Packaged app inventoried shared project attribution and active and archived TRAE CLI sessions.")
+        print("Packaged app inventoried active and compressed archived TRAE CLI sessions and kept the original archive.")
         guard AXIsProcessTrusted() else {
             fallbackReport(pid)
             return

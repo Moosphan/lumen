@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import sqlite3
@@ -74,6 +75,69 @@ class LocalAgentToolTests(unittest.TestCase):
         self.assertNotIn('private history marker', json.dumps(cache))
         active.unlink()
         self.assertEqual(self.scan(cache=cache)[1], {old: {'Trae CLI'}})
+
+    @staticmethod
+    def _raw_zstd_frame(*blocks):
+        frame = bytes.fromhex('28b52ffda0') + sum(map(len, blocks)).to_bytes(4, 'little')
+        return frame + b''.join((len(block) * 8 + (index == len(blocks) - 1)).to_bytes(3, 'little') + block
+                                for index, block in enumerate(blocks))
+
+    def _trae_compressed_rollout(self, bucket, identifier, cwd):
+        rollout = self.trae_rollout(bucket, identifier, cwd)
+        # The frame exceeds the read budget. The JSONL header fits in the first block.
+        frame = self._raw_zstd_frame(rollout.read_bytes(), *([b'private compressed body ' * 4000] * 4))
+        archive = rollout.with_suffix('.jsonl.zst')
+        rollout.rename(archive)
+        archive.write_bytes(frame)
+        return archive
+
+    def test_trae_cli_associates_large_compressed_rollouts_and_revalidates_the_header(self):
+        from engine.lumen.zstd_header import _decoder
+
+        if _decoder() is None:
+            self.skipTest('source checkout has no Zstandard decoder; the native package bundles one')
+        store = self.home / '.trae/cli'
+        archived = self.home / 'Earlier Project'
+        active = self._trae_compressed_rollout(store / 'sessions/2026/11/26',
+                                             '019fbcca-9fd4-7d20-83dc-0762b2f839b0', self.project)
+        self._trae_compressed_rollout(store / 'archived_sessions', '019fbcca-9fd4-7d20-83dc-0762b2f839b1', archived)
+        cache = {}
+        self.assertEqual(self.scan(cache=cache)[1], {p: {'Trae CLI'} for p in (self.project, archived)})
+        self.assertNotIn('private compressed body', json.dumps(cache))
+        active.write_bytes(active.read_bytes()[:20])
+        self.assertEqual(self.scan(cache=cache)[1], {archived: {'Trae CLI'}})
+
+    def test_trae_cli_ignores_conflicting_compressed_and_plain_session_paths(self):
+        from engine.lumen.zstd_header import _decoder
+
+        if _decoder() is None:
+            self.skipTest('source checkout has no Zstandard decoder; the native package bundles one')
+        store = self.home / '.trae/cli'
+        identity = '019fbcca-9fd4-7d20-83dc-0762b2f839b0'
+        self.trae_rollout(store / 'sessions/2026/11/26', identity, self.project)
+        self._trae_compressed_rollout(store / 'archived_sessions', identity, self.home / 'Conflicting Project')
+        issues = set()
+        self.assertEqual(self.scan(issues=issues)[1], {})
+        self.assertTrue(any('目录冲突' in issue for issue in issues))
+
+    def test_zstd_header_limits_input_output_window_and_frame_boundary(self):
+        from engine.lumen.zstd_header import first_line, _stream_decoder
+
+        if _stream_decoder() is None:
+            self.skipTest('source checkout has no Zstandard streaming decoder; the native package bundles one')
+        line = b'x' * 20_000 + b'\n'
+        frame = self._raw_zstd_frame(line[:12_000], line[12_000:], b'private body' * 7000)
+        stream = io.BytesIO(frame)
+        self.assertEqual(first_line(stream, 16_384, 32_768), (None, 16_384))
+        self.assertEqual(stream.tell(), 16_384)
+        self.assertEqual(first_line(io.BytesIO(frame), len(frame), 4_096)[0], None)
+        prefix, consumed = first_line(io.BytesIO(frame), len(frame), 32_768)
+        self.assertEqual(prefix, line)
+        self.assertLess(consumed, len(frame))
+        oversized_window = bytes.fromhex('28b52ffd0070') + self._raw_zstd_frame(b'line\n')[9:]
+        self.assertIsNone(first_line(io.BytesIO(oversized_window), len(oversized_window), 32_768)[0])
+        multiple_frames = self._raw_zstd_frame(b'incomplete') + self._raw_zstd_frame(b'another frame\n')
+        self.assertIsNone(first_line(io.BytesIO(multiple_frames), len(multiple_frames), 32_768)[0])
 
     def test_trae_cli_custom_roots_require_authorization_and_follow_precedence(self):
         preferred = self.base / 'Preferred State'

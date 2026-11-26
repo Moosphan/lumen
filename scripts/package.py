@@ -47,6 +47,11 @@ def main():
                             "-Wl,-install_name,@rpath/liblumen-zstd.dylib",
                             "-Wl,-exported_symbol,_ZSTD_findFrameCompressedSize",
                             "-Wl,-exported_symbol,_ZSTD_decompress",
+                            "-Wl,-exported_symbol,_ZSTD_createDCtx",
+                            "-Wl,-exported_symbol,_ZSTD_freeDCtx",
+                            "-Wl,-exported_symbol,_ZSTD_DCtx_setParameter",
+                            "-Wl,-exported_symbol,_ZSTD_decompressStream",
+                            "-Wl,-exported_symbol,_ZSTD_isError",
                             str(REPO / "vendor/zstd/zstddeclib.c"), "-o", str(zstd)], env=env, check=True)
             shutil.copy2(REPO / "vendor/zstd/LICENSE", res / "Zstandard-LICENSE.txt")
             (content/"Info.plist").write_bytes(plistlib.dumps({
