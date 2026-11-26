@@ -54,7 +54,7 @@
 | --- | --- | --- |
 | Claude Desktop/Cowork | 应用标识符、桌面数据、Cowork 虚拟机和本地会话分开盘点 | 项目路径格式和会话内产物归属 |
 | GitHub Copilot | CLI 首条 v1 会话事件。VS Code／Insiders 用扩展会话证据关联本地单目录工程 | 多根、远程、共享 SQLite 索引与同步历史 |
-| Windsurf / Devin Desktop | 稳定版应用标识符、Windsurf 与 Devin 的稳定版及 Next 单目录和已保存的本机多根工作区，盘点 IDE 状态及 Cascade 本地存储 | 未保存的工作区、Cascade 会话与具体工程的归属、桌面程序实测 |
+| Windsurf / Devin Desktop | 稳定版应用标识符、Windsurf 与 Devin 的稳定版及 Next 单目录、已保存多根工作区和编辑器已落盘的未命名工作区，盘点 IDE 状态及 Cascade 本地存储 | Cascade 会话与具体工程的归属、桌面程序实测 |
 | Roo Code | 默认 VS Code 扩展清单、3.53.0 独立任务工作区元数据 | 旧版索引、自定义及其他编辑器配置 |
 | Kiro | IDE 应用标识符、1.x 本地 KAS 项目路径、旧会话和日志目录 | 旧会话工程归属及远程会话 |
 | OpenClaw | macOS 应用标识符、严格 JSON 配置的本地 Agent 工程，分别盘点各 Agent 会话和调度存储 | JSON5 专用语法、配置包含和单条调度任务 |
@@ -64,6 +64,8 @@
 Copilot CLI 与 VS Code 分行展示，工具总数按家族合并。以上是基于上游元数据和合成测试确认的格式。安装、工程关联和清理能力仍分别核验。[Copilot CLI 存储](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference) · [Windsurf 本地数据](https://docs.devin.ai/desktop/troubleshooting/windsurf-common-issues) · [Kiro 会话](https://kiro.dev/docs/ide/whats-new-v1/#sessions) · [OpenClaw Agent 配置](https://docs.openclaw.ai/concepts/multi-agent/index.html) · [Qwen Code 聊天存储](https://github.com/QwenLM/qwen-code/blob/v0.28.4/packages/core/src/services/chatRecordingService.ts) · [goose 会话结构](https://github.com/aaif-goose/goose/blob/v1.60.2/crates/goose/src/session/session_manager.rs)
 
 从签名的 Devin Desktop 3.14.30833 稳定版安装镜像核对了沿用的 `com.exafunction.windsurf` 标识、迁移前后的数据目录名和 `workspace.json` 写入结构。既白从已记录且可读取的 `.code-workspace` 解析本地相对路径、绝对路径和文件 URI。工作区配置、全局状态和 Cascade 数据按保留盘点。 [官方更名与迁移记录](https://docs.devin.ai/desktop/changelog) · [多根工作区格式](https://code.visualstudio.com/docs/editing/workspaces/multi-root-workspaces#_workspace-file-schema) · [工单 #29](https://github.com/Moosphan/lumen/issues/29)
+
+未命名工作区按桌面编辑器默认资料目录中的 `Workspaces/<时间戳>/workspace.json` 识别。在工作区索引建立前，也可读取已落盘的本地目录清单。工作区配置即使在手动扫描中也按保留处理。 [上游桌面写入逻辑](https://github.com/microsoft/vscode/blob/main/src/vs/platform/workspaces/electron-main/workspacesManagementMainService.ts)
 
 Continue 通过 VS Code 扩展清单和 `sessions.json` 关联本地工作目录，验证对应会话文件存在。默认 `.continue` 下的配置、索引和会话列为保留；自定义数据位置沿用授权范围。冲突、失效和远程会话不建立本机项目归属。[Continue 会话格式](https://github.com/continuedev/continue/blob/5522c6f44ca0ac3528b37244818fbfa39b5af470/core/util/history.ts) · [工单 #23](https://github.com/Moosphan/lumen/issues/23)
 

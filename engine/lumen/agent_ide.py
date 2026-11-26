@@ -9,7 +9,10 @@ from .integrations import recorded_path
 
 
 _VSCODE_EDITORS = ('Code', 'Code - Insiders')
+_WINDSURF_EDITORS = ('Windsurf', 'Windsurf - Next', 'Devin', 'Devin - Next')
+_WINDSURF_PROFILE_NAMES = frozenset(name.casefold() for name in _WINDSURF_EDITORS)
 _WORKSPACE_HASH = re.compile(r'[0-9a-f]{16}')
+_UNTITLED_ID = re.compile(r'[0-9]{13}')
 _JSON_STRING = r'"(?:[^"\\]|\\.)*"'
 _JSONC_COMMENTS = re.compile(rf'({_JSON_STRING})|//[^\r\n]*|/\*[\s\S]*?\*/')
 _JSONC_TRAILING_COMMAS = re.compile(rf'{_JSON_STRING}|,(?=[ \t\r\n]*[\]}}])')
@@ -103,11 +106,18 @@ def _workspace_folder(record, parent):
     return None
 
 
-def _saved_workspace_folders(metadata, uri):
+def is_windsurf_untitled_workspace(path):
+    if path.name.casefold() != 'workspace.json' or len(path.parts) < 6:
+        return False
+    library, support, editor, collection, identifier, _ = path.parts[-6:]
+    return (library.casefold() == 'library' and support.casefold() == 'application support'
+            and editor.casefold() in _WINDSURF_PROFILE_NAMES and collection.casefold() == 'workspaces'
+            and _UNTITLED_ID.fullmatch(identifier) is not None)
+
+
+def _workspace_folders(metadata, path):
     # https://code.visualstudio.com/docs/editing/workspaces/multi-root-workspaces#_workspace-file-schema
-    path = recorded_path(_local_folder_uri(uri))
-    if (path is None or path.suffix.casefold() != '.code-workspace'
-            or {'.ssh', '.aws', '.gnupg', '.kube', 'Keychains'}.intersection(path.parts)):
+    if {'.ssh', '.aws', '.gnupg', '.kube', 'Keychains'}.intersection(path.parts):
         return
     payload = metadata.read(path, 64 * 1024)
     if payload is None:
@@ -151,8 +161,16 @@ def _windsurf(metadata, store, add):
     # Devin 3.14.30833 keeps VS Code's workspace.json and changes nameShort from Windsurf to Devin.
     agent = 'Windsurf'
     store(agent, metadata.home / '.codeium/windsurf/cascade', 'Windsurf Cascade 会话存储')
-    for editor in ('Windsurf', 'Windsurf - Next', 'Devin', 'Devin - Next'):
-        user = metadata.home / 'Library/Application Support' / editor / 'User'
+    for editor in _WINDSURF_EDITORS:
+        profile = metadata.home / 'Library/Application Support' / editor
+        # https://github.com/microsoft/vscode/blob/main/src/vs/platform/workspaces/electron-main/workspacesManagementMainService.ts
+        untitled = profile / 'Workspaces'
+        if store(agent, untitled, f'{editor} 未保存工作区'):
+            for entry in metadata.children(untitled, directories=True):
+                if _UNTITLED_ID.fullmatch(entry.name):
+                    for path in _workspace_folders(metadata, entry / 'workspace.json'):
+                        add(path, agent)
+        user = profile / 'User'
         workspaces = user / 'workspaceStorage'
         store(agent, user / 'globalStorage', f'{editor} 全局存储')
         if store(agent, workspaces, f'{editor} 工作区存储'):
@@ -163,8 +181,10 @@ def _windsurf(metadata, store, add):
                 if 'workspace' not in value:
                     add(_local_folder_uri(value.get('folder')), agent)
                 elif 'folder' not in value:
-                    for path in _saved_workspace_folders(metadata, value['workspace']):
-                        add(path, agent)
+                    config = recorded_path(_local_folder_uri(value['workspace']))
+                    if config is not None and config.suffix.casefold() == '.code-workspace':
+                        for path in _workspace_folders(metadata, config):
+                            add(path, agent)
 
 
 def _roo_code(metadata, store, add):

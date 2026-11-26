@@ -167,6 +167,38 @@ class AgentIDEAdapterTests(unittest.TestCase):
         self.assertEqual(self.scan()[1], {})
         self.assertEqual(self.scan(authorized=(external.parent,))[1], {self.project: {'Windsurf'}})
 
+    def test_windsurf_discovers_untitled_workspaces_without_window_index_and_forgets_deleted_config(self):
+        root = 'Library/Application Support/Devin/Workspaces'
+        second = self.home / 'Local 🎬'
+        primary = self.write(f'{root}/1795610510123/workspace.json', {
+            'folders': [{'path': str(self.project)}, {'uri': second.as_uri()}],
+        })
+        legacy = self.write('Library/Application Support/Windsurf - Next/Workspaces/1795610510444/workspace.json', {
+            'folders': [{'path': str(self.project)}],
+        })
+        cache = {}
+        stores, projects = self.scan(cache=cache)
+        self.assertEqual(projects, {self.project: {'Windsurf'}, second: {'Windsurf'}})
+        self.assertEqual({path for agent, path, _ in stores if agent == 'Windsurf'},
+                         {primary.parents[1], legacy.parents[1]})
+        primary.unlink()
+        self.assertEqual(self.scan(cache=cache)[1], {self.project: {'Windsurf'}})
+
+    def test_windsurf_untitled_reads_only_local_editor_created_workspace_files(self):
+        root = 'Library/Application Support/Windsurf/Workspaces'
+        valid = self.write(f'{root}/1795610510123/workspace.json', {'folders': [{'path': str(self.project)}]})
+        other = {'folders': [{'path': str(self.home / 'Unexpected')}]}
+        self.write(f'{root}/manual/workspace.json', other)
+        self.write(f'{root}/1795610510222/backup.json', other)
+        self.write(f'{root}/1795610510333/workspace.json', {**other, 'remoteAuthority': 'ssh-remote+host'})
+        remote = self.write('Library/Application Support/Code/Workspaces/1795610510444/workspace.json', other)
+        (valid.parents[1] / '1795610510444').symlink_to(remote.parent, target_is_directory=True)
+        linked = valid.parents[1] / '1795610510555'
+        linked.mkdir()
+        (linked / 'workspace.json').symlink_to(remote)
+        self.assertEqual(self.scan()[1], {self.project: {'Windsurf'}})
+        self.assertEqual(self.scan(excluded=(valid,))[1], {})
+
     def test_roo_uses_per_task_workspace_and_ignores_stale_index_and_messages(self):
         root = 'Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline'
         item = self.write(f'{root}/tasks/owned/history_item.json', {

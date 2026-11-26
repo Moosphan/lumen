@@ -512,6 +512,24 @@ class LocalInventoryTests(unittest.TestCase):
         self.assertEqual(result['last_action']['items'][0]['status'], 'skipped')
         self.assertTrue(manifest.is_file())
 
+    def test_windsurf_untitled_config_is_protected_even_in_a_manual_only_scan(self):
+        project = self.write('Projects/剪辑/source.txt').parent
+        payload = json.dumps({'folders': [{'path': str(project)}]}).encode()
+        manifest = self.write('Library/Application Support/Devin/Workspaces/1795610510123/workspace.json', payload)
+        control = self.write('Other/Workspaces/1795610510123/workspace.json', payload)
+        report = self.call('scan', roots=[str(manifest.parent), str(control.parent)], deep=False)
+        rows = {row['path']: row for row in report['files']}
+        self.assertEqual(rows[str(manifest)]['decision'], 'keep')
+        self.assertEqual(rows[str(control)]['decision'], 'review')
+        result = self.call('run', paths=[str(manifest)], scan_id=report['scan_id'], action='quarantine')
+        self.assertEqual(result['last_action']['items'][0]['status'], 'skipped')
+        self.assertEqual(manifest.read_bytes(), payload)
+
+        report = self.call('scan_local', startup=True)
+        self.assertEqual(report['projects'].get(str(project)), ['Windsurf'])
+        rows = {row['path']: row for row in report['files']}
+        self.assertEqual(rows[str(manifest)]['agents'], ['Windsurf'])
+
     def test_deep_inventory_does_not_analyze_agent_store_payloads(self):
         source = self.write(".codex/sessions/capture.html", b'<img src="image.png">')
         copy = self.write(".codex/sessions/capture-copy.html", source.read_bytes())

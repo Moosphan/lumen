@@ -131,12 +131,14 @@ windsurf_manifest = home / "Documents/Editing.code-workspace"
 windsurf_manifest.write_text('''{
     // A saved workspace can include projects already associated with other tools.
     "folders": [
-        {"path": "Codex/Studio Project"},
         {"path": "../Projects/Gemini Project"},
     ],
 }''')
 (windsurf_state / "workspace.json").write_text(json.dumps({"workspace": windsurf_manifest.as_uri()}))
 (windsurf_state / "state.vscdb").write_bytes(b"protected editor state")
+windsurf_untitled = windsurf_state.parents[2] / "Workspaces/1795610510123/workspace.json"
+windsurf_untitled.parent.mkdir(parents=True)
+windsurf_untitled.write_text(json.dumps({"folders": [{"path": str(project)}, {"path": str(gemini_project)}]}))
 kiro = home / ".kiro/sessions"
 kiro.mkdir(parents=True)
 models = home / ".lmstudio/models/Lumen/Sample Weight"
