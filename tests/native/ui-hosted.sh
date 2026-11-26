@@ -174,6 +174,21 @@ trae_workspace.mkdir(parents=True)
 trae_snapshot = trae_data / "ModularData/ai-agent/snapshot/editor-changes.tmp"
 trae_snapshot.parent.mkdir(parents=True)
 trae_snapshot.write_text("Keep the editor snapshot.")
+traework_bundle = home / "Applications/TRAE SOLO CN.app/Contents"
+traework_bundle.mkdir(parents=True)
+(traework_bundle / "Info.plist").write_bytes(plistlib.dumps({
+    "CFBundleIdentifier": "cn.trae.solo.app", "CFBundleName": "TRAE SOLO CN",
+}))
+traework = home / "Library/Application Support/TRAE SOLO CN"
+work_project = traework / "ModularData/ai-agent/work-mode-projects/6a4db2ef0f25b4742bf9cdc2"
+work_project.mkdir(parents=True)
+(work_project / "delivery.html").write_text("Protected delivery.")
+work_runtime = traework / "ModularData/ai-agent/vm/vms/fixture.img"
+work_runtime.parent.mkdir(parents=True)
+work_runtime.write_bytes(b"Protected local runtime fixture.")
+work_storage = traework / "User/workspaceStorage/fixture"
+work_storage.mkdir(parents=True)
+(work_storage / "workspace.json").write_text(json.dumps({"folder": continue_project.as_uri()}))
 trae_cli = home / ".trae/cli"
 for index, (relative, workspace) in enumerate([
     ("sessions/2026/11/26", aider_project), ("archived_sessions", continue_project),

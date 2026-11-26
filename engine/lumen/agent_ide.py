@@ -13,7 +13,10 @@ _VSCODE_EDITORS = ('Code', 'Code - Insiders')
 _WINDSURF_EDITORS = ('Windsurf', 'Windsurf - Next', 'Devin', 'Devin - Next')
 _WINDSURF_PROFILE_NAMES = frozenset(name.casefold() for name in _WINDSURF_EDITORS)
 _TRAE_EDITORS = ('Trae', 'Trae CN')
-_TRAE_PROFILE_NAMES = frozenset(name.casefold() for name in _TRAE_EDITORS)
+_TRAEWORK_EDITOR = 'TRAE SOLO CN'
+_TRAE_PROFILE_NAMES = frozenset(name.casefold() for name in (*_TRAE_EDITORS, _TRAEWORK_EDITOR))
+_TRAEWORK_PROJECTS = 'ModularData/ai-agent/work-mode-projects'
+_TRAEWORK_PROJECT_ID = re.compile(r'[0-9a-f]{24}')
 _TRAE_HOME_NAMES = ('.trae', '.trae-cn')
 _WORKSPACE_HASH = re.compile(r'[0-9a-f]{16}')
 _UNTITLED_ID = re.compile(r'[0-9]{13}')
@@ -127,6 +130,11 @@ def is_trae_user_data(path):
                    for index in range(len(parts) - 2)))
 
 
+def is_traework_managed_project(path, home):
+    root = home / 'Library/Application Support' / _TRAEWORK_EDITOR / _TRAEWORK_PROJECTS
+    return path.parent == root and _TRAEWORK_PROJECT_ID.fullmatch(path.name) is not None
+
+
 def _workspace_folders(metadata, path):
     # https://code.visualstudio.com/docs/editing/workspaces/multi-root-workspaces#_workspace-file-schema
     if {'.ssh', '.aws', '.gnupg', '.kube', 'Keychains'}.intersection(path.parts):
@@ -203,7 +211,7 @@ def _windsurf_workspaces(metadata, store, add):
     _editor_workspaces(metadata, store, add, agent, _WINDSURF_EDITORS)
 
 
-def _trae(metadata, store, add):
+def _trae_ide(metadata, store, add):
     # https://docs.trae.cn/ide_troubleshoot-general-issues
     # https://forum.trae.cn/t/topic/325625
     agent = 'Trae'
@@ -212,8 +220,26 @@ def _trae(metadata, store, add):
         store(agent, profile, f'{editor} 应用数据')
         store(agent, profile / 'ModularData', f'{editor} 会话与快照')
     for name in _TRAE_HOME_NAMES:
-        store(agent, metadata.home / name, 'TRAE 扩展与用户配置')
+        store(agent, metadata.home / name, 'TRAE 家族共享的扩展与用户配置')
     _editor_workspaces(metadata, store, add, agent, _TRAE_EDITORS)
+
+
+def _traework(metadata, store, add):
+    # The standalone 0.2.2 bundle keeps the TRAE SOLO CN profile name.
+    # https://forum.trae.cn/t/topic/183651/12
+    # https://forum.trae.cn/t/topic/94901
+    agent = 'TraeWork'
+    profile = metadata.home / 'Library/Application Support' / _TRAEWORK_EDITOR
+    if not store(agent, profile, 'TraeWork 独立客户端数据'):
+        return
+    store(agent, profile / 'ModularData', 'TraeWork 会话与快照')
+    store(agent, profile / 'ModularData/ai-agent/vm', 'TraeWork 本地工作环境')
+    projects = profile / _TRAEWORK_PROJECTS
+    if store(agent, projects, 'TraeWork 本地项目存储'):
+        for directory in metadata.children(projects, directories=True):
+            if _TRAEWORK_PROJECT_ID.fullmatch(directory.name):
+                add(str(directory), agent)
+    _editor_workspaces(metadata, store, add, agent, (_TRAEWORK_EDITOR,))
 
 
 def _roo_code(metadata, store, add):
@@ -267,4 +293,4 @@ def _kiro_sessions(metadata, root, store, add):
                 add(workspace, 'Kiro')
 
 
-ADAPTERS = (_copilot_cli, _copilot_vscode, _windsurf_workspaces, _roo_code, _kiro_kas, _trae)
+ADAPTERS = (_copilot_cli, _copilot_vscode, _windsurf_workspaces, _roo_code, _kiro_kas, _trae_ide, _traework)

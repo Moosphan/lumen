@@ -8,7 +8,7 @@ from heapq import nlargest
 from pathlib import Path
 from xml.parsers.expat import ExpatError
 
-from . import agent_adapters, integrations, model_inventory
+from . import agent_adapters, agent_ide, integrations, model_inventory
 from .actions import _directory
 
 
@@ -29,9 +29,10 @@ AGENT_BUNDLES = {
     'com.conductor.app': 'Conductor',
     'com.ampcode.amp.macos': 'Amp',
     'com.trae.app': 'Trae',
+    'cn.trae.solo.app': 'TraeWork',
 }
 AGENT_KINDS = {
-    'Claude Desktop': 'desktop',
+    'Claude Desktop': 'desktop', 'TraeWork': 'desktop',
     'Cursor': 'ide', 'Windsurf': 'ide', 'Kiro': 'ide', 'Trae': 'ide',
     'Cline': 'extension', 'Roo Code': 'extension', 'GitHub Copilot VS Code': 'extension',
     'Continue': 'extension',
@@ -43,7 +44,7 @@ AGENT_KINDS = {
 }
 AGENT_FAMILIES = {
     'GitHub Copilot CLI': 'GitHub Copilot', 'GitHub Copilot VS Code': 'GitHub Copilot',
-    'Kiro CLI': 'Kiro', 'Trae CLI': 'Trae',
+    'Kiro CLI': 'Kiro', 'Trae CLI': 'Trae', 'TraeWork': 'Trae',
 }
 HIDDEN_SCOPE_NAMES = {'.git', '.Trash', '.Trashes', f'.lumen-vault-{os.getuid()}'}
 
@@ -170,7 +171,8 @@ def project_locations(home, sources, excluded, issues, quick=False, metadata_cac
             scoped_home = bool(parts) and not any(
                 p.casefold() in {'library', 'applications', '.git', 'node_modules'} or p.startswith('.')
                 for p in checked)
-            if not (scoped_home or any(within(path, root) for root in authorized)):
+            managed_project = agent == 'TraeWork' and agent_ide.is_traework_managed_project(path, home)
+            if not (scoped_home or managed_project or any(within(path, root) for root in authorized)):
                 if path != Path('/') and not within(path, home) and not str(path).startswith(
                         ('/System/', '/Library/', '/private/', '/var/', '/tmp/', '/usr/')):
                     skipped.add(str(path))

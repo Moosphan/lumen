@@ -240,6 +240,31 @@ class AgentIDEAdapterTests(unittest.TestCase):
         self.assertEqual(self.scan()[1], {})
         self.assertEqual(self.scan(authorized=(workspace.parent,))[1], {self.project: {'Trae'}})
 
+    def test_traework_detects_the_standalone_profile_and_local_projects(self):
+        root = self.home / 'Library/Application Support/TRAE SOLO CN'
+        projects = root / 'ModularData/ai-agent/work-mode-projects'
+        project = projects / '6a4db2ef0f25b4742bf9cdc2'
+        self.write(project / 'report.html', b'private local deliverable')
+        self.write(projects / 'unverified' / 'text.txt', b'no project identity')
+        copy = self.write('Library/Application Support/Trae CN/ModularData/ai-agent/work-mode-projects/'
+                          '6a4db2ef0f25b4742bf9cdc3/copy.txt', b'merged app data')
+        link = projects / '6a4db2ef0f25b4742bf9cdc4'
+        link.symlink_to(copy.parent, target_is_directory=True)
+        disk = self.write(root / 'ModularData/ai-agent/vm/vms/example.img', b'private runtime state')
+        self.write(root / 'User/workspaceStorage/fixture/workspace.json', {'folder': self.project.as_uri()})
+        self.write(root / 'User/workspaceStorage/remote/workspace.json',
+                   {'folder': 'vscode-remote://ssh-remote+example/home/remote'})
+        cache = {}
+        stores, found = self.scan(cache=cache)
+        self.assertEqual(found, {project: {'TraeWork'}, self.project: {'TraeWork'}})
+        locations = {path for agent, path, _ in stores if agent == 'TraeWork'}
+        self.assertTrue({root, disk.parents[1], projects}.issubset(locations))
+        self.assertNotIn('private local deliverable', json.dumps(cache))
+        self.assertNotIn('private runtime state', json.dumps(cache))
+        self.assertEqual(self.scan(excluded=(project,))[1], {self.project: {'TraeWork'}})
+        project.rename(projects / '6a4db2ef0f25b4742bf9cdc5')
+        self.assertNotIn(project, self.scan(cache=cache)[1])
+
     def test_roo_uses_per_task_workspace_and_ignores_stale_index_and_messages(self):
         root = 'Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline'
         item = self.write(f'{root}/tasks/owned/history_item.json', {

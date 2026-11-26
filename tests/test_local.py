@@ -203,6 +203,37 @@ class LocalInventoryTests(unittest.TestCase):
         result = self.call('run', paths=list(map(str, protected)), scan_id=report['scan_id'], action='quarantine')
         self.assertEqual([row['status'] for row in result['last_action']['items']], ['skipped'] * len(protected))
 
+    def test_traework_inventories_managed_projects_and_retains_outputs_and_runtime(self):
+        profile = self.home / 'Library/Application Support/TRAE SOLO CN'
+        project = profile / 'ModularData/ai-agent/work-mode-projects/6a4db2ef0f25b4742bf9cdc2'
+        output = self.write(project / 'dist/preview.html', b'Keep this finished document.')
+        disk = self.write(profile / 'ModularData/ai-agent/vm/vms/workspace.img', b'Keep this VM.')
+        state = self.write(profile / 'ModularData/ai-agent/database.db', b'Keep this conversation.')
+        self.write(project / '.git', b'gitdir: synthetic fixture')
+        self.write('Applications/TRAE SOLO CN.app/Contents/Info.plist', plistlib.dumps({
+            'CFBundleIdentifier': 'cn.trae.solo.app', 'CFBundleName': 'TRAE SOLO CN',
+        }))
+        self.write('.trae-cn/settings.json', b'potentially shared configuration')
+        protected = [output, disk, state]
+        manual = self.call('scan', roots=[str(profile)], deep=True)
+        self.assertEqual({row['path']: row['decision'] for row in manual['files']},
+                         {str(path): 'keep' for path in protected})
+        self.assertFalse(manual['projects'])
+        self.call('settings', roots=[])
+        report = self.call('scan_local', startup=True)
+        self.assertEqual(report['projects'].get(str(project)), ['TraeWork'])
+        agent = next(row for row in report['agent_inventory'] if row['name'] == 'TraeWork')
+        self.assertEqual((agent['kind'], agent['family'], agent['installed']), ('desktop', 'Trae', True))
+        self.assertIn(str(project), agent['projects'])
+        stores = {row['path']: row for row in agent['stores']}
+        self.assertGreater(stores[str(disk.parents[1])]['bytes'], 0)
+        rows = {row['path']: row for row in report['files']}
+        self.assertEqual(rows[str(output)]['projects'], [str(project)])
+        self.assertEqual(rows[str(self.home / '.trae-cn/settings.json')]['agents'], ['Trae'])
+        self.assertEqual([rows[str(path)]['decision'] for path in protected], ['keep'] * len(protected))
+        result = self.call('run', paths=list(map(str, protected)), scan_id=report['scan_id'], action='quarantine')
+        self.assertEqual([row['status'] for row in result['last_action']['items']], ['skipped'] * len(protected))
+
     def test_trae_cli_shares_ide_family_and_preserves_custom_history_and_state(self):
         project = self.write('Projects/Trae Film/source.ts').parent
         self.write('Library/Application Support/Trae/User/workspaceStorage/fixture/workspace.json',

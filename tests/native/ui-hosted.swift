@@ -230,7 +230,10 @@ private func fallbackReport(_ pid: pid_t) {
                   projects.contains(where: {
                       $0.key.hasSuffix("/Gemini Project") && $0.value == ["Conductor", "Gemini CLI", "Trae CLI", "Windsurf"]
                   }),
-                  projects.values.contains(["Continue", "Kiro", "Kiro CLI", "Trae CLI"]),
+                  projects.values.contains(["Continue", "Kiro", "Kiro CLI", "Trae CLI", "TraeWork"]),
+                  projects.contains(where: {
+                      $0.key.hasSuffix("/work-mode-projects/6a4db2ef0f25b4742bf9cdc2") && $0.value == ["TraeWork"]
+                  }),
                   projects.values.contains(["Aider", "Amp", "Trae", "Trae CLI"]),
                   projects.values.contains(["DeepSeek Harness"]),
                   projects.contains(where: {
@@ -253,6 +256,14 @@ private func fallbackReport(_ pid: pid_t) {
                   agents.contains(where: {
                       $0["name"] as? String == "Trae" && $0["installed"] as? Bool == true
                           && ($0["bytes"] as? Int ?? 0) > 0
+                  }),
+                  agents.contains(where: {
+                      $0["name"] as? String == "TraeWork" && $0["family"] as? String == "Trae"
+                          && $0["installed"] as? Bool == true
+                          && ($0["stores"] as? [[String: Any]])?.contains(where: {
+                              ($0["path"] as? String)?.hasSuffix("/ai-agent/vm") == true
+                                  && ($0["count"] as? Int ?? 0) > 0
+                          }) == true
                   }),
                   agents.contains(where: {
                       $0["name"] as? String == "Trae CLI" && $0["family"] as? String == "Trae"
@@ -282,6 +293,10 @@ private func fallbackReport(_ pid: pid_t) {
                           && ($0["path"] as? String)?.hasSuffix("/events.jsonl") == true
                           && $0["decision"] as? String == "keep"
                   }),
+                  files.contains(where: {
+                      ($0["path"] as? String)?.hasSuffix("/6a4db2ef0f25b4742bf9cdc2/delivery.html") == true
+                          && $0["decision"] as? String == "keep"
+                  }),
                   agents.contains(where: {
                       $0["name"] as? String == "Conductor" && $0["kind"] as? String == "workspace-manager"
                           && ($0["bytes"] as? Int ?? 0) > 0
@@ -303,7 +318,7 @@ private func fallbackReport(_ pid: pid_t) {
                   (data["roots"] as? [String])?.isEmpty == true else { return nil as Bool? }
             return true
         }
-        print("Packaged app inventoried CoCo and TRAE CLI workspaces and retained legacy session data.")
+        print("Packaged app inventoried standalone TraeWork projects and retained their deliverables and runtime.")
         guard AXIsProcessTrusted() else {
             fallbackReport(pid)
             return
