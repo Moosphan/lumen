@@ -228,7 +228,7 @@ private func fallbackReport(_ pid: pid_t) {
                       $0.key.hasSuffix("/Studio Project") && $0.value == ["Amp", "Codex", "Windsurf"]
                   }),
                   projects.contains(where: {
-                      $0.key.hasSuffix("/Gemini Project") && $0.value == ["Conductor", "Gemini CLI", "Windsurf"]
+                      $0.key.hasSuffix("/Gemini Project") && $0.value == ["Conductor", "Gemini CLI", "Trae CLI", "Windsurf"]
                   }),
                   projects.values.contains(["Continue", "Kiro", "Kiro CLI", "Trae CLI"]),
                   projects.values.contains(["Aider", "Amp", "Trae", "Trae CLI"]),
@@ -273,6 +273,15 @@ private func fallbackReport(_ pid: pid_t) {
                       ($0["agent_store_path"] as? String)?.hasSuffix("/.trae/cli/thread_history_1.sqlite") == true
                           && $0["decision"] as? String == "keep"
                   }),
+                  files.contains(where: {
+                      ($0["path"] as? String)?.hasSuffix("/Library/Caches/coco/history.jsonl") == true
+                          && $0["decision"] as? String == "keep"
+                  }),
+                  files.contains(where: {
+                      ($0["agent_store_path"] as? String)?.hasSuffix("/Library/Caches/coco/sessions") == true
+                          && ($0["path"] as? String)?.hasSuffix("/events.jsonl") == true
+                          && $0["decision"] as? String == "keep"
+                  }),
                   agents.contains(where: {
                       $0["name"] as? String == "Conductor" && $0["kind"] as? String == "workspace-manager"
                           && ($0["bytes"] as? Int ?? 0) > 0
@@ -294,7 +303,7 @@ private func fallbackReport(_ pid: pid_t) {
                   (data["roots"] as? [String])?.isEmpty == true else { return nil as Bool? }
             return true
         }
-        print("Packaged app inventoried TRAE CLI rollout and SQLite workspaces and kept the session databases.")
+        print("Packaged app inventoried CoCo and TRAE CLI workspaces and retained legacy session data.")
         guard AXIsProcessTrusted() else {
             fallbackReport(pid)
             return

@@ -46,7 +46,7 @@
 
 - **Claude Desktop/Cowork、GitHub Copilot CLI/VS Code、Windsurf、Roo Code**。按产品和版本核对配置、历史、缓存与实际工作区，区分本地运行、远程工作区和同步数据。Claude Desktop/Cowork 单列运行环境和会话数据，Copilot 分测 CLI 与编辑器集成。[GitHub Copilot Hooks](https://docs.github.com/en/copilot/concepts/customizations/hooks)
 - **OpenClaw、Kiro、Qwen Code、goose**。优先识别项目、会话存储和工具数据。OpenClaw 按 Agent 和会话隔离归属，用户调度的后台任务与本次任务单独标记。[OpenClaw 会话文档](https://docs.openclaw.ai/concepts/session)
-- **TRAE**。覆盖 macOS IDE 的本地工作区以及 CLI 2.0 的普通、压缩和已写入 SQLite 主库的会话。
+- **TRAE**。覆盖 macOS IDE、CLI 1.x CoCo 历史会话和 CLI 2.0 的普通、压缩及 SQLite 主库会话。
 
 #### 第二批开发分支覆盖
 
@@ -59,7 +59,8 @@
 | Kiro IDE / KAS 共享 | IDE 应用标识符、默认或已授权的 `KIRO_HOME` 中的本地 KAS 工程路径、旧版 IDE 会话和日志目录 | 旧版 IDE 工程归属、客户端标记及远程会话 |
 | Kiro CLI | 旧版成对 JSON 和 JSONL 的本地工程目录，以及 macOS 已写入 SQLite 主库的工程键 | CLI 安装状态、未写入主库的会话、真实客户端与云端会话 |
 | TRAE IDE | 已核对的 macOS 应用标识，`Trae` 和 `Trae CN` 资料目录。本地单目录、已保存多根及落盘的未保存工作区 | 实际客户端生成的工作区、TraeWork 和远程工程 |
-| TRAE CLI 2.0 | 默认或已授权目录中的活动、归档 JSONL 和 `.jsonl.zst` 首行，以及已写入 `state_5.sqlite` 主库的会话 ID 和本机工作目录 | 仅存于 WAL 的会话、其他主库格式、1.x CoCo 历史、CLI 实际运行 |
+| TRAE CLI 2.0 | 默认或已授权目录中的活动、归档 JSONL 和 `.jsonl.zst` 首行，以及已写入 `state_5.sqlite` 主库的会话 ID 和本机工作目录 | 仅存于 WAL 的会话、其他主库格式、CLI 实际运行 |
+| TRAE CLI 1.x CoCo | 标准缓存和旧迁移目录中的 `session.json`，核对会话 ID 和本机工作目录 | 其他旧版布局、CLI 实际运行 |
 | OpenClaw | macOS 应用标识符、严格 JSON 配置的本地 Agent 工程，分别盘点各 Agent 会话和调度存储 | JSON5 专用语法、配置包含和单条调度任务 |
 | Qwen Code | v0.28.4 本地聊天记录的工程路径和受支持运行目录配置 | 新版托管会话元数据 |
 | goose | v1.60.2 已写入 SQLite 主库的本机工作目录 | 尚未写入主库的会话与容器工作目录 |
@@ -100,6 +101,8 @@ TRAE CLI 2.0 在工作区单列，工具家族与 IDE 合计。扫描默认 `~/.
 压缩会话沿用普通 JSONL 的归属规则。内置 Zstandard 解码器流式读取第一帧的首行，限制每份压缩输入为 256 KiB、首行解码输出为 32 KiB、解码窗口为 8 MiB。首行损坏、超限或身份不匹配时仍计入占用，并保留原文件。 [Zstandard 流式 API](https://github.com/facebook/zstd/blob/v1.5.7/lib/zstd.h) · [工单 #35](https://github.com/Moosphan/lumen/issues/35)
 
 对已确认格式的 `state_5.sqlite` 只读查询 `threads` 的会话 ID 和工程目录。SQLite 与 JSONL 对同一会话记录的目录冲突时跳过归属。识别范围限于已经写入主库的记录。会话正文库及数据库的 WAL、SHM 和回滚日志计入占用并保留。 [官方稳定版发布清单](https://lf-cdn.trae.com.cn/obj/trae-com-cn/trae-cli/v2/public/stable/latest.json) · [工单 #36](https://github.com/Moosphan/lumen/issues/36)
+
+旧版 CoCo 从 `~/Library/Caches/coco/sessions`、`~/.cache/coco/sessions` 和 `~/Library/Caches/trae-cli/sessions` 中的 `session.json` 识别本机工程。核验通过的旧版记录与 2.0 同归 TRAE CLI。历史会话、追踪日志和已知 CoCo 提示词历史计入占用，保留原文件。 [官方迁移说明](https://docs.trae.cn/cli_upgrade-trae-cli) · [工单 #37](https://github.com/Moosphan/lumen/issues/37)
 
 ## 功能和验收清单
 

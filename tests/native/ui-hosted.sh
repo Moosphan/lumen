@@ -203,6 +203,15 @@ with closing(sqlite3.connect(trae_cli / "state_5.sqlite")) as database:
     ))
     database.commit()
 (trae_cli / "thread_history_1.sqlite").write_bytes(b"Opaque fixture history.")
+coco = home / "Library/Caches/coco"
+legacy_id = "019fbcca-9fd4-7d20-83dc-0762b2f839b5"
+legacy_session = coco / "sessions" / legacy_id
+legacy_session.mkdir(parents=True)
+(legacy_session / "session.json").write_text(json.dumps({
+    "id": legacy_id, "metadata": {"cwd": str(gemini_project)},
+}))
+(legacy_session / "events.jsonl").write_text("Private CoCo session body.")
+(coco / "history.jsonl").write_text("Private CoCo prompt history.")
 models = home / ".lmstudio/models/Lumen/Sample Weight"
 models.mkdir(parents=True)
 (models / "sample-Q4_K_M.gguf").write_bytes(b"synthetic model metadata")

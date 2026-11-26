@@ -400,6 +400,7 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
         kiro_data = (('/.kiro/' in folded_path or '/kiro-cli/' in folded_path) and kiro_cli.protected_artifact(p))
         trae_data = (('/application support/trae' in folded_path or '/.trae/' in folded_path
                       or '/.trae-cn/' in folded_path) and agent_ide.is_trae_user_data(p)
+                     or trae_cli.is_legacy_session_data(folded_path)
                      or trae_cli.protected_artifact(p, trae_cli_home))
         if (aider_data or amp_data or browser_code or conductor_data or kiro_data or trae_data or untitled_workspace
                 or (s.st_dev, s.st_ino) in metadata_only_file_ids
@@ -482,6 +483,7 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
                 if (('.git' in names or '.git' in leaves)
                         and not (agent_stores and store_for(directory)) and not _under(directory, metadata_roots)
                         and not agent_ide.is_trae_user_data(directory)
+                        and not trae_cli.is_legacy_session_data(str(directory).casefold())
                         and not trae_cli.protected_artifact(directory, trae_cli_home)):
                     repositories.add(directory)
                 for name in sorted(names + leaves):

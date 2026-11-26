@@ -240,6 +240,51 @@ class LocalAgentToolTests(unittest.TestCase):
             database.rollback()
             self.assertEqual(self.scan()[1], {self.project: {'Trae CLI'}})
 
+    def test_trae_cli_maps_legacy_metadata_across_known_session_roots(self):
+        roots = (
+            self.home / 'Library/Caches/coco/sessions',
+            self.home / '.cache/coco/sessions',
+            self.home / 'Library/Caches/trae-cli/sessions',
+        )
+        ids = [f'019fbcca-9fd4-7d20-83dc-0762b2f839b{i}' for i in range(7)]
+        projects = (self.project, self.home / 'Migrated Work', self.home / 'Other 1.x Project')
+
+        def legacy(root, identity, cwd, *, declared=None):
+            return self.write(root / identity / 'session.json', {
+                'id': declared or identity, 'metadata': {'cwd': str(cwd), 'label': 'unindexed fixture label'},
+            })
+
+        records = [legacy(root, ids[index], projects[index]) for index, root in enumerate(roots)]
+        events = self.write(records[0].parent / 'events.jsonl', b'{"cwd":"/ignored_fixture_event"}\n')
+        legacy(roots[0], ids[3], self.home / 'Mismatch', declared=ids[4])
+        legacy(roots[0], ids[4], 'ssh://workstation/projects/foo')
+        source = legacy(self.base, ids[5], self.home / 'Linked')
+        (roots[0] / ids[5]).symlink_to(source.parent, target_is_directory=True)
+        legacy(self.home / 'Library/Caches/other/sessions', ids[6], self.home / 'Other tool')
+        cache, issues = {}, set()
+        stores, found = self.scan(cache=cache, issues=issues)
+        self.assertEqual(found, {path: {'Trae CLI'} for path in projects})
+        self.assertEqual({path for agent, path, _ in stores if agent == 'Trae CLI'}, set(roots))
+        self.assertTrue(any('CoCo' in detail and '核验' in detail for detail in issues))
+        self.assertNotIn('unindexed fixture label', json.dumps(cache))
+        self.assertNotIn(str(events), json.dumps(cache))
+        replacement = self.home / 'Updated 1.x Project'
+        legacy(roots[0], ids[0], replacement)
+        self.assertEqual(self.scan(cache=cache)[1], {path: {'Trae CLI'} for path in (replacement, *projects[1:])})
+        self.assertEqual(self.scan(excluded=(roots[0],))[1], {path: {'Trae CLI'} for path in projects[1:]})
+
+    def test_trae_cli_omits_migrated_id_when_old_and_new_paths_conflict(self):
+        identity = '019fbcca-9fd4-7d20-83dc-0762b2f839b0'
+        current = self.trae_rollout(self.home / '.trae/cli/sessions/2026/11/26', identity, self.project)
+        self.write(f'Library/Caches/coco/sessions/{identity}/session.json', {
+            'id': identity, 'metadata': {'cwd': str(self.home / 'Different Project')},
+        })
+        issues = set()
+        self.assertEqual(self.scan(issues=issues)[1], {})
+        self.assertTrue(any('目录冲突' in detail for detail in issues))
+        current.unlink()
+        self.assertEqual(self.scan()[1], {self.home / 'Different Project': {'Trae CLI'}})
+
     def test_kiro_cli_associates_companions_only_in_authorized_locations(self):
         first = self.write('.kiro/sessions/cli/known.json', {
             'cwd': str(self.project), 'session_state': {'private': 'should not enter cache'},

@@ -267,6 +267,35 @@ class LocalInventoryTests(unittest.TestCase):
                                action='quarantine')
             self.assertEqual([row['status'] for row in result['last_action']['items']], ['skipped', 'skipped'])
 
+    def test_trae_cli_keeps_coco_sessions_in_manual_cache_scan(self):
+        project = self.write('Projects/Legacy Trailer/source.ts').parent
+        identity = '019fbcca-9fd4-7d20-83dc-0762b2f839b0'
+        base = f'Library/Caches/coco/sessions/{identity}'
+        session = self.write(f'{base}/session.json', json.dumps({
+            'id': identity, 'metadata': {'cwd': str(project)},
+        }).encode())
+        events = self.write(f'{base}/events.jsonl', b'private message')
+        traces = self.write(f'{base}/traces.jsonl', b'private message')
+        history = self.write('Library/Caches/coco/history.jsonl', b'legacy prompts')
+        unrelated = self.write('Library/Caches/coco/network.tmp', b'generic cache')
+        self.write(f'{base}/.git', b'gitdir: malformed fixture')
+        protected = [session, events, traces, history]
+        manual = self.call('scan', roots=[str(unrelated.parent)], deep=True)
+        rows = {row['path']: row for row in manual['files']}
+        self.assertEqual(rows[str(unrelated)]['decision'], 'review')
+        self.assertEqual([rows[str(path)]['decision'] for path in protected], ['keep'] * len(protected))
+        self.assertEqual([rows[str(path)]['duplicate_group'] for path in (events, traces)], ['', ''])
+        self.assertNotIn(str(session.parent), manual['projects'])
+        self.call('settings', roots=[])
+        report = self.call('scan_local', startup=True)
+        self.assertEqual(report['projects'].get(str(project)), ['Trae CLI'])
+        agent = next(row for row in report['agent_inventory'] if row['name'] == 'Trae CLI')
+        stores = {row['path']: row for row in agent['stores']}
+        self.assertEqual(stores[str(session.parents[1])]['count'], 3)
+        self.assertEqual(stores[str(history)]['count'], 1)
+        result = self.call('run', paths=list(map(str, protected)), action='quarantine', scan_id=report['scan_id'])
+        self.assertEqual([row['status'] for row in result['last_action']['items']], ['skipped'] * len(protected))
+
     def test_aider_manual_scope_and_discovery_cache_revalidate_marker(self):
         project = self.manual / "worktree"
         project.mkdir()

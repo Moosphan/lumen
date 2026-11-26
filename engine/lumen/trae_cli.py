@@ -1,4 +1,4 @@
-"""Read bounded TRAE CLI 2.0 session metadata."""
+"""Read bounded TRAE CLI session metadata."""
 import json
 import os
 import re
@@ -11,6 +11,10 @@ from .zstd_header import first_line
 _AGENT = 'Trae CLI'
 _DEFAULT = '.trae/cli'
 _STORES = {'sessions': 'TRAE CLI 活动会话', 'archived_sessions': 'TRAE CLI 归档会话'}
+_LEGACY_SESSION_ROOTS = ('Library/Caches/coco/sessions', '.cache/coco/sessions', 'Library/Caches/trae-cli/sessions')
+_LEGACY_BOUNDARIES = tuple(('/' + root.casefold(), '/' + root.casefold() + '/') for root in _LEGACY_SESSION_ROOTS)
+_LEGACY_PROMPT_HISTORY = ('Library/Caches/coco/history.jsonl', '.cache/coco/history.jsonl')
+_LEGACY_HISTORY_SUFFIXES = tuple('/' + path.casefold() for path in _LEGACY_PROMPT_HISTORY)
 _PROTECTED_FILES = frozenset({'auth.json', 'config.toml', 'history.jsonl', 'hooks.json', 'session_index.jsonl'})
 _DATABASE = re.compile(r'(?:state|thread_history)_[0-9]{1,6}\.sqlite(?:-wal|-shm|-journal)?')
 _STATE_DB = 'state_5.sqlite'
@@ -53,6 +57,32 @@ def protected_artifact(path, custom):
     first, *remaining = path.relative_to(custom).parts
     return (first in _STORES or not remaining and
             (first in _PROTECTED_FILES or _DATABASE.fullmatch(first) is not None))
+
+
+def is_legacy_session_data(folded_path):
+    return (
+        folded_path.endswith(_LEGACY_HISTORY_SUFFIXES)
+        or ('/sessions' in folded_path
+            and any(folded_path.endswith(root) or prefix in folded_path for root, prefix in _LEGACY_BOUNDARIES))
+    )
+
+
+def _legacy_projects(metadata, root):
+    # https://docs.trae.cn/cli_upgrade-trae-cli
+    # https://github.com/vibe-cafe/vibe-usage/blob/3f4695ecd660311ea423b2e7c7a0fc3a76be6ed4/src/parsers/trae-cli.js
+    for session in metadata.children(root, directories=True):
+        if not _THREAD_ID.fullmatch(session.name):
+            continue
+        if metadata.budget == 0:
+            metadata.issue(root, 'TRAE CLI 旧版 CoCo 会话元数据超过本次读取上限')
+            return
+        record = metadata.read_json(session / 'session.json', dict, limit=_HEADER_LIMIT)
+        fields = record.get('metadata') if record is not None and record.get('id') == session.name else None
+        project = recorded_path(fields.get('cwd')) if isinstance(fields, dict) else None
+        if project is None:
+            metadata.issue(root, '部分 TRAE CLI 旧版 CoCo 会话标识或工作目录无法核验')
+            continue
+        yield session.name, project
 
 
 def _rollouts(metadata, root, dated):
@@ -171,7 +201,7 @@ def _database_projects(metadata, path):
     return []
 
 
-def discover_trae_cli_sessions(metadata, store, add):
+def discover_trae_cli_history(metadata, store, add):
     # https://docs.trae.cn/cli_command-line-parameters
     # https://github.com/kenn-io/agentsview/tree/d92f8630a496c9237e4fa8316aa60c3387a59f59/internal/parser/testdata/data-version-corpus/traex
     default = metadata.home / _DEFAULT
@@ -208,6 +238,14 @@ def discover_trae_cli_sessions(metadata, store, add):
                     metadata.issue(root, f'部分 TRAE CLI {subject}首行或工作目录无法核验')
                     continue
                 associate(root, identity, project)
+    for relative in _LEGACY_SESSION_ROOTS:
+        root = metadata.home / relative
+        if store(_AGENT, root, 'TRAE CLI 1.x CoCo 历史会话'):
+            for identity, project in _legacy_projects(metadata, root):
+                associate(root, identity, project)
+    # https://github.com/deepcoldy/botmux/blob/84dc2f7717dd318bee448f2716dcfcba55a9b257/src/adapters/cli/coco.ts
+    for relative in _LEGACY_PROMPT_HISTORY:
+        store(_AGENT, metadata.home / relative, 'TRAE CLI 1.x CoCo 提示词历史', file=True)
     for project in found.values():
         if project is not None:
             add(str(project), _AGENT)
