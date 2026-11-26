@@ -120,7 +120,8 @@ class AgentIDEAdapterTests(unittest.TestCase):
         stores, projects = self.scan(cache=cache)
         self.assertEqual(projects, {self.project: {'Windsurf'}, next_project: {'Windsurf'}})
         self.assertTrue(any(agent == 'Windsurf' and directory == local.parents[1] for agent, directory, _ in stores))
-        self.assertNotIn(str(state), cache['readers']['_windsurf']['stamps'])
+        watched = {path for reader in cache['readers'].values() for path in reader['stamps']}
+        self.assertNotIn(str(state), watched)
         self.assertNotIn('private editor state', json.dumps(cache))
 
         self.write(local, {'folder': replacement.as_uri()})
@@ -198,6 +199,46 @@ class AgentIDEAdapterTests(unittest.TestCase):
         (linked / 'workspace.json').symlink_to(remote)
         self.assertEqual(self.scan()[1], {self.project: {'Windsurf'}})
         self.assertEqual(self.scan(excluded=(valid,))[1], {})
+
+    def test_trae_discovers_local_projects_from_both_default_editor_profiles(self):
+        main = 'Library/Application Support/Trae'
+        china = 'Library/Application Support/Trae CN'
+        workspaces = f'{main}/User/workspaceStorage'
+        single = self.write(f'{workspaces}/a9c6/workspace.json', {'folder': self.project.as_uri()})
+        saved = self.home / 'Documents/Edit.code-workspace'
+        first = self.home / 'Projects/Edit'
+        second = self.home / 'Projects/Color'
+        self.write(saved, b'{ // shared edit\n "folders": [{"path": "../Projects/Edit"}, {"path": "../Projects/Color"},],\n}')
+        self.write(f'{china}/User/workspaceStorage/8bc1/workspace.json', {'workspace': saved.as_uri()})
+        self.write(f'{workspaces}/remote/workspace.json', {'folder': 'vscode-remote://ssh-remote+lab/code'})
+        self.write(f'{workspaces}/conflict/workspace.json', {'folder': first.as_uri(), 'workspace': saved.as_uri()})
+        untitled = self.home / 'Temporary Cut'
+        self.write(f'{china}/Workspaces/1795610510123/workspace.json', {'folders': [{'path': str(untitled)}]})
+        self.write(f'{china}/Workspaces/1795610510130/workspace.json', {
+            'remoteAuthority': 'ssh-remote+host', 'folders': [{'path': str(self.home / 'Remote')}],
+        })
+        external = self.write(self.base / 'linked.json', {'folder': (self.home / 'Linked').as_uri()})
+        (single.parents[1] / 'link').mkdir()
+        (single.parents[1] / 'link/workspace.json').symlink_to(external)
+        snapshot = self.write(f'{china}/ModularData/ai-agent/snapshot/retained.json', b'private snapshot body')
+        self.write('.trae-cn/extensions/fixture/fixture.txt', b'extension source')
+        cache = {}
+        stores, projects = self.scan(cache=cache)
+        self.assertEqual(projects, {path: {'Trae'} for path in (self.project, first, second, untitled)})
+        self.assertIn(('Trae', snapshot.parents[2]), {(agent, path) for agent, path, _ in stores})
+        self.assertNotIn('private snapshot body', json.dumps(cache))
+        self.write(saved, {'folders': [{'path': '../Projects/Color'}]})
+        self.assertEqual(self.scan(cache=cache)[1], {path: {'Trae'} for path in (self.project, second, untitled)})
+        self.assertEqual(self.scan(excluded=(self.home / china,))[1], {self.project: {'Trae'}})
+
+    def test_trae_saved_workspace_outside_home_requires_folder_authorization(self):
+        workspace = self.write(self.base / 'manual/Layout.code-workspace', {
+            'folders': [{'uri': self.project.as_uri()}],
+        })
+        self.write('Library/Application Support/Trae/User/workspaceStorage/one/workspace.json',
+                   {'workspace': workspace.as_uri()})
+        self.assertEqual(self.scan()[1], {})
+        self.assertEqual(self.scan(authorized=(workspace.parent,))[1], {self.project: {'Trae'}})
 
     def test_roo_uses_per_task_workspace_and_ignores_stale_index_and_messages(self):
         root = 'Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline'

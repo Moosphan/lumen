@@ -28,10 +28,11 @@ AGENT_BUNDLES = {
     'com.deepseek.dsh': 'DeepSeek Harness',
     'com.conductor.app': 'Conductor',
     'com.ampcode.amp.macos': 'Amp',
+    'com.trae.app': 'Trae',
 }
 AGENT_KINDS = {
     'Claude Desktop': 'desktop',
-    'Cursor': 'ide', 'Windsurf': 'ide', 'Kiro': 'ide',
+    'Cursor': 'ide', 'Windsurf': 'ide', 'Kiro': 'ide', 'Trae': 'ide',
     'Cline': 'extension', 'Roo Code': 'extension', 'GitHub Copilot VS Code': 'extension',
     'Continue': 'extension',
     'Claude Code': 'cli', 'OpenCode': 'cli', 'Gemini CLI': 'cli', 'Aider': 'cli',

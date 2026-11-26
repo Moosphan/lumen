@@ -231,7 +231,7 @@ private func fallbackReport(_ pid: pid_t) {
                       $0.key.hasSuffix("/Gemini Project") && $0.value == ["Conductor", "Gemini CLI", "Windsurf"]
                   }),
                   projects.values.contains(["Continue", "Kiro", "Kiro CLI"]),
-                  projects.values.contains(["Aider", "Amp"]),
+                  projects.values.contains(["Aider", "Amp", "Trae"]),
                   projects.values.contains(["DeepSeek Harness"]),
                   projects.contains(where: {
                       $0.key.hasSuffix("/Harness CLI Project") && $0.value == ["DeepSeek Harness"]
@@ -248,6 +248,10 @@ private func fallbackReport(_ pid: pid_t) {
                           && ($0["bytes"] as? Int ?? 0) > 0
                   }),
                   agents.contains(where: { $0["name"] as? String == "Amp" && ($0["bytes"] as? Int ?? 0) > 0 }),
+                  agents.contains(where: {
+                      $0["name"] as? String == "Trae" && $0["installed"] as? Bool == true
+                          && ($0["bytes"] as? Int ?? 0) > 0
+                  }),
                   agents.contains(where: {
                       $0["name"] as? String == "Conductor" && $0["kind"] as? String == "workspace-manager"
                           && ($0["bytes"] as? Int ?? 0) > 0
@@ -269,7 +273,7 @@ private func fallbackReport(_ pid: pid_t) {
                   (data["roots"] as? [String])?.isEmpty == true else { return nil as Bool? }
             return true
         }
-        print("Packaged app inventoried local projects, including shared Kiro KAS and legacy CLI attribution.")
+        print("Packaged app inventoried shared project attribution, including TRAE and Kiro.")
         guard AXIsProcessTrusted() else {
             fallbackReport(pid)
             return

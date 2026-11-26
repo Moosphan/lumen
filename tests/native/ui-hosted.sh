@@ -162,6 +162,16 @@ kiro_kas.mkdir(parents=True)
 (kiro_kas / "session.json").write_text(json.dumps({
     "id": "sess_fixture", "workspacePaths": [str(continue_project)],
 }))
+trae_bundle = home / "Applications/Trae.app/Contents"
+trae_bundle.mkdir(parents=True)
+(trae_bundle / "Info.plist").write_bytes(plistlib.dumps({"CFBundleIdentifier": "com.trae.app"}))
+trae_data = home / "Library/Application Support/Trae CN"
+trae_workspace = trae_data / "User/workspaceStorage/fixture"
+trae_workspace.mkdir(parents=True)
+(trae_workspace / "workspace.json").write_text(json.dumps({"folder": aider_project.as_uri()}))
+trae_snapshot = trae_data / "ModularData/ai-agent/snapshot/editor-changes.tmp"
+trae_snapshot.parent.mkdir(parents=True)
+trae_snapshot.write_text("Keep the editor snapshot.")
 models = home / ".lmstudio/models/Lumen/Sample Weight"
 models.mkdir(parents=True)
 (models / "sample-Q4_K_M.gguf").write_bytes(b"synthetic model metadata")

@@ -176,6 +176,31 @@ class LocalInventoryTests(unittest.TestCase):
         self.assertEqual({row['path']: row['decision'] for row in report['files']},
                          {str(transcript): 'keep', str(credential): 'keep'})
 
+    def test_trae_retains_profile_state_in_manual_and_automatic_inventory(self):
+        project = self.write('Projects/Trae Film/source.ts').parent
+        editor = 'Library/Application Support/Trae CN'
+        metadata = self.write(f'{editor}/User/workspaceStorage/fixture/workspace.json',
+                              json.dumps({'folder': project.as_uri()}).encode())
+        snapshot = self.write(f'{editor}/ModularData/ai-agent/snapshot/work/preview.tmp', b'private editor changes')
+        config = self.write(f'{editor}/storage.json', b'private account state')
+        extension = self.write('.trae-cn/extensions/fixture/output.tmp', b'private extension state')
+        self.write(extension.parent / '.git', b'gitdir: fixture')
+        self.write('Applications/Trae.app/Contents/Info.plist', plistlib.dumps({'CFBundleIdentifier': 'com.trae.app'}))
+        protected = [metadata, snapshot, config, extension]
+        report = self.call('scan', roots=[str(self.home / editor), str(self.home / '.trae-cn')], deep=True)
+        self.assertEqual({row['path']: row['decision'] for row in report['files']},
+                         {str(path): 'keep' for path in protected})
+        self.assertNotIn(str(extension.parent), report['projects'])
+
+        self.call('settings', roots=[])
+        report = self.call('scan_local', startup=True)
+        self.assertEqual(report['projects'][str(project)], ['Trae'])
+        agent, = report['agent_inventory']
+        self.assertEqual((agent['family'], agent['kind'], agent['installed']), ('Trae', 'ide', True))
+        self.assertGreater(agent['bytes'], 0)
+        result = self.call('run', paths=list(map(str, protected)), scan_id=report['scan_id'], action='quarantine')
+        self.assertEqual([row['status'] for row in result['last_action']['items']], ['skipped'] * len(protected))
+
     def test_aider_manual_scope_and_discovery_cache_revalidate_marker(self):
         project = self.manual / "worktree"
         project.mkdir()

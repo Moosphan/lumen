@@ -46,7 +46,7 @@
 
 - **Claude Desktop/Cowork、GitHub Copilot CLI/VS Code、Windsurf、Roo Code**。按产品和版本核对配置、历史、缓存与实际工作区，区分本地运行、远程工作区和同步数据。Claude Desktop/Cowork 单列运行环境和会话数据，Copilot 分测 CLI 与编辑器集成。[GitHub Copilot Hooks](https://docs.github.com/en/copilot/concepts/customizations/hooks)
 - **OpenClaw、Kiro、Qwen Code、goose**。优先识别项目、会话存储和工具数据。OpenClaw 按 Agent 和会话隔离归属，用户调度的后台任务与本次任务单独标记。[OpenClaw 会话文档](https://docs.openclaw.ai/concepts/session)
-- **候补队列**。Trae，先核对能证明本地工程归属的元数据。
+- **TRAE**。优先覆盖 macOS IDE 的本地工作区，后续按版本核对独立的 CLI 与 TraeWork 数据。
 
 #### 第二批开发分支覆盖
 
@@ -58,6 +58,7 @@
 | Roo Code | 默认 VS Code 扩展清单、3.53.0 独立任务工作区元数据 | 旧版索引、自定义及其他编辑器配置 |
 | Kiro IDE / KAS 共享 | IDE 应用标识符、默认或已授权的 `KIRO_HOME` 中的本地 KAS 工程路径、旧版 IDE 会话和日志目录 | 旧版 IDE 工程归属、客户端标记及远程会话 |
 | Kiro CLI | 旧版成对 JSON 和 JSONL 的本地工程目录，以及 macOS 已写入 SQLite 主库的工程键 | CLI 安装状态、未写入主库的会话、真实客户端与云端会话 |
+| TRAE | 已核对的 macOS 应用标识，`Trae` 和 `Trae CN` 资料目录。本地单目录、已保存多根及落盘的未保存工作区 | 实际客户端生成的工作区、独立 CLI、TraeWork 和远程工程 |
 | OpenClaw | macOS 应用标识符、严格 JSON 配置的本地 Agent 工程，分别盘点各 Agent 会话和调度存储 | JSON5 专用语法、配置包含和单条调度任务 |
 | Qwen Code | v0.28.4 本地聊天记录的工程路径和受支持运行目录配置 | 新版托管会话元数据 |
 | goose | v1.60.2 已写入 SQLite 主库的本机工作目录 | 尚未写入主库的会话与容器工作目录 |
@@ -90,6 +91,8 @@ DeepSeek Harness 的会话、配置、插件与凭证按保留盘点。Pi 只解
 接入 Amp 后累计覆盖 20 个工具家族。默认盘点和已授权目录识别 `.amp/settings.json` 或 `settings.jsonc` 中的 Amp 工程配置。旧版 CLI JSON 通过文件名对应的会话 ID 与 `env.initial.trees` 解析本地 URI。用户配置、凭证、旧会话、文件变动备份和识别到的 Amp 专用缓存按保留盘点。云端线程、新版线程执行位置和真实客户端运行仍待验证。 [官方配置](https://ampcode.com/docs/cli/settings) · [旧版 CLI 归档元数据](https://registry.npmjs.org/@sourcegraph%2famp/0.0.1768176116-ged0d88) · [工单 #31](https://github.com/Moosphan/lumen/issues/31)
 
 Kiro CLI 与 IDE 合计一个工具家族，仍覆盖 20 个家族。新版共享 KAS 会话的项目归到 Kiro，旧版 CLI 的本地工程单列为 Kiro CLI。旧版 SQLite 仅查询受支持会话表的工程目录键。会话、配置和凭证按保留盘点，外部 `KIRO_HOME` 仍需目录授权。 [CLI 会话管理](https://kiro.dev/docs/cli/chat/session-management/) · [AWS 会话存储示例](https://github.com/aws-samples/sample-kiro-cli-multiagent-development/blob/main/docs/observability.md) · [工单 #32](https://github.com/Moosphan/lumen/issues/32)
+
+接入 TRAE 后累计覆盖 21 个工具家族。macOS 的 `Trae` 与 `Trae CN` 默认资料目录归到同一个 TRAE 家族。项目关联来自编辑器工作区元数据，外部工作区清单需要目录授权。会话、原始快照、扩展和用户配置按保留盘点。 [TRAE 数据位置](https://docs.trae.cn/ide_troubleshoot-general-issues) · [工作区格式](https://code.visualstudio.com/docs/editing/workspaces/multi-root-workspaces#_workspace-file-schema) · [工单 #33](https://github.com/Moosphan/lumen/issues/33)
 
 ## 功能和验收清单
 

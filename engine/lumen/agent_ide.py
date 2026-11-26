@@ -12,6 +12,9 @@ from .integrations import recorded_path
 _VSCODE_EDITORS = ('Code', 'Code - Insiders')
 _WINDSURF_EDITORS = ('Windsurf', 'Windsurf - Next', 'Devin', 'Devin - Next')
 _WINDSURF_PROFILE_NAMES = frozenset(name.casefold() for name in _WINDSURF_EDITORS)
+_TRAE_EDITORS = ('Trae', 'Trae CN')
+_TRAE_PROFILE_NAMES = frozenset(name.casefold() for name in _TRAE_EDITORS)
+_TRAE_HOME_NAMES = ('.trae', '.trae-cn')
 _WORKSPACE_HASH = re.compile(r'[0-9a-f]{16}')
 _UNTITLED_ID = re.compile(r'[0-9]{13}')
 _JSON_STRING = r'"(?:[^"\\]|\\.)*"'
@@ -116,6 +119,14 @@ def is_windsurf_untitled_workspace(path):
             and _UNTITLED_ID.fullmatch(identifier) is not None)
 
 
+def is_trae_user_data(path):
+    parts = tuple(part.casefold() for part in path.parts)
+    return (any(name in parts for name in _TRAE_HOME_NAMES)
+            or any(parts[index:index + 2] == ('library', 'application support')
+                   and parts[index + 2] in _TRAE_PROFILE_NAMES
+                   for index in range(len(parts) - 2)))
+
+
 def _workspace_folders(metadata, path):
     # https://code.visualstudio.com/docs/editing/workspaces/multi-root-workspaces#_workspace-file-schema
     if {'.ssh', '.aws', '.gnupg', '.kube', 'Keychains'}.intersection(path.parts):
@@ -157,12 +168,8 @@ def _copilot_vscode(metadata, store, add):
                     add(_local_folder_uri(value.get('folder')), agent)
 
 
-def _windsurf(metadata, store, add):
-    # https://docs.devin.ai/desktop/troubleshooting/windsurf-common-issues
-    # Devin 3.14.30833 keeps VS Code's workspace.json and changes nameShort from Windsurf to Devin.
-    agent = 'Windsurf'
-    store(agent, metadata.home / '.codeium/windsurf/cascade', 'Windsurf Cascade 会话存储')
-    for editor in _WINDSURF_EDITORS:
+def _editor_workspaces(metadata, store, add, agent, editors):
+    for editor in editors:
         profile = metadata.home / 'Library/Application Support' / editor
         # https://github.com/microsoft/vscode/blob/main/src/vs/platform/workspaces/electron-main/workspacesManagementMainService.ts
         untitled = profile / 'Workspaces'
@@ -177,7 +184,7 @@ def _windsurf(metadata, store, add):
         if store(agent, workspaces, f'{editor} 工作区存储'):
             for workspace in metadata.children(workspaces, directories=True):
                 value = metadata.read_json(workspace / 'workspace.json', dict)
-                if value is None:
+                if value is None or value.get('remoteAuthority') is not None:
                     continue
                 if 'workspace' not in value:
                     add(_local_folder_uri(value.get('folder')), agent)
@@ -186,6 +193,27 @@ def _windsurf(metadata, store, add):
                     if config is not None and config.suffix.casefold() == '.code-workspace':
                         for path in _workspace_folders(metadata, config):
                             add(path, agent)
+
+
+def _windsurf_workspaces(metadata, store, add):
+    # https://docs.devin.ai/desktop/troubleshooting/windsurf-common-issues
+    # Devin 3.14.30833 keeps VS Code's workspace.json and changes nameShort from Windsurf to Devin.
+    agent = 'Windsurf'
+    store(agent, metadata.home / '.codeium/windsurf/cascade', 'Windsurf Cascade 会话存储')
+    _editor_workspaces(metadata, store, add, agent, _WINDSURF_EDITORS)
+
+
+def _trae(metadata, store, add):
+    # https://docs.trae.cn/ide_troubleshoot-general-issues
+    # https://forum.trae.cn/t/topic/325625
+    agent = 'Trae'
+    for editor in _TRAE_EDITORS:
+        profile = metadata.home / 'Library/Application Support' / editor
+        store(agent, profile, f'{editor} 应用数据')
+        store(agent, profile / 'ModularData', f'{editor} 会话与快照')
+    for name in _TRAE_HOME_NAMES:
+        store(agent, metadata.home / name, 'TRAE 扩展与用户配置')
+    _editor_workspaces(metadata, store, add, agent, _TRAE_EDITORS)
 
 
 def _roo_code(metadata, store, add):
@@ -239,4 +267,4 @@ def _kiro_sessions(metadata, root, store, add):
                 add(workspace, 'Kiro')
 
 
-ADAPTERS = (_copilot_cli, _copilot_vscode, _windsurf, _roo_code, _kiro_kas)
+ADAPTERS = (_copilot_cli, _copilot_vscode, _windsurf_workspaces, _roo_code, _kiro_kas, _trae)
