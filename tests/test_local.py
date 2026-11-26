@@ -323,6 +323,38 @@ class LocalInventoryTests(unittest.TestCase):
                                action='quarantine')
             self.assertEqual([row['status'] for row in result['last_action']['items']], ['skipped', 'skipped'])
 
+    def test_crush_unregistered_project_and_manual_cleanup_protection(self):
+        project = self.write('Projects/Crush Film/source.ts').parent
+        data = project / '.crush'
+        data.mkdir()
+        database = data / 'crush.db'
+        with closing(sqlite3.connect(database)) as db:
+            db.execute('CREATE TABLE sessions (id TEXT PRIMARY KEY)')
+            db.commit()
+        wal = self.write(data / 'crush.db-wal', b'opaque sidecar')
+        logs = self.write(data / 'logs/crush.log.1', b'old log')
+        config = self.write(project / '.crushrc', b'exit 99')
+        fake = self.write('Projects/Impostor/.crush/crush.db', b'not SQLite')
+        linked = self.home / 'Projects/Link/.crush/crush.db'
+        linked.parent.mkdir(parents=True)
+        linked.symlink_to(database)
+        originals = {path: path.read_bytes() for path in (database, wal, logs, config)}
+
+        manual = self.call('scan', roots=[str(project)], deep=True)
+        files = {row['path']: row for row in manual['files']}
+        self.assertTrue(all(files[str(path)]['decision'] == 'keep' for path in originals))
+        automatic = self.call('scan_local', startup=True)
+        self.assertEqual(automatic['projects'].get(str(project)), ['Crush'])
+        self.assertNotIn(str(fake.parents[1]), automatic['projects'])
+        self.assertNotIn(str(linked.parents[1]), automatic['projects'])
+        agent = next(row for row in automatic['agent_inventory'] if row['name'] == 'Crush')
+        self.assertEqual(agent['kind'], 'cli')
+        self.assertGreater(agent['bytes'], 0)
+        self.assertEqual({store['path'] for store in agent['stores']}, {str(data), str(config)})
+        result = self.call('run', paths=list(map(str, originals)), scan_id=automatic['scan_id'], action='quarantine')
+        self.assertEqual([row['status'] for row in result['last_action']['items']], ['skipped'] * len(originals))
+        self.assertEqual({path: path.read_bytes() for path in originals}, originals)
+
     def test_kilo_extension_and_custom_runtime_share_one_family_and_preserve_wal(self):
         local = self.write('Projects/Kilo Film/local.ts').parent
         pending = self.write('Projects/Pending/src.ts').parent

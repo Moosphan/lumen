@@ -15,7 +15,7 @@ from urllib.parse import unquote, urljoin, urlsplit
 from xml.parsers.expat import ExpatError
 from xml.etree.ElementTree import ParseError
 
-from . import agent_ide, agent_local_tools, aider, amp, chromium_cache, integrations, kiro_cli, trae_cli
+from . import agent_ide, agent_local_tools, aider, amp, chromium_cache, crush, integrations, kiro_cli, trae_cli
 
 
 MODELS = {'.gguf', '.safetensors', '.ckpt', '.onnx', '.pt', '.pth', '.ggml'}
@@ -402,7 +402,8 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
                       or '/.trae-cn/' in folded_path) and agent_ide.is_trae_user_data(p)
                      or trae_cli.is_legacy_session_data(folded_path)
                      or trae_cli.protected_artifact(p, trae_cli_home))
-        if (aider_data or amp_data or browser_code or conductor_data or kiro_data or trae_data or untitled_workspace
+        crush_data = 'crush' in folded_path and crush.protected_artifact(p)
+        if (aider_data or amp_data or browser_code or conductor_data or kiro_data or trae_data or crush_data or untitled_workspace
                 or (s.st_dev, s.st_ino) in metadata_only_file_ids
                 or metadata_roots and _under(p, metadata_roots)):
             metadata_files.add(p)
@@ -425,7 +426,7 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
             parts = p.parts
             version = parts.index('snapshots') + 1 if 'snapshots' in parts else len(parts)
             files[p]['model_version'] = parts[version] if version < len(parts)-1 else ''
-        elif (owner_agent or amp_data or conductor_data or kiro_data or trae_data or untitled_workspace
+        elif (owner_agent or amp_data or conductor_data or kiro_data or trae_data or crush_data or untitled_workspace
               or p.suffix.lower() in ('.sqlite', '.sqlite3', '.db', '.plist', '.keychain-db', '.code-workspace')
               or '.git' in p.parts):
             protect(p, '配置、会话或数据库需要保留')

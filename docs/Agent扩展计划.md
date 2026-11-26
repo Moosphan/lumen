@@ -111,6 +111,8 @@ TRAE CLI 2.0 在工作区单列，工具家族与 IDE 合计。扫描默认 `~/.
 
 接入 Kilo Code 后累计覆盖 22 个工具家族。从 v7.8.32 格式的本地 SQLite 主库读取工程根、登记目录、工作树及未关联远程工作区的无 Git 会话。CLI 与 VS Code／Insiders 扩展单列，共享运行时计入 CLI。支持默认 XDG 数据目录及扫描范围内的 `KILO_DB` 覆盖。配置、运行状态、扩展数据、会话库及附属文件按保留盘点。待写入主库的 WAL 会话、其他通道的自动发现、旧扩展格式和云端会话留待验证。 [本地会话存储](https://kilo.ai/docs/code-with-ai/agents/session-history) · [v7.8.32 项目表](https://github.com/Kilo-Org/kilocode/blob/v7.8.32/packages/core/src/project/sql.ts) · [工单 #40](https://github.com/Moosphan/lumen/issues/40)
 
+接入 Charm Crush 后累计覆盖 23 个工具家族。从 v0.102.0 的全局工程登记识别存在的本机目录，受支持的 XDG 和自定义根沿用扫描授权。未登记工程可从默认位置的 SQLite 文件头识别。标准工程数据目录及自定义目录中的已知数据库、附属文件和配置按保留盘点。配置脚本仅统计占用，实际客户端、非标准日志归属和云端会话仍待验证。 [工程登记](https://github.com/charmbracelet/crush/blob/v0.102.0/internal/projects/projects.go) · [数据库位置](https://github.com/charmbracelet/crush/blob/v0.102.0/internal/db/connect.go) · [工单 #41](https://github.com/Moosphan/lumen/issues/41)
+
 ## 功能和验收清单
 
 | 编号 | 交付 | 依赖 | 验收 |

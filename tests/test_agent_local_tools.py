@@ -25,6 +25,7 @@ class LocalAgentToolTests(unittest.TestCase):
             'GOOSE_PATH_ROOT', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_CACHE_HOME',
             'CONTINUE_GLOBAL_DIR', 'DSH_HOME', 'PI_CODING_AGENT_DIR', 'PI_CODING_AGENT_SESSION_DIR',
             'KIRO_HOME', 'TRAE_HOME', 'TRAECLI_HOME', 'TRAEX_HOME',
+            'CRUSH_GLOBAL_DATA', 'CRUSH_GLOBAL_CONFIG',
         )
         env = patch.dict(os.environ, dict.fromkeys(keys, ''))
         env.start()
@@ -40,6 +41,46 @@ class LocalAgentToolTests(unittest.TestCase):
         from engine.lumen import agent_local_tools
 
         return discover(self.home, True, adapters=agent_local_tools.ADAPTERS, **options)
+
+    def test_crush_registry_revalidates_projects_and_limits_custom_store_ownership(self):
+        self.project.mkdir(parents=True)
+        custom = self.home / 'Shared Data'
+        database = self.write(custom / 'crush.db', b'opaque existing data')
+        journal = self.write(custom / 'crush.db-wal', b'opaque WAL')
+        unrelated = self.write(custom / 'delivery.mov', b'project-owned asset')
+        stale = self.home / 'Not Present'
+        alias = self.home / 'Workspace Link'
+        alias.symlink_to(self.project, target_is_directory=True)
+        registry = self.write('.local/share/crush/projects.json', {'projects': [
+            {'path': str(self.project), 'data_dir': str(custom)},
+            {'path': str(stale), 'data_dir': str(custom)},
+            {'path': str(alias), 'data_dir': str(custom)},
+            {'path': 'ssh://remote/workspace', 'data_dir': str(custom)},
+        ]})
+        cache = {}
+        stores, projects = self.scan(cache=cache)
+        self.assertEqual(projects, {self.project: {'Crush'}})
+        self.assertEqual({path for agent, path, _ in stores if agent == 'Crush'}, {registry.parent, database, journal})
+        self.assertNotIn(str(unrelated), json.dumps(cache))
+        registry.write_text(json.dumps({'projects': []}))
+        self.assertEqual(self.scan(cache=cache)[1], {})
+
+    def test_crush_custom_registry_requires_scope_and_does_not_own_siblings(self):
+        self.project.mkdir(parents=True)
+        external = self.base / 'Custom Crush'
+        registry = self.write(external / 'projects.json', {'projects': [
+            {'path': str(self.project), 'data_dir': str(self.project / '.crush')},
+        ]})
+        lock = self.write(external / 'projects.json.lock', b'lock')
+        config = self.write(external / 'crushrc', b'exit 99')
+        self.write(external / 'ordinary.txt', b'ordinary')
+        cache = {}
+        with patch.dict(os.environ, {'CRUSH_GLOBAL_DATA': str(external), 'CRUSH_GLOBAL_CONFIG': str(external)}):
+            self.assertEqual(self.scan(cache=cache)[1], {})
+            stores, projects = self.scan(cache=cache, authorized=(external,))
+            self.assertEqual(projects, {self.project: {'Crush'}})
+            self.assertEqual({path for agent, path, _ in stores if agent == 'Crush'}, {registry, lock, config})
+            self.assertEqual(config.read_bytes(), b'exit 99')
 
     def trae_rollout(self, bucket, identifier, cwd, *, name_id=None, body=b''):
         file = f'rollout-2026-11-26T11-22-33-{name_id or identifier}.jsonl'

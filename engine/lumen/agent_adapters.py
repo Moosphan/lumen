@@ -570,7 +570,7 @@ def discover(home: Path, quick: bool, *, excluded=(), issues=None, authorized=()
             projects[str(path)].add(agent)
 
     readers = (_cursor, _gemini, _opencode, _kilo, _cline, *agent_ide.ADAPTERS, *agent_local_tools.ADAPTERS,
-               project_discovery.discover_project_markers)
+               project_discovery.discover_workspace_markers)
     for adapter in readers if adapters is None else adapters:
         reader = adapter.__name__
         cached = previous.get(reader)

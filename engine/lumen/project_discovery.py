@@ -1,14 +1,14 @@
 """Share the bounded discovery pass for IDE and CLI project markers."""
 from collections import deque
 
-from . import aider, amp
+from . import aider, amp, crush
 
 
 _SKIP = frozenset({'applications', 'library', 'build', 'dist', 'node_modules', 'target', 'vendor'})
 _HOME_SKIP = frozenset({'downloads', 'movies', 'music', 'pictures', 'public'})
 
 
-def discover_project_markers(metadata, store, add):
+def discover_workspace_markers(metadata, store, add):
     depth_limit = 3 if metadata.quick else 5
     roots = list(dict.fromkeys(metadata.roots))
     scheduled = set(roots[:metadata.limit])
@@ -21,6 +21,7 @@ def discover_project_markers(metadata, store, add):
         if directory != metadata.home:
             aider.discover_project_history(metadata, directory, store, add)
             amp.discover_project_config(metadata, directory, store, add)
+            crush.discover_project_database(metadata, directory, store, add)
         if depth == depth_limit:
             continue
         skip = _SKIP | _HOME_SKIP if directory == metadata.home else _SKIP

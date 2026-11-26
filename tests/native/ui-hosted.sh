@@ -214,6 +214,13 @@ kilo_extension.mkdir(parents=True, exist_ok=True)
 (kilo_extension / "package.json").write_text(json.dumps({
     "publisher": "kilocode", "name": "kilo-code", "version": "7.8.32",
 }))
+crush_project = home / "Documents/Crush Project"
+crush_database = crush_project / ".crush/crush.db"
+crush_database.parent.mkdir(parents=True)
+with closing(sqlite3.connect(crush_database)) as db:
+    db.execute("CREATE TABLE sessions (id TEXT PRIMARY KEY)")
+    db.commit()
+(crush_project / "source.ts").write_text("/* synthetic project */")
 trae_cli = home / ".trae/cli"
 for index, (relative, workspace) in enumerate([
     ("sessions/2026/11/26", aider_project), ("archived_sessions", continue_project),
