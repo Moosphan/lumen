@@ -3,6 +3,7 @@ import hashlib
 import os
 import plistlib
 import struct
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -47,6 +48,53 @@ class LocalInventoryTests(unittest.TestCase):
         self.assertEqual(report["projects"][str(root)], ["Codex"])
         self.assertEqual(report["projects"][str(self.home / "Documents/Codex/2026-11-24/new-project")], ["Codex"])
         self.assertEqual(sum(r["bytes"] for r in report["categories"]), report["indexed_bytes"])
+
+    def test_conductor_attributes_a_real_git_worktree_and_keeps_chat_and_handoff(self):
+        primary = self.write('Projects/cut/source.txt', b'production source').parent
+        workspace = self.home / 'conductor/workspaces/cut/剪辑'
+        workspace.parent.mkdir(parents=True)
+        env = dict(PATH=os.defpath, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+
+        def git(*args):
+            subprocess.run(['/usr/bin/git', '-c', 'core.hooksPath=/dev/null', '-C', str(primary), *args],
+                           env=env, capture_output=True, check=True)
+
+        git('init', '-q')
+        git('add', 'source.txt')
+        git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'fixture')
+        git('worktree', 'add', '-q', '--detach', str(workspace))
+        tracked = workspace / 'source.txt'
+        notes = self.write(workspace / '.context/notes.md', b'private project handoff')
+        generated = self.write(workspace / 'build/preview.mov', b'preview')
+        chat = self.write('Library/Application Support/com.conductor.app/chats.sqlite', b'private local conversation')
+        self.write('Applications/Conductor.app/Contents/Info.plist', plistlib.dumps({
+            'CFBundleIdentifier': 'com.conductor.app', 'CFBundleShortVersionString': '0.99.1',
+        }))
+        self.write('.codex/sessions/worktree.jsonl', json.dumps({
+            'type': 'session_meta', 'payload': {'cwd': str(workspace)},
+        }).encode())
+
+        manual = self.call('scan', roots=[str(notes.parent), str(chat.parent)], deep=False)
+        self.assertEqual({row['path']: row['decision'] for row in manual['files']},
+                         {str(notes): 'keep', str(chat): 'keep'})
+        self.call('settings', roots=[])
+
+        report = self.call('scan_local', startup=True)
+        self.assertEqual(report['projects'].get(str(workspace)), ['Codex', 'Conductor'])
+        self.assertNotIn(str(primary), report['projects'])
+        item = next(row for row in report['agent_inventory'] if row['name'] == 'Conductor')
+        self.assertEqual(item['kind'], 'workspace-manager')
+        self.assertTrue(item['installed'])
+        self.assertGreater(item['bytes'], 0)
+        rows = {row['path']: row for row in report['files']}
+        self.assertEqual(rows[str(notes)]['decision'], 'keep')
+        self.assertEqual(rows[str(chat)]['decision'], 'keep')
+        self.assertEqual(rows[str(tracked)]['decision'], 'defer')
+        self.assertEqual(rows[str(generated)]['decision'], 'defer')
+        protected = [notes, chat, tracked, generated]
+        result = self.call('run', paths=list(map(str, protected)), scan_id=report['scan_id'], action='quarantine')
+        self.assertEqual([row['status'] for row in result['last_action']['items']], ['skipped'] * len(protected))
+        self.assertTrue(all(path.is_file() for path in protected))
 
     def test_aider_discovers_local_project_and_protects_only_recognized_aider_data(self):
         header = b"\n# aider chat started at 2026-11-25 11:21:05\n\n"

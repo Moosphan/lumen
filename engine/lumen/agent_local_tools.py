@@ -3,6 +3,7 @@ import json
 import os
 import re
 import sqlite3
+from itertools import islice
 
 from . import deepseek_sessions
 from .integrations import recorded_path
@@ -475,4 +476,46 @@ def _pi(metadata, store, add):
                     add(str(path), agent)
 
 
-ADAPTERS = (_claude_desktop, _openclaw, _qwen_code, _goose, _continue, _deepseek_harness, _deepseek_headless, _pi)
+def _conductor(metadata, store, add):
+    # https://www.conductor.build/docs/concepts/git-worktrees
+    # https://www.conductor.build/docs/reference/privacy
+    agent = 'Conductor'
+    store(agent, metadata.home / 'Library/Application Support/com.conductor.app', 'Conductor 会话和应用数据')
+    root = metadata.home / 'conductor/workspaces'
+    workspaces = (workspace for repo in metadata.children(root, directories=True)
+                  for workspace in metadata.children(repo, directories=True))
+    for position, workspace in enumerate(islice(workspaces, metadata.limit + 1)):
+        if position == metadata.limit:
+            metadata.issue(root, 'Conductor 工作区数量超过本次识别上限')
+            break
+        if _linked_worktree(metadata, workspace):
+            add(str(workspace), agent)
+            store(agent, workspace / '.context', 'Conductor 工作区附件和交接资料')
+
+
+def _linked_worktree(metadata, workspace):
+    # Read only the checkout marker. The linked Git directory may lie outside the scan scope.
+    marker = metadata.read(workspace / '.git', 8192, gitfile=True)
+    if marker is None or not marker.startswith(b'gitdir: '):
+        return False
+    lines = marker.splitlines()
+    if len(lines) != 1 or len(lines[0]) == len(b'gitdir: '):
+        return False
+    target = recorded_path(os.path.normpath(workspace / os.fsdecode(lines[0][len(b'gitdir: '):])))
+    return target is not None and target.parent.name == 'worktrees'
+
+
+def conductor_user_data(path):
+    """Protect known user-data paths even in a manual-only scan."""
+    parts = tuple(part.casefold() for part in path.parts)
+    for index, part in enumerate(parts):
+        if part == 'library' and parts[index + 1:index + 3] == ('application support', 'com.conductor.app'):
+            return True
+        if (parts[index:index + 2] == ('conductor', 'workspaces')
+                and parts[index + 4:index + 5] == ('.context',)):
+            return True
+    return False
+
+
+ADAPTERS = (_claude_desktop, _openclaw, _qwen_code, _goose, _continue, _deepseek_harness, _deepseek_headless,
+            _pi, _conductor)

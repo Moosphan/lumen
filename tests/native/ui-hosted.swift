@@ -228,7 +228,7 @@ private func fallbackReport(_ pid: pid_t) {
                       $0.key.hasSuffix("/Studio Project") && $0.value == ["Codex", "Windsurf"]
                   }),
                   projects.contains(where: {
-                      $0.key.hasSuffix("/Gemini Project") && $0.value == ["Gemini CLI", "Windsurf"]
+                      $0.key.hasSuffix("/Gemini Project") && $0.value == ["Conductor", "Gemini CLI", "Windsurf"]
                   }),
                   projects.values.contains(["Continue"]),
                   projects.values.contains(["Aider"]),
@@ -243,6 +243,10 @@ private func fallbackReport(_ pid: pid_t) {
                       (row["stores"] as? [[String: Any]])?.contains(where: { ($0["count"] as? Int ?? 0) > 0 }) == true
                   }),
                   agents.contains(where: { $0["name"] as? String == "Kiro" }),
+                  agents.contains(where: {
+                      $0["name"] as? String == "Conductor" && $0["kind"] as? String == "workspace-manager"
+                          && ($0["bytes"] as? Int ?? 0) > 0
+                  }),
                   agents.contains(where: {
                       $0["name"] as? String == "DeepSeek Harness" && $0["installed"] as? Bool == true
                           && ($0["bytes"] as? Int ?? 0) > 0
@@ -260,7 +264,7 @@ private func fallbackReport(_ pid: pid_t) {
                   (data["roots"] as? [String])?.isEmpty == true else { return nil as Bool? }
             return true
         }
-        print("Packaged app automatically inventoried an installed app and projects from Codex, Gemini CLI, Continue, Aider, DeepSeek Harness, Pi, and Windsurf/Devin.")
+        print("Packaged app automatically inventoried local projects, including a worktree shared by Conductor, Gemini CLI, and Windsurf/Devin.")
         guard AXIsProcessTrusted() else {
             fallbackReport(pid)
             return

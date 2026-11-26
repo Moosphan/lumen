@@ -61,9 +61,12 @@ project.mkdir(parents=True)
 (project / "empty-marker").touch()
 (project / "long-shoot-name-with-color-reference-and-export-notes-2026.txt").write_text("Small reference.")
 (project / "render.mov").write_bytes(b"render" * 600_000)
-gemini_project = home / "Projects/Gemini Project"
+gemini_project = home / "conductor/workspaces/lumen/Gemini Project"
 gemini_project.mkdir(parents=True)
 (gemini_project / "scene.txt").write_text("Keep this source.")
+(gemini_project / ".git").write_text(f"gitdir: {home}/Projects/lumen/.git/worktrees/gemini\n")
+(gemini_project / ".context").mkdir()
+(gemini_project / ".context/notes.md").write_text("Keep this worktree handoff.")
 gemini = home / ".gemini"
 gemini.mkdir()
 (gemini / "projects.json").write_text(json.dumps({"projects": {str(gemini_project): "gemini-project"}}))
@@ -131,7 +134,7 @@ windsurf_manifest = home / "Documents/Editing.code-workspace"
 windsurf_manifest.write_text('''{
     // A saved workspace can include projects already associated with other tools.
     "folders": [
-        {"path": "../Projects/Gemini Project"},
+        {"path": "../conductor/workspaces/lumen/Gemini Project"},
     ],
 }''')
 (windsurf_state / "workspace.json").write_text(json.dumps({"workspace": windsurf_manifest.as_uri()}))

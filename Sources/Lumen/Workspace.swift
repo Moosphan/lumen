@@ -253,7 +253,7 @@ struct WorkspaceView: View {
         }.sorted { compare($0.stats, name: $0.id, $1.stats, other: $1.id) }
         return VStack(alignment: .leading, spacing: 8) {
             let types = [("app", "桌面应用"), ("desktop", "桌面 Agent"), ("ide", "IDE"),
-                         ("extension", "编辑器扩展"), ("cli", "CLI")]
+                         ("extension", "编辑器扩展"), ("cli", "CLI"), ("workspace-manager", "工作区管理器")]
             let counts = Dictionary(grouping: agents, by: { $0.raw.string("kind") }).mapValues(\.count)
             let labels = types.compactMap { key, label in counts[key].map { "\(label) \($0)" } }
             if !labels.isEmpty {

@@ -65,17 +65,18 @@ class _Metadata:
     def issue(self, path, message):
         self.issues.add(f'{path} · {message}')
 
-    def allowed(self, path):
+    def allowed(self, path, *, gitfile=False):
+        parts = path.parts[:-1] if gitfile and path.name == '.git' else path.parts
         return (any(_inside(path, root) for root in self.roots)
                 and not any(_inside(path, root) for root in self.excluded)
-                and not self.hidden.intersection(path.parts))
+                and not self.hidden.intersection(parts))
 
     def failed(self, path, error):
         if error.errno not in (errno.ENOENT, errno.ENOTDIR, errno.ELOOP):
             self.issue(path, '无法读取 Agent 元数据位置')
 
-    def watch(self, path):
-        if self.watched is not None and len(self.watched) <= 4096 and self.allowed(path):
+    def watch(self, path, *, gitfile=False):
+        if self.watched is not None and len(self.watched) <= 4096 and self.allowed(path, gitfile=gitfile):
             key = str(path)
             if key not in self.watched:
                 self.watched[key] = _stamp(path)
@@ -113,11 +114,11 @@ class _Metadata:
             return []
 
     @contextmanager
-    def open(self, path):
-        if not self.allowed(path):
+    def open(self, path, *, gitfile=False):
+        if not self.allowed(path, gitfile=gitfile):
             yield None
             return
-        self.watch(path)
+        self.watch(path, gitfile=gitfile)
         with _directory(path.parent) as fd:
             info = os.stat(path.name, dir_fd=fd, follow_symlinks=False)
             if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
@@ -129,9 +130,9 @@ class _Metadata:
                 yield stream if (stat.S_ISREG(current.st_mode) and current.st_nlink == 1
                                  and (info.st_dev, info.st_ino) == (current.st_dev, current.st_ino)) else None
 
-    def read(self, path, limit):
+    def read(self, path, limit, *, gitfile=False):
         try:
-            with self.open(path) as stream:
+            with self.open(path, gitfile=gitfile) as stream:
                 if stream is None:
                     return None
                 info = os.fstat(stream.fileno())
@@ -430,7 +431,7 @@ def _current(metadata, stamps, variables):
         return False
     for value, stamp in stamps.items():
         path = recorded_path(value)
-        if (path is None or not metadata.allowed(path) or _stamp(path) != stamp
+        if (path is None or not metadata.allowed(path, gitfile=path.name == '.git') or _stamp(path) != stamp
                 or (len(stamp) == 1 and stamp[0] not in (errno.ENOENT, errno.ENOTDIR, errno.ELOOP))):
             return False
     return True

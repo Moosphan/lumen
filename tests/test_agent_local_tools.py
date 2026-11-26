@@ -39,6 +39,37 @@ class LocalAgentToolTests(unittest.TestCase):
 
         return discover(self.home, True, adapters=agent_local_tools.ADAPTERS, **options)
 
+    def test_conductor_requires_a_linked_git_worktree_marker_and_refreshes_edits(self):
+        root = 'conductor/workspaces/film'
+        workspace = self.home / root / '剪辑'
+        metadata = self.home / 'Projects/main/.git/worktrees/剪辑'
+        marker = self.write(workspace / '.git', f'gitdir: {metadata}\n'.encode())
+        notes = self.write(workspace / '.context/plan.md', b'private context')
+        chat = self.write('Library/Application Support/com.conductor.app/chats.sqlite', b'private chat')
+        self.write(f'{root}/ordinary/readme.txt', b'not a worktree')
+        self.write(f'{root}/clone/.git/config', b'ordinary Git repository')
+        self.write(f'{root}/submodule/.git', b'gitdir: ../../.git/modules/content\n')
+        self.write(f'{root}/wrong-location/nested/.git', f'gitdir: {metadata}\n'.encode())
+        self.write('Projects/unrelated/.git', f'gitdir: {metadata}\n'.encode())
+        alias = self.home / root / 'alias'
+        alias.mkdir()
+        (alias / '.git').symlink_to(marker)
+        (alias.parent / 'linked-workspace').symlink_to(workspace, target_is_directory=True)
+
+        cache = {}
+        stores, projects = self.scan(cache=cache)
+        self.assertEqual(projects, {workspace: {'Conductor'}})
+        self.assertEqual({path for agent, path, _ in stores if agent == 'Conductor'}, {notes.parent, chat.parent})
+        stamps = cache['readers']['_conductor']['stamps']
+        self.assertIn(str(marker), stamps)
+        self.assertNotIn(str(metadata), stamps)
+        self.assertNotIn('private chat', json.dumps(cache))
+        marker.write_bytes(b'gitdir: /some/where/invalid\n')
+        self.assertEqual(self.scan(cache=cache)[1], {})
+        marker.write_bytes(f'gitdir: {metadata}\n'.encode())
+        self.assertEqual(self.scan(cache=cache)[1], {workspace: {'Conductor'}})
+        self.assertEqual(self.scan(cache=cache, excluded=(marker,))[1], {})
+
     def test_deepseek_reads_only_registered_stable_workspaces_and_revalidates_changes(self):
         active = '49fb9c05-a1c4-419e-9254-a6379f88240a'
         changed = '847b2a80-72e5-4af3-a44c-f4a7e5587383'

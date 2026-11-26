@@ -46,7 +46,7 @@
 
 - **Claude Desktop/Cowork、GitHub Copilot CLI/VS Code、Windsurf、Roo Code**。按产品和版本核对配置、历史、缓存与实际工作区，区分本地运行、远程工作区和同步数据。Claude Desktop/Cowork 单列运行环境和会话数据，Copilot 分测 CLI 与编辑器集成。[GitHub Copilot Hooks](https://docs.github.com/en/copilot/concepts/customizations/hooks)
 - **OpenClaw、Kiro、Qwen Code、goose**。优先识别项目、会话存储和工具数据。OpenClaw 按 Agent 和会话隔离归属，用户调度的后台任务与本次任务单独标记。[OpenClaw 会话文档](https://docs.openclaw.ai/concepts/session)
-- **候补队列**。Trae、Amp、Kiro CLI、Conductor、Aider，按用户需求和元数据可靠性排序。Kiro、Kiro CLI 如共享产品家族，在覆盖统计中合并，在版本矩阵中单列。
+- **候补队列**。Trae、Amp、Kiro CLI，按用户需求和元数据可靠性排序。Kiro、Kiro CLI 如共享产品家族，在覆盖统计中合并，在版本矩阵中单列。
 
 #### 第二批开发分支覆盖
 
@@ -83,6 +83,8 @@ DeepSeek Harness 的会话、配置、插件与凭证按保留盘点。Pi 只解
 隔离验证使用 DeepSeek JSON 存储组件 `0.0.1-rc.1` 和 Pi `1.6.1` 的会话写入组件创建真实格式的样本，确认同一工作目录可归属两者，索引和会话文件均保留。
 
 独立 DeepSeek CLI 会话按最高物理世代核验 JSONL 首行或 Zstandard 首帧。校验会话标识和目录布局后使用会话头中的 `cwd`。未知版本、混合编码、重复会话标识只保留盘点。macOS 运行包自带首帧解码库。[会话存储格式](https://github.com/deepseek-ai/deepseek-harness/blob/4b399c39a6d1479cd84ca591b4d7c88e24d38a96/packages/session/session-persistence-jsonl/README.md) · [工单 #28](https://github.com/Moosphan/lumen/issues/28)
+
+接入 Conductor 后累计覆盖 19 个工具家族。默认目录中的工作树通过本地 `.git` 文件格式识别，可与 Codex 等共同归属同一工程。识别不跟随 Git 指针访问外部索引。应用会话数据和工作树的 `.context` 附件按保留盘点，Git 索引未核对的工作树文件留待核对。真实客户端、旧版嵌套工作区、自定义目录和云端工作区仍待验证。 [官方工作区布局](https://www.conductor.build/docs/concepts/git-worktrees) · [本地会话路径](https://www.conductor.build/docs/reference/privacy) · [工单 #30](https://github.com/Moosphan/lumen/issues/30)
 
 ## 功能和验收清单
 

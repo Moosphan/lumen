@@ -15,7 +15,7 @@ from urllib.parse import unquote, urljoin, urlsplit
 from xml.parsers.expat import ExpatError
 from xml.etree.ElementTree import ParseError
 
-from . import agent_ide, aider, chromium_cache, integrations
+from . import agent_ide, agent_local_tools, aider, chromium_cache, integrations
 
 
 MODELS = {'.gguf', '.safetensors', '.ckpt', '.onnx', '.pt', '.pth', '.ggml'}
@@ -392,7 +392,10 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
         browser_code = (chromium_cache.identify(p, browser_cache_home)
                         if browser_cache_home is not None and '/code cache' in folded_path else None)
         untitled_workspace = agent_ide.is_windsurf_untitled_workspace(p)
-        if (aider_data or browser_code or untitled_workspace or (s.st_dev, s.st_ino) in metadata_only_file_ids
+        conductor_data = (('/conductor/workspaces/' in folded_path or '/com.conductor.app/' in folded_path)
+                          and agent_local_tools.conductor_user_data(p))
+        if (aider_data or browser_code or conductor_data or untitled_workspace
+                or (s.st_dev, s.st_ino) in metadata_only_file_ids
                 or metadata_roots and _under(p, metadata_roots)):
             metadata_files.add(p)
         store = store_for(p.parent) if agent_stores else None
@@ -414,7 +417,7 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
             parts = p.parts
             version = parts.index('snapshots') + 1 if 'snapshots' in parts else len(parts)
             files[p]['model_version'] = parts[version] if version < len(parts)-1 else ''
-        elif (owner_agent or untitled_workspace
+        elif (owner_agent or conductor_data or untitled_workspace
               or p.suffix.lower() in ('.sqlite', '.sqlite3', '.db', '.plist', '.keychain-db', '.code-workspace')
               or '.git' in p.parts):
             protect(p, '配置、会话或数据库需要保留')
@@ -557,8 +560,8 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
                     protect(tracked, 'Git 已跟踪')
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
             issue(repo, f'Git 工作区读取不完整：{exc}')
-            for p in files:
-                if repo in p.parents:
+            for p, row in files.items():
+                if repo in p.parents and row['decision'] != 'keep':
                     defer(p, 'Git 索引无法核对')
     # VS Code keeps its current session and nine previous sessions:
     # https://github.com/microsoft/vscode/blob/1.95.3/src/vs/code/electron-utility/sharedProcess/contrib/logsDataCleaner.ts#L27-L40
