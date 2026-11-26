@@ -15,7 +15,7 @@ from urllib.parse import unquote, urljoin, urlsplit
 from xml.parsers.expat import ExpatError
 from xml.etree.ElementTree import ParseError
 
-from . import agent_ide, agent_local_tools, aider, amp, chromium_cache, integrations, kiro_cli
+from . import agent_ide, agent_local_tools, aider, amp, chromium_cache, integrations, kiro_cli, trae_cli
 
 
 MODELS = {'.gguf', '.safetensors', '.ckpt', '.onnx', '.pt', '.pth', '.ggml'}
@@ -349,7 +349,8 @@ def _space(files):
 
 
 def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=None, installed=None,
-         agent_stores=None, metadata_only_roots=(), metadata_only_file_ids=frozenset(), browser_cache_home=None):
+         agent_stores=None, metadata_only_roots=(), metadata_only_file_ids=frozenset(), browser_cache_home=None,
+         trae_cli_home=None):
     root_set, exclusions, kept = _paths(roots), _paths(exclude), _paths(keep)
     metadata_roots = _paths(metadata_only_roots)
     metadata_files = set()
@@ -398,7 +399,8 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
                           and agent_local_tools.conductor_user_data(p))
         kiro_data = (('/.kiro/' in folded_path or '/kiro-cli/' in folded_path) and kiro_cli.protected_artifact(p))
         trae_data = (('/application support/trae' in folded_path or '/.trae/' in folded_path
-                      or '/.trae-cn/' in folded_path) and agent_ide.is_trae_user_data(p))
+                      or '/.trae-cn/' in folded_path) and agent_ide.is_trae_user_data(p)
+                     or trae_cli.protected_artifact(p, trae_cli_home))
         if (aider_data or amp_data or browser_code or conductor_data or kiro_data or trae_data or untitled_workspace
                 or (s.st_dev, s.st_ino) in metadata_only_file_ids
                 or metadata_roots and _under(p, metadata_roots)):
@@ -479,7 +481,8 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
                     apps[directory] = dict(name=directory.stem, path=str(directory), bundle_id='', version='')
                 if (('.git' in names or '.git' in leaves)
                         and not (agent_stores and store_for(directory)) and not _under(directory, metadata_roots)
-                        and not agent_ide.is_trae_user_data(directory)):
+                        and not agent_ide.is_trae_user_data(directory)
+                        and not trae_cli.protected_artifact(directory, trae_cli_home)):
                     repositories.add(directory)
                 for name in sorted(names + leaves):
                     p = directory / name

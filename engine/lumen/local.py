@@ -39,11 +39,11 @@ AGENT_KINDS = {
     'GitHub Copilot CLI': 'cli', 'OpenClaw': 'cli', 'Qwen Code': 'cli', 'goose': 'cli',
     'DeepSeek Harness': 'desktop', 'Pi': 'cli',
     'Conductor': 'workspace-manager',
-    'Amp': 'cli', 'Kiro CLI': 'cli',
+    'Amp': 'cli', 'Kiro CLI': 'cli', 'Trae CLI': 'cli',
 }
 AGENT_FAMILIES = {
     'GitHub Copilot CLI': 'GitHub Copilot', 'GitHub Copilot VS Code': 'GitHub Copilot',
-    'Kiro CLI': 'Kiro',
+    'Kiro CLI': 'Kiro', 'Trae CLI': 'Trae',
 }
 HIDDEN_SCOPE_NAMES = {'.git', '.Trash', '.Trashes', f'.lumen-vault-{os.getuid()}'}
 

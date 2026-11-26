@@ -201,6 +201,36 @@ class LocalInventoryTests(unittest.TestCase):
         result = self.call('run', paths=list(map(str, protected)), scan_id=report['scan_id'], action='quarantine')
         self.assertEqual([row['status'] for row in result['last_action']['items']], ['skipped'] * len(protected))
 
+    def test_trae_cli_shares_ide_family_and_preserves_custom_history_and_state(self):
+        project = self.write('Projects/Trae Film/source.ts').parent
+        self.write('Library/Application Support/Trae/User/workspaceStorage/fixture/workspace.json',
+                   json.dumps({'folder': project.as_uri()}).encode())
+        custom = self.base / 'TRAE Private State'
+        session_id = '019fbcca-9fd4-7d20-83dc-0762b2f839b0'
+        rollout = self.write(custom / f'sessions/2026/11/26/rollout-2026-11-26T11-22-33-{session_id}.jsonl',
+                             json.dumps({'type': 'session_meta', 'payload': {
+                                 'id': session_id, 'cwd': str(project),
+                             }}).encode() + b'\nprivate session body')
+        history = self.write(custom / 'history.jsonl', b'private prompts')
+        credential = self.write(custom / 'auth.json', b'private account')
+        wal = self.write(custom / 'thread_history_1.sqlite-wal', b'private state')
+        different = self.write(custom / 'other.tmp', b'unrelated')
+        protected = [rollout, history, credential, wal]
+        with patch.dict(os.environ, {'TRAECLI_HOME': str(custom), 'TRAE_HOME': '', 'TRAEX_HOME': ''}):
+            manual = self.call('scan', roots=[str(custom)], deep=True)
+            decisions = {row['path']: row['decision'] for row in manual['files']}
+            self.assertEqual([decisions[str(path)] for path in protected], ['keep'] * len(protected))
+            self.assertEqual(decisions[str(different)], 'review')
+            report = self.call('scan_local', startup=True)
+            self.assertEqual(report['projects'][str(project)], ['Trae', 'Trae CLI'])
+            agents = {row['name']: row for row in report['agent_inventory']}
+            self.assertEqual(agents['Trae CLI']['family'], agents['Trae']['family'])
+            self.assertEqual(agents['Trae CLI']['kind'], 'cli')
+            self.assertGreater(agents['Trae CLI']['bytes'], 0)
+            result = self.call('run', paths=list(map(str, protected)), scan_id=report['scan_id'], action='quarantine')
+        self.assertEqual([row['status'] for row in result['last_action']['items']], ['skipped'] * len(protected))
+        self.assertTrue(all(path.is_file() for path in protected))
+
     def test_aider_manual_scope_and_discovery_cache_revalidate_marker(self):
         project = self.manual / "worktree"
         project.mkdir()

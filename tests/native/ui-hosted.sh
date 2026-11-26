@@ -172,6 +172,17 @@ trae_workspace.mkdir(parents=True)
 trae_snapshot = trae_data / "ModularData/ai-agent/snapshot/editor-changes.tmp"
 trae_snapshot.parent.mkdir(parents=True)
 trae_snapshot.write_text("Keep the editor snapshot.")
+trae_cli = home / ".trae/cli"
+for index, (relative, workspace) in enumerate([
+    ("sessions/2026/11/26", aider_project), ("archived_sessions", continue_project),
+]):
+    session_id = f"019fbcca-9fd4-7d20-83dc-0762b2f839b{index}"
+    rollout = trae_cli / relative / f"rollout-2026-11-26T11-22-33-{session_id}.jsonl"
+    rollout.parent.mkdir(parents=True)
+    rollout.write_text(json.dumps({"type": "session_meta", "payload": {
+        "id": session_id, "cwd": str(workspace),
+    }}) + "\n")
+(trae_cli / "history.jsonl").write_text("Keep the CLI history.")
 models = home / ".lmstudio/models/Lumen/Sample Weight"
 models.mkdir(parents=True)
 (models / "sample-Q4_K_M.gguf").write_bytes(b"synthetic model metadata")

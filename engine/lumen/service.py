@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from . import actions, agent_events, app_cleanup, developer_caches, docker_cache, integrations, local, macmanage
-from . import chromium_cache, kiro_cli, mcp_review, model_inventory, model_recovery, model_runtime, space_tree, task_closeout
+from . import chromium_cache, kiro_cli, mcp_review, model_inventory, model_recovery, model_runtime, space_tree, task_closeout, trae_cli
 from .fixture import create_fixture
 from .scan import SYSTEM_ROOTS, _under, scan
 
@@ -310,7 +310,8 @@ def inventory(config, state, incremental=False, full=False, quick=False):
                                                     for path in (row["path"], *row["aliases"])],
                   metadata_only_file_ids={tuple(row["identity"]) for row in cache_locations
                                           if not row["directory"]},
-                  browser_cache_home=Path(config["_local_home"]) if config.get("_local_home") else None)
+                  browser_cache_home=Path(config["_local_home"]) if config.get("_local_home") else None,
+                  trae_cli_home=trae_cli.custom_home(Path(config["_local_home"])) if config.get("_local_home") else None)
     report["issues"].extend(sorted(discovery_issues))
     report["local_locations"] = locations
     if installed is not None:

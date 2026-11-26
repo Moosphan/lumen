@@ -23,7 +23,7 @@ class LocalAgentToolTests(unittest.TestCase):
             'OPENCLAW_WORKSPACE_DIR', 'OPENCLAW_PROFILE', 'QWEN_HOME', 'QWEN_RUNTIME_DIR',
             'GOOSE_PATH_ROOT', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_CACHE_HOME',
             'CONTINUE_GLOBAL_DIR', 'DSH_HOME', 'PI_CODING_AGENT_DIR', 'PI_CODING_AGENT_SESSION_DIR',
-            'KIRO_HOME',
+            'KIRO_HOME', 'TRAE_HOME', 'TRAECLI_HOME', 'TRAEX_HOME',
         )
         env = patch.dict(os.environ, dict.fromkeys(keys, ''))
         env.start()
@@ -39,6 +39,53 @@ class LocalAgentToolTests(unittest.TestCase):
         from engine.lumen import agent_local_tools
 
         return discover(self.home, True, adapters=agent_local_tools.ADAPTERS, **options)
+
+    def trae_rollout(self, bucket, identifier, cwd, *, name_id=None, body=b''):
+        file = f'rollout-2026-11-26T11-22-33-{name_id or identifier}.jsonl'
+        header = {'type': 'session_meta', 'timestamp': '2026-11-26T03:22:33Z',
+                  'payload': {'id': identifier, 'cwd': str(cwd), 'originator': 'codex-tui'}}
+        return self.write(Path(bucket) / file, json.dumps(header).encode() + b'\n' + body)
+
+    def test_trae_cli_reads_only_the_header_and_checks_session_identity(self):
+        root = self.home / '.trae/cli'
+        live = root / 'sessions/2026/11/26'
+        archive = root / 'archived_sessions'
+        ids = [f'019fbcca-9fd4-7d20-83dc-0762b2f839b{i}' for i in range(8)]
+        body = b'{"type":"turn_context","payload":{"cwd":"/private_body_marker"}}\n'
+        active = self.trae_rollout(live, ids[0], self.project, body=body)
+        old = self.home / 'Archive Project'
+        self.trae_rollout(archive, ids[1], old)
+        self.trae_rollout(live, ids[2], self.home / 'Mismatch', name_id=ids[3])
+        self.trae_rollout(live, ids[4], 'ssh://remote/dir')
+        self.trae_rollout(live, ids[5], self.home / 'Conflict 1')
+        self.trae_rollout(archive, ids[5], self.home / 'Conflict 2')
+        self.trae_rollout(live, ids[6], self.home / 'Symlink').rename(self.base / 'external.jsonl')
+        (live / f'rollout-2026-11-26T11-22-33-{ids[6]}.jsonl').symlink_to(self.base / 'external.jsonl')
+        self.write(archive / f'rollout-2026-11-26T11-22-33-{ids[7]}.jsonl.zst', b'compressed')
+        self.write(root / 'history.jsonl', b'private history marker')
+        issues, cache = set(), {}
+        stores, projects = self.scan(issues=issues, cache=cache)
+        self.assertEqual(projects, {self.project: {'Trae CLI'}, old: {'Trae CLI'}})
+        self.assertEqual({path for agent, path, _ in stores if agent == 'Trae CLI'},
+                         {root, live.parents[2], archive})
+        self.assertTrue(any('压缩会话' in issue for issue in issues))
+        self.assertTrue(any('目录冲突' in issue for issue in issues))
+        self.assertNotIn('private_body_marker', json.dumps(cache))
+        self.assertNotIn('private history marker', json.dumps(cache))
+        active.unlink()
+        self.assertEqual(self.scan(cache=cache)[1], {old: {'Trae CLI'}})
+
+    def test_trae_cli_custom_roots_require_authorization_and_follow_precedence(self):
+        preferred = self.base / 'Preferred State'
+        legacy = self.base / 'Legacy Base'
+        other = self.home / 'Other'
+        self.trae_rollout(preferred / 'archived_sessions', '019fbcca-9fd4-7d20-83dc-0762b2f839b0', self.project)
+        self.trae_rollout(legacy / 'cli/sessions/2026/11/26', '019fbcca-9fd4-7d20-83dc-0762b2f839b1', other)
+        with patch.dict(os.environ, {'TRAECLI_HOME': str(preferred), 'TRAE_HOME': str(legacy)}):
+            self.assertEqual(self.scan()[1], {})
+            self.assertEqual(self.scan(authorized=(preferred, legacy))[1], {self.project: {'Trae CLI'}})
+        with patch.dict(os.environ, {'TRAEX_HOME': str(legacy)}):
+            self.assertEqual(self.scan(authorized=(legacy,))[1], {other: {'Trae CLI'}})
 
     def test_kiro_cli_associates_companions_only_in_authorized_locations(self):
         first = self.write('.kiro/sessions/cli/known.json', {

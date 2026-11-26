@@ -5,7 +5,7 @@ import re
 import sqlite3
 from itertools import islice
 
-from . import amp, deepseek_sessions, kiro_cli
+from . import amp, deepseek_sessions, kiro_cli, trae_cli
 from .integrations import recorded_path
 
 
@@ -518,4 +518,4 @@ def conductor_user_data(path):
 
 
 ADAPTERS = (_claude_desktop, _openclaw, _qwen_code, _goose, _continue, _deepseek_harness, _deepseek_headless,
-            _pi, _conductor, amp.discover_amp, kiro_cli.discover_kiro_cli)
+            _pi, _conductor, amp.discover_amp, kiro_cli.discover_kiro_cli, trae_cli.discover_trae_cli)
