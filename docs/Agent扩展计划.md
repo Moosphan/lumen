@@ -123,6 +123,8 @@ TRAE CLI 2.0 在工作区单列，工具家族与 IDE 合计。扫描默认 `~/.
 
 冷归档按会话根旁的 `archive/sessions` 单独统计。Lumen 在读取上限内检查 `.jsonl.gz` 的开头并识别工作目录和附加目录。同一配置档的同一相对路径同时存在活动会话和归档时，采用活动会话。归档及附件均保留。自定义目录的覆盖范围仍为 `~/.omp` 内，工作树与工程的一一对应仍待验证。 [归档源码](https://github.com/can1357/oh-my-pi/blob/v19.2.1/packages/coding-agent/src/cli/gc-cli.ts) · [工单 #46](https://github.com/Moosphan/lumen/issues/46)
 
+新增 OpenHands 后累计覆盖 28 个工具家族。识别 Agent Canvas v1.46.0 的 macOS 应用包、桌面和 npm 启动器的标准会话，以及 CLI 1.16.0 的标准本机会话。两者按同一家族展示安装、工程和数据占用。校验会话标识后关联本机工作目录，也覆盖 Canvas 默认托管目录。标准会话、托管数据和设置按保留盘点。云端和 Docker 启动器的会话数据不参与本机工程归属，自定义数据根和另外配置的托管工作树暂不自动发现。 [Canvas 启动器](https://github.com/OpenHands/OpenHands/blob/v1.46.0/scripts/dev-safe.mjs) · [会话元数据](https://github.com/OpenHands/software-agent-sdk/blob/v1.64.1/openhands-agent-server/openhands/agent_server/models.py) · [CLI 配置目录](https://github.com/OpenHands/OpenHands-CLI/blob/1.16.0/openhands_cli/locations.py) · [工单 #47](https://github.com/Moosphan/lumen/issues/47)
+
 ## 功能和验收清单
 
 | 编号 | 交付 | 依赖 | 验收 |

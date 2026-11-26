@@ -310,6 +310,28 @@ omp_archive.write_bytes(gzip.compress(encode_json(omp_title) + encode_json({
     "type": "session", "version": 3, "id": omp_archive_id, "timestamp": omp_timestamp,
     "cwd": str(omp_historical),
 }) + b'{"type":"message","synthetic":"archive"}\n' * 20_000, mtime=0))
+openhands_app = home / "Applications/OpenHands Agent Canvas.app/Contents"
+openhands_app.mkdir(parents=True)
+(openhands_app / "Info.plist").write_bytes(plistlib.dumps({
+    "CFBundleIdentifier": "dev.openhands.agent-canvas", "CFBundleName": "OpenHands Agent Canvas",
+}))
+openhands_root = home / ".openhands"
+openhands_id = "0196af9c754f430799ef39aa868a6700"
+openhands_managed = openhands_root / "agent-canvas/workspaces" / openhands_id
+openhands_cli = home / "Documents/OpenHands CLI Project"
+for project in (openhands_managed, openhands_cli):
+    project.mkdir(parents=True)
+    (project / "source.py").write_text("# synthetic project")
+openhands_sdk_id = "868ce027-f044-4dbd-b1bd-db264d48a88b"
+for metadata, identity, project in (
+    (f"agent-canvas/dev_conversations/{openhands_id}/meta.json", openhands_id, openhands_managed),
+    (f"conversations/{openhands_sdk_id.replace('-', '')}/base_state.json", openhands_sdk_id, openhands_cli),
+):
+    record = openhands_root / metadata
+    record.parent.mkdir(parents=True)
+    record.write_bytes(encode_json({
+        "id": identity, "workspace": {"kind": "LocalWorkspace", "working_dir": str(project)},
+    }))
 trae_cli = home / ".trae/cli"
 for index, (relative, workspace) in enumerate([
     ("sessions/2026/11/26", aider_project), ("archived_sessions", continue_project),

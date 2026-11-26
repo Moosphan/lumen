@@ -367,6 +367,78 @@ class LocalInventoryTests(unittest.TestCase):
             self.assertEqual([row['status'] for row in action['last_action']['items']], ['skipped'] * len(originals))
             self.assertEqual({path: path.read_bytes() for path in originals}, originals)
 
+    def test_openhands_inventories_native_canvas_and_legacy_cli_without_reusing_remote_paths(self):
+        canvas = self.home / '.openhands/agent-canvas'
+        workspace = self.write('Projects/Canvas project/source.py').parent
+        legacy = self.write('Projects/Legacy project/main.py').parent
+        alternate = self.write('Projects/New canvas project/source.py').parent
+        unrelated = self.write('Projects/Unrelated/source.py').parent
+        sid = '0196af9c754f430799ef39aa868a6700'
+        managed = self.write(canvas / 'workspaces' / sid / 'delivery.zip', b'synthetic project').parent
+
+        def entry(identity, project, *, kind='LocalWorkspace'):
+            return json.dumps({
+                'id': identity, 'workspace': {'kind': kind, 'working_dir': str(project)},
+                'title': 'PRIVATE_OPENHANDS_TITLE',
+            }).encode()
+
+        meta = self.write(canvas / f'dev_conversations/{sid}/meta.json', entry(sid, workspace))
+        event = self.write(meta.parent / 'events/event-00000.json', b'PRIVATE_OPENHANDS_EVENT')
+        managed_id = '0196af9c754f430799ef39aa868a6701'
+        self.write(canvas / f'dev_conversations/{managed_id}/meta.json', entry(managed_id, managed))
+        legacy_id = '868ce027-f044-4dbd-b1bd-db264d48a88b'
+        cli = self.write(f'.openhands/conversations/{legacy_id.replace("-", "")}/base_state.json',
+                         entry(legacy_id, legacy))
+        remote_id = '0196af9c754f430799ef39aa868a6702'
+        self.write(canvas / f'dev_conversations/{remote_id}/meta.json',
+                   entry(remote_id, unrelated, kind='RemoteWorkspace'))
+        invalid = self.write(canvas / 'dev_conversations/0196af9c754f430799ef39aa868a6703/meta.json',
+                             entry(sid, unrelated))
+        docker = self.write(canvas / f'conversations/{sid}/meta.json', entry(sid, unrelated))
+        linked_id = '0196af9c754f430799ef39aa868a6704'
+        linked = self.write(canvas / f'dev_conversations/{linked_id}/meta.json', entry(linked_id, unrelated))
+        linked.symlink_to(linked.rename(self.base / 'linked-meta.json'))
+        oversized_id = '0196af9c754f430799ef39aa868a6705'
+        self.write(canvas / f'dev_conversations/{oversized_id}/meta.json',
+                   entry(oversized_id, unrelated) + b' ' * (128 * 1024))
+        state = self.write('Library/Application Support/OpenHands Agent Canvas/Local State', b'synthetic app data')
+        secrets = self.write('.openhands/secrets.json', b'PRIVATE_OPENHANDS_CREDENTIAL')
+        app = self.write('Applications/OpenHands Agent Canvas.app/Contents/Info.plist', plistlib.dumps({
+            'CFBundleIdentifier': 'dev.openhands.agent-canvas', 'CFBundleName': 'OpenHands Agent Canvas',
+        })).parents[1]
+        originals = {p: p.read_bytes() for p in (event, cli, invalid, docker, state, secrets, managed / 'delivery.zip')}
+        manual = self.call('scan', roots=[str(self.home / '.openhands'), str(state.parent)], deep=True)
+        manual_rows = {row['path']: row for row in manual['files']}
+        self.assertTrue(all(manual_rows[str(p)]['decision'] == 'keep' for p in originals))
+
+        report = self.call('scan_local', startup=True)
+        expected = {str(workspace): ['OpenHands Agent Canvas'], str(managed): ['OpenHands Agent Canvas'],
+                    str(legacy): ['OpenHands CLI']}
+        self.assertEqual(report['projects'], expected)
+        agents = {row['name']: row for row in report['agent_inventory']}
+        canvas_row, cli_row = agents['OpenHands Agent Canvas'], agents['OpenHands CLI']
+        self.assertEqual(canvas_row['installations'][0]['path'], str(app))
+        self.assertEqual(canvas_row['kind'], 'desktop')
+        self.assertEqual(cli_row['kind'], 'cli')
+        self.assertEqual(canvas_row['family'], cli_row['family'])
+        self.assertFalse(cli_row['installed'])
+        rows = {row['path']: row for row in report['files']}
+        self.assertEqual(rows[str(event)]['agent_store_path'], str(canvas / 'dev_conversations'))
+        self.assertEqual(rows[str(cli)]['agent_store_path'], str(self.home / '.openhands/conversations'))
+        self.assertTrue(all(rows[str(p)]['decision'] == 'keep' for p in originals))
+        snapshot = (self.state / 'workspace.json').read_text()
+        self.assertNotIn('PRIVATE_OPENHANDS_TITLE', snapshot)
+        self.assertNotIn('PRIVATE_OPENHANDS_EVENT', snapshot)
+        self.assertNotIn('PRIVATE_OPENHANDS_CREDENTIAL', snapshot)
+
+        meta.write_bytes(entry(sid, alternate))
+        refreshed = self.call('scan_local', startup=True)
+        expected[str(alternate)] = expected.pop(str(workspace))
+        self.assertEqual(refreshed['projects'], expected)
+        result = self.call('run', paths=list(map(str, originals)), scan_id=refreshed['scan_id'], action='quarantine')
+        self.assertTrue(all(item['status'] == 'skipped' for item in result['last_action']['items']))
+        self.assertEqual({p: p.read_bytes() for p in originals}, originals)
+
     def test_vibe_custom_session_root_keeps_verified_data_without_claiming_its_neighbors(self):
         project = self.write('Projects/Vibe Project/source.py').parent
         sessions = self.base / 'Custom Vibe Sessions'

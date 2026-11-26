@@ -8,7 +8,7 @@ from heapq import nlargest
 from pathlib import Path
 from xml.parsers.expat import ExpatError
 
-from . import agent_adapters, agent_ide, integrations, model_inventory
+from . import agent_adapters, agent_ide, integrations, model_inventory, openhands
 from .actions import _directory
 
 
@@ -37,6 +37,7 @@ AGENT_BUNDLES = {
     'com.nousresearch.hermes': 'Hermes Agent',
     'com.nousresearch.hermes-bundled': 'Hermes Agent',
     'com.nousresearch.hermes-light': 'Hermes Agent',
+    'dev.openhands.agent-canvas': openhands.CANVAS,
 }
 AGENT_KINDS = {
     'Claude Desktop': 'desktop', 'TraeWork': 'desktop', 'Hermes Agent': 'desktop',
@@ -49,11 +50,13 @@ AGENT_KINDS = {
     'Conductor': 'workspace-manager',
     'Amp': 'cli', 'Kiro CLI': 'cli', 'Trae CLI': 'cli', 'Kilo Code CLI': 'cli', 'Crush': 'cli',
     'Mistral Vibe': 'cli', 'Oh My Pi': 'cli',
+    openhands.CANVAS: 'desktop', openhands.CLI: 'cli',
 }
 AGENT_FAMILIES = {
     'GitHub Copilot CLI': 'GitHub Copilot', 'GitHub Copilot VS Code': 'GitHub Copilot',
     'Kiro CLI': 'Kiro', 'Trae CLI': 'Trae', 'TraeWork': 'Trae',
     'Kilo Code CLI': 'Kilo Code', 'Kilo Code VS Code': 'Kilo Code',
+    openhands.CANVAS: 'OpenHands', openhands.CLI: 'OpenHands',
 }
 HIDDEN_SCOPE_NAMES = {'.git', '.Trash', '.Trashes', f'.lumen-vault-{os.getuid()}'}
 
@@ -180,7 +183,8 @@ def project_locations(home, sources, excluded, issues, quick=False, metadata_cac
             scoped_home = bool(parts) and not any(
                 p.casefold() in {'library', 'applications', '.git', 'node_modules'} or p.startswith('.')
                 for p in checked)
-            managed_project = agent_ide.is_trae_managed_project(path, home, agent)
+            managed_project = (agent_ide.is_trae_managed_project(path, home, agent)
+                               or openhands.managed_project(path, home, agent))
             if not (scoped_home or managed_project or any(within(path, root) for root in authorized)):
                 if path != Path('/') and not within(path, home) and not str(path).startswith(
                         ('/System/', '/Library/', '/private/', '/var/', '/tmp/', '/usr/')):

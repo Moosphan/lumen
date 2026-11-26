@@ -13,7 +13,7 @@ from contextlib import closing, contextmanager
 from itertools import islice
 from pathlib import Path
 
-from . import agent_ide, agent_local_tools, hermes, mistral_vibe, project_discovery, zed
+from . import agent_ide, agent_local_tools, hermes, mistral_vibe, openhands, project_discovery, zed
 from .actions import _directory
 from .integrations import recorded_path
 
@@ -582,7 +582,8 @@ def discover(home: Path, quick: bool, *, excluded=(), issues=None, authorized=()
             projects[str(path)].add(agent)
 
     readers = (_cursor, _gemini, _opencode, _kilo, _cline, zed.discover_zed, hermes.discover_hermes,
-               mistral_vibe.discover_mistral_vibe, *agent_ide.ADAPTERS, *agent_local_tools.ADAPTERS,
+               mistral_vibe.discover_mistral_vibe, openhands.discover_openhands,
+               *agent_ide.ADAPTERS, *agent_local_tools.ADAPTERS,
                project_discovery.discover_workspace_markers)
     for adapter in readers if adapters is None else adapters:
         reader = adapter.__name__

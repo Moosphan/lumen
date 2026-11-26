@@ -276,6 +276,13 @@ private func fallbackReport(_ pid: pid_t) {
                   projects.contains(where: {
                       $0.key.hasSuffix("/Oh My Pi Historical") && $0.value == ["Oh My Pi"]
                   }),
+                  projects.contains(where: {
+                      $0.key.hasSuffix("/workspaces/0196af9c754f430799ef39aa868a6700")
+                          && $0.value == ["OpenHands Agent Canvas"]
+                  }),
+                  projects.contains(where: {
+                      $0.key.hasSuffix("/OpenHands CLI Project") && $0.value == ["OpenHands CLI"]
+                  }),
                   let agents = report["agent_inventory"] as? [[String: Any]],
                   agents.contains(where: { row in
                       row["name"] as? String == "Gemini CLI" &&
@@ -317,6 +324,10 @@ private func fallbackReport(_ pid: pid_t) {
                   agents.contains(where: {
                       $0["name"] as? String == "Oh My Pi" && $0["kind"] as? String == "cli"
                           && ($0["bytes"] as? Int ?? 0) > 0
+                  }),
+                  agents.contains(where: {
+                      $0["name"] as? String == "OpenHands Agent Canvas" && $0["family"] as? String == "OpenHands"
+                          && $0["installed"] as? Bool == true && ($0["bytes"] as? Int ?? 0) > 0
                   }),
                   agents.contains(where: {
                       $0["name"] as? String == "Trae" && $0["installed"] as? Bool == true
@@ -395,6 +406,10 @@ private func fallbackReport(_ pid: pid_t) {
                           && ($0["agent_store_path"] as? String)?.hasSuffix("/coder/agent/archive/sessions") == true
                           && $0["decision"] as? String == "keep"
                   }),
+                  files.contains(where: {
+                      ($0["path"] as? String)?.hasSuffix("/868ce027f0444dbdb1bddb264d48a88b/base_state.json") == true
+                          && $0["decision"] as? String == "keep"
+                  }),
                   agents.contains(where: {
                       $0["name"] as? String == "Conductor" && $0["kind"] as? String == "workspace-manager"
                           && ($0["bytes"] as? Int ?? 0) > 0
@@ -424,6 +439,7 @@ private func fallbackReport(_ pid: pid_t) {
         print("Packaged app attributed both Mistral Vibe session folders and retained the generation pointer.")
         print("Packaged app attributed both Oh My Pi workspace folders and retained the profile session.")
         print("Packaged app attributed the Oh My Pi cold archive and retained it in the profile archive store.")
+        print("Packaged app inventoried OpenHands Agent Canvas and CLI projects and retained CLI conversation state.")
         guard AXIsProcessTrusted() else {
             fallbackReport(pid)
             return
