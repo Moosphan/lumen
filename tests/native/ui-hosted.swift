@@ -225,13 +225,13 @@ private func fallbackReport(_ pid: pid_t) {
             guard let data = config(state), let report = data["report"] as? [String: Any],
                   let apps = report["apps"] as? [[String: Any]], apps.contains(where: { $0["name"] as? String == "Sample Studio" }),
                   let projects = report["projects"] as? [String: [String]], projects.contains(where: {
-                      $0.key.hasSuffix("/Studio Project") && $0.value == ["Codex", "Windsurf"]
+                      $0.key.hasSuffix("/Studio Project") && $0.value == ["Amp", "Codex", "Windsurf"]
                   }),
                   projects.contains(where: {
                       $0.key.hasSuffix("/Gemini Project") && $0.value == ["Conductor", "Gemini CLI", "Windsurf"]
                   }),
                   projects.values.contains(["Continue"]),
-                  projects.values.contains(["Aider"]),
+                  projects.values.contains(["Aider", "Amp"]),
                   projects.values.contains(["DeepSeek Harness"]),
                   projects.contains(where: {
                       $0.key.hasSuffix("/Harness CLI Project") && $0.value == ["DeepSeek Harness"]
@@ -243,6 +243,7 @@ private func fallbackReport(_ pid: pid_t) {
                       (row["stores"] as? [[String: Any]])?.contains(where: { ($0["count"] as? Int ?? 0) > 0 }) == true
                   }),
                   agents.contains(where: { $0["name"] as? String == "Kiro" }),
+                  agents.contains(where: { $0["name"] as? String == "Amp" && ($0["bytes"] as? Int ?? 0) > 0 }),
                   agents.contains(where: {
                       $0["name"] as? String == "Conductor" && $0["kind"] as? String == "workspace-manager"
                           && ($0["bytes"] as? Int ?? 0) > 0
@@ -264,7 +265,7 @@ private func fallbackReport(_ pid: pid_t) {
                   (data["roots"] as? [String])?.isEmpty == true else { return nil as Bool? }
             return true
         }
-        print("Packaged app automatically inventoried local projects, including a worktree shared by Conductor, Gemini CLI, and Windsurf/Devin.")
+        print("Packaged app automatically inventoried local projects, including both Amp workspace evidence formats and the shared Conductor worktree.")
         guard AXIsProcessTrusted() else {
             fallbackReport(pid)
             return
@@ -319,8 +320,8 @@ private func fallbackReport(_ pid: pid_t) {
         _ = try eventually("the Pi workspace") { element("Pi Project", in: ax, button: false) }
         _ = try eventually("the workspace cleanup icon") { element("审阅工程清理项目", in: ax, button: true) }
         try press("Studio Project", in: ax)
-        _ = try eventually("two agents sharing the same native workspace") {
-            element("关联 Agent（2）", in: ax, button: false)
+        _ = try eventually("three agents sharing the same native workspace") {
+            element("关联 Agent（3）", in: ax, button: false)
         }
         _ = try eventually("the expanded project storage categories") { element("数据类别", in: ax, button: false) }
         captureWindow(pid: pid, lab: lab, filename: "Lumen-agent-sweep.png")

@@ -27,6 +27,7 @@ AGENT_BUNDLES = {
     'ai.openclaw.mac.debug': 'OpenClaw',
     'com.deepseek.dsh': 'DeepSeek Harness',
     'com.conductor.app': 'Conductor',
+    'com.ampcode.amp.macos': 'Amp',
 }
 AGENT_KINDS = {
     'Claude Desktop': 'desktop',
@@ -37,6 +38,7 @@ AGENT_KINDS = {
     'GitHub Copilot CLI': 'cli', 'OpenClaw': 'cli', 'Qwen Code': 'cli', 'goose': 'cli',
     'DeepSeek Harness': 'desktop', 'Pi': 'cli',
     'Conductor': 'workspace-manager',
+    'Amp': 'cli',
 }
 HIDDEN_SCOPE_NAMES = {'.git', '.Trash', '.Trashes', f'.lumen-vault-{os.getuid()}'}
 

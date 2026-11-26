@@ -118,6 +118,29 @@ class LocalInventoryTests(unittest.TestCase):
         self.assertEqual(files[str(source)]["projects"], [str(log.parent)])
         self.assertNotIn("synthetic-private-text", (self.state / "workspace.json").read_text())
 
+    def test_amp_discovers_configured_projects_and_preserves_config_and_credentials(self):
+        project = self.write('Projects/字幕/source.txt').parent
+        config = self.write(project / '.amp/settings.jsonc', b'{ // comment\n "amp.showCosts": true,\n}')
+        self.write('Projects/unrelated/.amp/settings.json', b'{"arbitrary":true}')
+        credential = self.write('.local/share/amp/secrets.json', b'private credential')
+        support = self.write('.config/amp/settings.json', b'{"amp.showCosts": true}')
+        self.write('Applications/Amp.app/Contents/Info.plist', plistlib.dumps({
+            'CFBundleIdentifier': 'com.ampcode.amp.macos',
+        }))
+        manual = self.call('scan', roots=[str(config.parent), str(credential.parent), str(support.parent)], deep=False)
+        self.assertEqual({row['decision'] for row in manual['files']}, {'keep'})
+        self.call('settings', roots=[])
+
+        report = self.call('scan_local', startup=True)
+        self.assertEqual(report['projects'].get(str(project)), ['Amp'])
+        self.assertTrue(next(row for row in report['agent_inventory'] if row['name'] == 'Amp')['installed'])
+        self.assertNotIn(str(self.home / 'Projects/unrelated'), report['projects'])
+        paths = [str(config), str(credential), str(support)]
+        result = self.call('run', paths=paths, scan_id=report['scan_id'], action='quarantine')
+        self.assertEqual([row['status'] for row in result['last_action']['items']], ['skipped'] * len(paths))
+        config.write_text('{}')
+        self.assertNotIn(str(project), self.call('scan_local', startup=True)['projects'])
+
     def test_aider_manual_scope_and_discovery_cache_revalidate_marker(self):
         project = self.manual / "worktree"
         project.mkdir()

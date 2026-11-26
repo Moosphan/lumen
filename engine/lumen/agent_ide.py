@@ -79,7 +79,7 @@ def _local_folder_uri(uri):
         return None
 
 
-def _workspace_jsonc(payload):
+def parse_jsonc(payload):
     source = _JSONC_COMMENTS.sub(lambda token: token[1] or ' ', payload.decode('utf-8-sig'))
 
     def without_trailing_comma(token):
@@ -123,7 +123,7 @@ def _workspace_folders(metadata, path):
     if payload is None:
         return
     try:
-        workspace = _workspace_jsonc(payload)
+        workspace = parse_jsonc(payload)
         if not isinstance(workspace, dict) or not isinstance(workspace.get('folders'), list):
             raise ValueError('invalid workspace folders')
     except (ValueError, RecursionError):

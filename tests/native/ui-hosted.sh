@@ -84,6 +84,16 @@ aider_project = home / "Projects/Aider Project"
 aider_project.mkdir()
 (aider_project / "notes.txt").write_text("Keep this Aider project source.")
 (aider_project / ".aider.chat.history.md").write_text("\n# aider chat started at 2026-11-25 12:00:00\n\nSynthetic session.")
+(aider_project / ".amp").mkdir()
+(aider_project / ".amp/settings.jsonc").write_text('{ // workspace config\n "amp.showCosts": true,\n}')
+amp_threads = home / ".local/share/amp/threads"
+amp_threads.mkdir(parents=True)
+amp_id = "T-0199aaaa-bbbb-7ccc-8ddd-eeeeffff0001"
+(amp_threads / f"{amp_id}.json").write_text(json.dumps({
+    "id": amp_id, "v": 1, "created": 1768178184664,
+    "env": {"initial": {"platform": {"client": "CLI"}, "trees": [{"uri": project.as_uri()}]}},
+    "messages": [{"role": "user", "content": "Synthetic prompt"}],
+}))
 harness = home / "Applications/DeepSeek Harness.app/Contents"
 harness.mkdir(parents=True)
 (harness / "Info.plist").write_bytes(plistlib.dumps({

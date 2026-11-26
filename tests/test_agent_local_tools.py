@@ -21,7 +21,7 @@ class LocalAgentToolTests(unittest.TestCase):
         keys = (
             'OPENCLAW_HOME', 'OPENCLAW_STATE_DIR', 'OPENCLAW_CONFIG_PATH',
             'OPENCLAW_WORKSPACE_DIR', 'OPENCLAW_PROFILE', 'QWEN_HOME', 'QWEN_RUNTIME_DIR',
-            'GOOSE_PATH_ROOT', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME',
+            'GOOSE_PATH_ROOT', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_CACHE_HOME',
             'CONTINUE_GLOBAL_DIR', 'DSH_HOME', 'PI_CODING_AGENT_DIR', 'PI_CODING_AGENT_SESSION_DIR',
         )
         env = patch.dict(os.environ, dict.fromkeys(keys, ''))
@@ -38,6 +38,52 @@ class LocalAgentToolTests(unittest.TestCase):
         from engine.lumen import agent_local_tools
 
         return discover(self.home, True, adapters=agent_local_tools.ADAPTERS, **options)
+
+    def test_amp_reads_only_legacy_thread_project_fields_and_revalidates_changes(self):
+        threads = '.local/share/amp/threads'
+        ids = [f'T-0199aaaa-bbbb-7ccc-8ddd-eeeeffff000{index}' for index in range(7)]
+        local = self.project
+        alternate = self.home / '另一个项目 🎬'
+        private = 'private-prompt-marker'
+
+        def thread(identifier, uri, *, client='CLI', **extra):
+            return {'id': identifier, 'v': 42, 'created': 1768178184664,
+                    'env': {'initial': {'platform': {'client': client}, 'trees': [{'uri': uri}]}},
+                    'messages': [{'role': 'user', 'content': private}], **extra}
+
+        marker = self.write(f'{threads}/{ids[0]}.json', thread(ids[0], local.as_uri()))
+        self.write(f'{threads}/{ids[1]}.json', thread(ids[0], alternate.as_uri()))
+        self.write(f'{threads}/{ids[2]}.json', thread(ids[2], 'file://server/Users/fake/project'))
+        self.write(f'{threads}/{ids[3]}.json', thread(ids[3], alternate.as_uri(), executor='orb'))
+        self.write(f'{threads}/{ids[4]}.json', thread(ids[4], alternate.as_uri(), client='Web'))
+        self.write(f'{threads}/{ids[5]}.json', thread(ids[5], alternate.as_uri(), extra_text='x' * (256 * 1024)))
+        (marker.parent / f'{ids[6]}.json').symlink_to(marker)
+        config = self.write('.config/amp/settings.jsonc', b'private settings')
+        secrets = self.write('.local/share/amp/secrets.json', b'private credentials')
+        cache = {}
+        stores, projects = self.scan(cache=cache)
+        self.assertEqual(projects, {local: {'Amp'}})
+        self.assertEqual({path for agent, path, _ in stores if agent == 'Amp'}, {config.parent, secrets.parent})
+        self.assertNotIn(private, json.dumps(cache))
+        self.assertNotIn(str(secrets), cache['readers']['discover_amp']['stamps'])
+        self.write(marker, thread(ids[0], alternate.as_uri()))
+        self.assertEqual(self.scan(cache=cache)[1], {alternate: {'Amp'}})
+        self.assertEqual(self.scan(excluded=(marker,), cache=cache)[1], {})
+
+    def test_amp_legacy_xdg_storage_requires_explicit_scope(self):
+        external = self.base / 'external-data'
+        identifier = 'T-0199aaaa-bbbb-7ccc-8ddd-eeeeffff0001'
+        marker = self.write(external / 'amp/threads' / f'{identifier}.json', {
+            'id': identifier, 'v': 1, 'created': 1768178184664,
+            'env': {'initial': {'platform': {'client': 'CLI'}, 'trees': [{'uri': self.project.as_uri()}]}},
+        })
+        cache = {}
+        with patch.dict(os.environ, {'XDG_DATA_HOME': str(external)}):
+            self.assertEqual(self.scan(cache=cache)[1], {})
+            stores, projects = self.scan(cache=cache, authorized=(external,))
+            self.assertEqual(projects, {self.project: {'Amp'}})
+            self.assertIn(('Amp', marker.parents[1], 'Amp CLI 会话、凭证和本地数据'), stores)
+            self.assertEqual(self.scan(cache=cache)[1], {})
 
     def test_conductor_requires_a_linked_git_worktree_marker_and_refreshes_edits(self):
         root = 'conductor/workspaces/film'

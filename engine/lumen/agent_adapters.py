@@ -13,7 +13,7 @@ from contextlib import closing, contextmanager
 from itertools import islice
 from pathlib import Path
 
-from . import agent_ide, agent_local_tools, aider
+from . import agent_ide, agent_local_tools, project_discovery
 from .actions import _directory
 from .integrations import recorded_path
 
@@ -460,7 +460,7 @@ def discover(home: Path, quick: bool, *, excluded=(), issues=None, authorized=()
             projects[str(path)].add(agent)
 
     readers = (_cursor, _gemini, _opencode, _cline, *agent_ide.ADAPTERS, *agent_local_tools.ADAPTERS,
-               aider.discover_projects)
+               project_discovery.discover_project_markers)
     for adapter in readers if adapters is None else adapters:
         reader = adapter.__name__
         cached = previous.get(reader)
