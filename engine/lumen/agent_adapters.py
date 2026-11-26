@@ -447,8 +447,16 @@ def discover(home: Path, quick: bool, *, excluded=(), issues=None, authorized=()
     all_stores = {}
     all_projects = defaultdict(set)
 
-    def store(agent, path, evidence):
-        if not metadata.directory(path):
+    def store(agent, path, evidence, *, file=False):
+        if file:
+            try:
+                with metadata.open(path) as stream:
+                    if stream is None:
+                        return False
+            except OSError as error:
+                metadata.failed(path, error)
+                return False
+        elif not metadata.directory(path):
             return False
         stores[agent, str(path)] = evidence
         return True

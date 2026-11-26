@@ -313,7 +313,7 @@ def plan(home, system, excluded, quick=False, metadata_cache=None, authorized=()
             continue
         try:
             info = path.lstat()
-            if (stat.S_ISDIR(info.st_mode) or path in model_metadata and stat.S_ISREG(info.st_mode)
+            if (stat.S_ISDIR(info.st_mode) or (path in sources or path in model_metadata) and stat.S_ISREG(info.st_mode)
                     and info.st_nlink == 1) and path.resolve(strict=True) == path:
                 location = dict(path=str(path), title=title, group=group,
                                 agents=sorted(projects.get(path, ())), identity=[info.st_dev, info.st_ino],

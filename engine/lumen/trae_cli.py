@@ -1,7 +1,8 @@
-"""Read bounded TRAE CLI 2.0 rollout metadata."""
+"""Read bounded TRAE CLI 2.0 session metadata."""
 import json
 import os
 import re
+import sqlite3
 
 from .integrations import recorded_path
 from .zstd_header import first_line
@@ -12,9 +13,21 @@ _DEFAULT = '.trae/cli'
 _STORES = {'sessions': 'TRAE CLI 活动会话', 'archived_sessions': 'TRAE CLI 归档会话'}
 _PROTECTED_FILES = frozenset({'auth.json', 'config.toml', 'history.jsonl', 'hooks.json', 'session_index.jsonl'})
 _DATABASE = re.compile(r'(?:state|thread_history)_[0-9]{1,6}\.sqlite(?:-wal|-shm|-journal)?')
+_STATE_DB = 'state_5.sqlite'
+_DATABASE_STORES = {_STATE_DB: 'TRAE CLI 会话索引', 'thread_history_1.sqlite': 'TRAE CLI 会话正文库'}
+_DB_SIDECARS = ('-wal', '-shm', '-journal')
+# Declared type, NOT NULL flag, primary-key position, hidden-column flag.
+_THREAD_SCHEMA = {
+    'id': ('TEXT', 0, 1, 0),
+    'cwd': ('TEXT', 1, 0, 0),
+    'rollout_path': ('TEXT', 1, 0, 0),
+    'source': ('TEXT', 1, 0, 0),
+    'updated_at': ('INTEGER', 1, 0, 0),
+}
+_THREAD_ID = re.compile(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}', re.ASCII)
 _ROLLOUT = re.compile(
-    r'rollout-[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}-'
-    r'([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})\.jsonl(\.zst)?', re.ASCII,
+    rf'rollout-[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}T[0-9]{{2}}-[0-9]{{2}}-[0-9]{{2}}-'
+    rf'({_THREAD_ID.pattern})\.jsonl(\.zst)?', re.ASCII,
 )
 _DATE_PARTS = tuple(re.compile(pattern) for pattern in (r'[0-9]{4}', r'0[1-9]|1[0-2]', r'0[1-9]|[12][0-9]|3[01]'))
 _HEADER_LIMIT = 32 * 1024
@@ -90,18 +103,100 @@ def _project(metadata, path, identity, compressed):
     return None
 
 
-def discover_trae_cli_rollouts(metadata, store, add):
+def _thread_rows(database, limit):
+    database.execute('PRAGMA trusted_schema=OFF')
+    database.execute('PRAGMA query_only=ON')
+    database.execute('PRAGMA temp_store=MEMORY')
+    steps = iter(range(100))
+    database.set_progress_handler(lambda: int(next(steps, None) is None), 1000)
+    if database.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'threads' AND rootpage > 0"
+    ).fetchone() is None:
+        raise ValueError('no physical threads table')
+    columns = {name: (kind.upper(), required, pk, hidden) for _, name, kind, required, _, pk, hidden
+               in database.execute('PRAGMA main.table_xinfo(threads)')}
+    if any(columns.get(name) != signature for name, signature in _THREAD_SCHEMA.items()):
+        raise ValueError('unknown threads schema')
+    return database.execute(
+        "SELECT id, cwd FROM main.threads WHERE typeof(id) = 'text' AND length(CAST(id AS BLOB)) = 36 "
+        "AND typeof(cwd) = 'text' AND substr(cwd, 1, 1) = '/' AND length(CAST(cwd AS BLOB)) <= 4096 "
+        "ORDER BY updated_at DESC, id DESC LIMIT ?", (limit + 1,)
+    ).fetchall()
+
+
+def _active_sidecar(metadata, database, suffix):
+    path = database.with_name(database.name + suffix)
+    try:
+        with metadata.open(path) as stream:
+            return stream is not None and os.fstat(stream.fileno()).st_size > 0
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+
+
+def _database_projects(metadata, path):
+    # Embedded migrations in the TRAE CLI 0.216.0 public release.
+    # https://lf-cdn.trae.com.cn/obj/trae-com-cn/trae-cli/v2/public/stable/latest.json
+    from .agent_adapters import _readonly_database
+
+    try:
+        with metadata.open(path) as stream:
+            if stream is None:
+                return []
+            before = os.fstat(stream.fileno())
+            if before.st_size > metadata.database_limit:
+                metadata.issue(path, 'TRAE CLI 数据库超过本次读取上限')
+                return []
+            if _active_sidecar(metadata, path, '-journal'):
+                metadata.issue(path, 'TRAE CLI 数据库存在回滚日志，本次仅盘点占用')
+                return []
+            if _active_sidecar(metadata, path, '-wal'):
+                metadata.issue(path, 'TRAE CLI 仅识别已写入主库的会话')
+            with _readonly_database(stream, before, metadata.database_limit) as database:
+                rows = _thread_rows(database, metadata.limit)
+            after = os.fstat(stream.fileno())
+            if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+                metadata.issue(path, 'TRAE CLI 数据库读取期间有变更')
+                return []
+            if _active_sidecar(metadata, path, '-journal'):
+                metadata.issue(path, 'TRAE CLI 数据库读取期间生成回滚日志')
+                return []
+        if len(rows) > metadata.limit:
+            metadata.issue(path, 'TRAE CLI 数据库会话数超过本次读取上限')
+        return [(identifier, recorded_path(cwd)) for identifier, cwd in rows[:metadata.limit]
+                if _THREAD_ID.fullmatch(identifier)]
+    except OSError as error:
+        metadata.failed(path, error)
+    except (sqlite3.Error, ValueError):
+        metadata.issue(path, 'TRAE CLI 数据库读取超限、损坏或格式未受支持')
+    return []
+
+
+def discover_trae_cli_sessions(metadata, store, add):
     # https://docs.trae.cn/cli_command-line-parameters
     # https://github.com/kenn-io/agentsview/tree/d92f8630a496c9237e4fa8316aa60c3387a59f59/internal/parser/testdata/data-version-corpus/traex
     default = metadata.home / _DEFAULT
     custom = custom_home(metadata.home, metadata.setting)
-    homes = (default, custom) if custom is not None else (default,)
-    store(_AGENT, default, 'TRAE CLI 配置、历史与运行状态')
+    homes = [default] if store(_AGENT, default, 'TRAE CLI 配置、历史与运行状态') else []
+    if custom is not None:
+        homes.append(custom)
     found = {}
+
+    def associate(path, identity, project):
+        if project is not None and found.setdefault(identity, project) != project:
+            found[identity] = None
+            metadata.issue(path, 'TRAE CLI 同一会话的工作目录冲突')
+
     for home in homes:
-        if home == custom and not any(metadata.allowed(home / name) for name in _STORES):
+        if home == custom and not any(metadata.allowed(home / name) for name in (*_STORES, *_DATABASE_STORES)):
             metadata.issue(home, 'TRAE CLI 自定义会话位置未获读取权限')
             continue
+        for filename, title in _DATABASE_STORES.items():
+            path = home / filename
+            if store(_AGENT, path, title, file=True) and filename == _STATE_DB:
+                for identity, project in _database_projects(metadata, path):
+                    associate(path, identity, project)
+            for suffix in _DB_SIDECARS:
+                store(_AGENT, home / (filename + suffix), title + '伴随文件', file=True)
         for name, title in _STORES.items():
             root = home / name
             if not store(_AGENT, root, title):
@@ -112,9 +207,7 @@ def discover_trae_cli_rollouts(metadata, store, add):
                     subject = '压缩会话' if compressed else '会话'
                     metadata.issue(root, f'部分 TRAE CLI {subject}首行或工作目录无法核验')
                     continue
-                if found.setdefault(identity, project) != project:
-                    found[identity] = None
-                    metadata.issue(root, 'TRAE CLI 同一会话的工作目录冲突')
+                associate(root, identity, project)
     for project in found.values():
         if project is not None:
             add(str(project), _AGENT)

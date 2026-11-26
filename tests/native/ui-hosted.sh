@@ -29,7 +29,9 @@ import os
 import json
 import hashlib
 import plistlib
+import sqlite3
 import struct
+from contextlib import closing
 from pathlib import Path
 
 home = Path(os.environ["LUMEN_INVENTORY_HOME"])
@@ -191,6 +193,16 @@ for index, (relative, workspace) in enumerate([
     else:
         rollout.write_bytes(metadata_line)
 (trae_cli / "history.jsonl").write_text("Keep the CLI history.")
+with closing(sqlite3.connect(trae_cli / "state_5.sqlite")) as database:
+    database.execute(
+        "CREATE TABLE threads (id TEXT PRIMARY KEY, cwd TEXT NOT NULL, rollout_path TEXT NOT NULL, "
+        "source TEXT NOT NULL, updated_at INTEGER NOT NULL, title TEXT NOT NULL)"
+    )
+    database.execute("INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?)", (
+        "019fbcca-9fd4-7d20-83dc-0762b2f839b2", str(pi_project), "", "cli", 1, "Private fixture title",
+    ))
+    database.commit()
+(trae_cli / "thread_history_1.sqlite").write_bytes(b"Opaque fixture history.")
 models = home / ".lmstudio/models/Lumen/Sample Weight"
 models.mkdir(parents=True)
 (models / "sample-Q4_K_M.gguf").write_bytes(b"synthetic model metadata")

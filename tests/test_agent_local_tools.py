@@ -151,6 +151,95 @@ class LocalAgentToolTests(unittest.TestCase):
         with patch.dict(os.environ, {'TRAEX_HOME': str(legacy)}):
             self.assertEqual(self.scan(authorized=(legacy,))[1], {other: {'Trae CLI'}})
 
+    def test_trae_cli_state_db_reads_checkpointed_threads_and_conflicts_safely(self):
+        home = self.home / '.trae/cli'
+        state = home / 'state_5.sqlite'
+        state.parent.mkdir(parents=True)
+        ids = [f'019fbcca-9fd4-7d20-83dc-0762b2f839b{i}' for i in range(5)]
+        self.trae_rollout(home / 'sessions/2026/11/26', ids[1], self.home / 'Rollout Project')
+        pending = self.home / 'Awaiting checkpoint'
+        with closing(sqlite3.connect(state)) as database:
+            database.execute('PRAGMA journal_mode=WAL')
+            database.execute(
+                'CREATE TABLE threads (id TEXT PRIMARY KEY, cwd TEXT NOT NULL, rollout_path TEXT NOT NULL, '
+                'source TEXT NOT NULL, updated_at INTEGER NOT NULL, title TEXT NOT NULL)'
+            )
+            database.execute('CREATE TABLE private_data (id TEXT, cwd TEXT)')
+            database.execute('INSERT INTO private_data VALUES (?, ?)', (ids[4], str(self.home / 'Unrelated Table')))
+
+            def thread(identifier, path):
+                database.execute('INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?)', (
+                    identifier, str(path), '/purged/rollout.jsonl', 'cli', 1, 'synthetic private title',
+                ))
+
+            thread(ids[0], self.project)
+            thread(ids[1], self.home / 'State Conflict')
+            thread(ids[2], 'ssh://workstation/projects/foo')
+            thread('not-a-uuid', self.home / 'Invalid Session')
+            database.commit()
+            database.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+            thread(ids[3], pending)
+            database.commit()
+            sidecars = [state.with_name(state.name + suffix) for suffix in ('-wal', '-shm')]
+            contents = {file: file.read_bytes() for file in (state, *sidecars)}
+            issues, cache = set(), {}
+            stores, projects = self.scan(issues=issues, cache=cache)
+            self.assertEqual(projects, {self.project: {'Trae CLI'}})
+            self.assertTrue({state, *sidecars}.issubset({path for _, path, _ in stores}))
+            self.assertTrue(any('主库' in detail for detail in issues))
+            self.assertTrue(any('目录冲突' in detail for detail in issues))
+            self.assertNotIn('synthetic private title', json.dumps(cache))
+            self.assertEqual({file: file.read_bytes() for file in contents}, contents)
+            database.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+            self.assertEqual(self.scan(cache=cache)[1], {path: {'Trae CLI'} for path in (self.project, pending)})
+
+    def test_trae_cli_state_db_requires_scope_and_a_real_threads_table(self):
+        outside = self.base / 'TRAE Data'
+        outside.mkdir()
+        identity = '019fbcca-9fd4-7d20-83dc-0762b2f839b0'
+        with closing(sqlite3.connect(outside / 'state_5.sqlite')) as database:
+            database.execute(
+                'CREATE TABLE metadata (id TEXT PRIMARY KEY, cwd TEXT NOT NULL, rollout_path TEXT NOT NULL, '
+                'source TEXT NOT NULL, updated_at INTEGER NOT NULL)'
+            )
+            database.execute('CREATE VIEW threads AS SELECT * FROM metadata')
+            database.execute('INSERT INTO metadata VALUES (?, ?, ?, ?, ?)', (
+                identity, str(self.project), '', 'cli', 1,
+            ))
+            database.commit()
+            with patch.dict(os.environ, {'TRAECLI_HOME': str(outside)}):
+                issues = set()
+                self.assertEqual(self.scan(authorized=(outside,), issues=issues)[1], {})
+                self.assertTrue(any('格式未受支持' in detail for detail in issues))
+                database.execute('DROP VIEW threads')
+                database.execute('ALTER TABLE metadata RENAME TO threads')
+                database.commit()
+                self.assertEqual(self.scan()[1], {})
+                self.assertEqual(self.scan(authorized=(outside,))[1], {self.project: {'Trae CLI'}})
+
+    def test_trae_cli_state_db_with_active_rollback_journal_stays_opaque(self):
+        state = self.home / '.trae/cli/state_5.sqlite'
+        state.parent.mkdir(parents=True)
+        with closing(sqlite3.connect(state)) as database:
+            database.execute(
+                'CREATE TABLE threads (id TEXT PRIMARY KEY, cwd TEXT NOT NULL, rollout_path TEXT NOT NULL, '
+                'source TEXT NOT NULL, updated_at INTEGER NOT NULL)'
+            )
+            database.execute('INSERT INTO threads VALUES (?, ?, ?, ?, ?)', (
+                '019fbcca-9fd4-7d20-83dc-0762b2f839b0', str(self.project), '', 'cli', 1,
+            ))
+            database.commit()
+            database.execute('BEGIN IMMEDIATE')
+            database.execute('UPDATE threads SET updated_at = 2')
+            journal = state.with_name(state.name + '-journal')
+            before = journal.read_bytes()
+            issues = set()
+            self.assertEqual(self.scan(issues=issues)[1], {})
+            self.assertTrue(any('回滚日志' in issue for issue in issues))
+            self.assertEqual(journal.read_bytes(), before)
+            database.rollback()
+            self.assertEqual(self.scan()[1], {self.project: {'Trae CLI'}})
+
     def test_kiro_cli_associates_companions_only_in_authorized_locations(self):
         first = self.write('.kiro/sessions/cli/known.json', {
             'cwd': str(self.project), 'session_state': {'private': 'should not enter cache'},

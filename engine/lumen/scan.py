@@ -405,7 +405,7 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
                 or (s.st_dev, s.st_ino) in metadata_only_file_ids
                 or metadata_roots and _under(p, metadata_roots)):
             metadata_files.add(p)
-        store = store_for(p.parent) if agent_stores else None
+        store = p if p in agent_stores else store_for(p.parent) if agent_stores else None
         owner_agent = agent_stores[store] if store else 'Aider' if aider_data else _agent(p)
         files[p] = dict(path=str(p), dev=s.st_dev, ino=s.st_ino, size=s.st_size,
                         mtime_ns=s.st_mtime_ns, ctime_ns=s.st_ctime_ns, nlink=s.st_nlink, kind=kind, allocated_bytes=s.st_blocks * 512,

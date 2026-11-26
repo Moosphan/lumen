@@ -2,10 +2,12 @@ import json
 import hashlib
 import os
 import plistlib
+import sqlite3
 import struct
 import subprocess
 import tempfile
 import unittest
+from contextlib import closing
 from unittest.mock import patch
 from pathlib import Path
 
@@ -230,6 +232,40 @@ class LocalInventoryTests(unittest.TestCase):
             result = self.call('run', paths=list(map(str, protected)), scan_id=report['scan_id'], action='quarantine')
         self.assertEqual([row['status'] for row in result['last_action']['items']], ['skipped'] * len(protected))
         self.assertTrue(all(path.is_file() for path in protected))
+
+    def test_trae_cli_attributes_protected_database_files_without_claiming_other_custom_files(self):
+        project = self.write('Projects/Dub/src.ts').parent
+        home = self.base / 'Custom TRAE CLI'
+        home.mkdir()
+        database = home / 'state_5.sqlite'
+        with closing(sqlite3.connect(database)) as connection:
+            connection.execute(
+                'CREATE TABLE threads (id TEXT PRIMARY KEY, cwd TEXT NOT NULL, rollout_path TEXT NOT NULL, '
+                'source TEXT NOT NULL, updated_at INTEGER NOT NULL)'
+            )
+            connection.execute('INSERT INTO threads VALUES (?, ?, ?, ?, ?)', (
+                '019fbcca-9fd4-7d20-83dc-0762b2f839b0', str(project), '', 'cli', 1,
+            ))
+            connection.commit()
+        history = self.write(home / 'thread_history_1.sqlite', b'opaque history fixture')
+        ordinary = self.write(home / 'unrelated.txt', b'user file')
+        with patch.dict(os.environ, {'TRAECLI_HOME': str(home)}):
+            self.call('scan', roots=[str(home)], deep=False)
+            report = self.call('scan_local', startup=True)
+            self.assertEqual(report['projects'].get(str(project)), ['Trae CLI'])
+            rows = {row['path']: row for row in report['files']}
+            self.assertEqual(rows[str(ordinary)]['decision'], 'review')
+            self.assertFalse(rows[str(ordinary)]['agents'])
+            for path in (database, history):
+                self.assertEqual(rows[str(path)]['agent_store_path'], str(path))
+                self.assertEqual(rows[str(path)]['decision'], 'keep')
+            item = next(row for row in report['agent_inventory'] if row['name'] == 'Trae CLI')
+            stores = {row['path']: row for row in item['stores']}
+            self.assertEqual(stores[str(database)]['count'], 1)
+            self.assertEqual(stores[str(history)]['count'], 1)
+            result = self.call('run', paths=[str(database), str(history)], scan_id=report['scan_id'],
+                               action='quarantine')
+            self.assertEqual([row['status'] for row in result['last_action']['items']], ['skipped', 'skipped'])
 
     def test_aider_manual_scope_and_discovery_cache_revalidate_marker(self):
         project = self.manual / "worktree"
