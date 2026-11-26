@@ -1,3 +1,4 @@
+import gzip
 import io
 import json
 import os
@@ -598,6 +599,67 @@ class LocalAgentToolTests(unittest.TestCase):
         source.write_bytes(b'\n'.join((lines[0], json.dumps(changed).encode(), lines[2])))
         expected[moved] = expected.pop(self.project)
         self.assertEqual(self.scan(cache=cache)[1], expected)
+
+    def test_oh_my_pi_cold_archives_attribute_projects_and_prefer_active_sessions(self):
+        default = '.omp/agent/archive/sessions'
+        named = '.omp/profiles/audit/agent/archive/sessions'
+        override = self.home / '.omp/custom/live'
+        custom = override.parent / 'archive/sessions'
+        additional = self.home / 'Projects/Additional'
+        legacy = self.home / 'Projects/Legacy'
+        active = self.home / 'Projects/Live'
+        relocated = self.home / 'Projects/Relocated'
+        ignored = self.home / 'Projects/Ignored'
+        stamp = '2026-11-26T20-40-10-000Z'
+        timestamp = '2026-11-26T20:40:10.000Z'
+
+        def filename(number):
+            return f'{stamp}_019c625b-b900-7000-8000-{number:012x}.jsonl'
+
+        def header(number, project, **fields):
+            sid = filename(number).split('_')[1].removesuffix('.jsonl')
+            return json.dumps(dict(type='session', version=3, id=sid, cwd=str(project),
+                                   timestamp=timestamp, **fields)).encode() + b'\n'
+
+        def archived(root, number, payload):
+            return self.write(Path(root) / '-Projects-example' / (filename(number) + '.gz'), payload)
+
+        title = dict(type='title', v=1, title='私人归档标题', updatedAt=timestamp, pad='')
+        title['pad'] = ' ' * (255 - len(json.dumps(title, ensure_ascii=False).encode()))
+        slot = json.dumps(title, ensure_ascii=False).encode() + b'\n'
+        assert len(slot) == 256
+        archived(default, 1, gzip.compress(slot + header(1, self.project, additionalDirectories=[str(additional)])
+                                          + b'PRIVATE_ARCHIVE_BODY\n' * 100_000))
+        previous = archived(named, 2, gzip.compress(header(2, legacy)))
+        live = self.write(override / '-Projects-example' / filename(3), header(3, active))
+        archived(custom, 3, gzip.compress(header(3, ignored)))
+        archived(default, 4, gzip.compress(header(9, ignored)))
+        archived(default, 5, b'not a gzip stream')
+        too_much_input = gzip.compress(header(6, ignored))
+        archived(default, 6, too_much_input[:3] + b'\x10' + too_much_input[4:10] + b'x' * 70_000
+                 + b'\0' + too_much_input[10:])
+        archived(default, 7, gzip.compress(b' ' * (17 * 1024) + header(7, ignored)))
+        archived(default, 8, gzip.compress(slot) + gzip.compress(header(8, ignored)))
+        linked = archived(default, 9, gzip.compress(header(9, ignored)))
+        linked.symlink_to(linked.rename(self.base / 'external.jsonl.gz'))
+        self.write(f'.omp/agent/sessions/-Projects-example/{filename(10)}.gz', gzip.compress(header(10, ignored)))
+        archived(default, 11, gzip.compress(header(11, ignored))[:24])
+
+        cache = {}
+        with patch.dict(os.environ, {'PI_CODING_AGENT_SESSION_DIR': str(override)}):
+            stores, projects = self.scan(cache=cache)
+            expected = {path: {'Oh My Pi'} for path in (self.project, additional, legacy, active)}
+            self.assertEqual(projects, expected)
+            self.assertTrue({self.home / default, self.home / named, custom}
+                            <= {path for name, path, _ in stores if name == 'Oh My Pi'})
+            cache_dump = json.dumps(cache, ensure_ascii=False)
+            self.assertNotIn('私人归档标题', cache_dump)
+            self.assertNotIn('PRIVATE_ARCHIVE_BODY', cache_dump)
+            previous.write_bytes(gzip.compress(header(2, relocated)))
+            live.unlink()
+            expected[relocated] = expected.pop(legacy)
+            expected[ignored] = expected.pop(active)
+            self.assertEqual(self.scan(cache=cache)[1], expected)
 
     def test_pi_uses_only_session_headers_for_default_and_authorized_custom_storage(self):
         header = {'type': 'session', 'version': 3, 'id': 'session-123', 'cwd': str(self.project)}

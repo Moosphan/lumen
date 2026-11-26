@@ -25,6 +25,7 @@ mkdir -m 700 "$lab/tmp"
 export LUMEN_STATE_DIR="$lab/workspace-state" TMPDIR="$lab/tmp"
 export LUMEN_INVENTORY_HOME="$lab/home"
 /usr/bin/python3 -B - <<'PY'
+import gzip
 import os
 import json
 import hashlib
@@ -298,6 +299,17 @@ omp_session.write_bytes(encode_json(omp_title) + encode_json({
     "type": "session", "version": 3, "id": omp_id, "timestamp": omp_timestamp,
     "cwd": str(omp_project), "additionalDirectories": [str(omp_additional)],
 }))
+omp_historical = home / "Documents/Oh My Pi Historical"
+omp_historical.mkdir()
+(omp_historical / "source.ts").write_text("// synthetic archived workspace")
+omp_archive_id = "019c625b-b900-7000-8000-000000000002"
+omp_archive = (home / ".omp/profiles/coder/agent/archive/sessions/-Documents-Oh My Pi Historical"
+               / f"2026-11-26T20-40-10-000Z_{omp_archive_id}.jsonl.gz")
+omp_archive.parent.mkdir(parents=True)
+omp_archive.write_bytes(gzip.compress(encode_json(omp_title) + encode_json({
+    "type": "session", "version": 3, "id": omp_archive_id, "timestamp": omp_timestamp,
+    "cwd": str(omp_historical),
+}) + b'{"type":"message","synthetic":"archive"}\n' * 20_000, mtime=0))
 trae_cli = home / ".trae/cli"
 for index, (relative, workspace) in enumerate([
     ("sessions/2026/11/26", aider_project), ("archived_sessions", continue_project),

@@ -522,6 +522,6 @@ def conductor_user_data(path):
 
 
 ADAPTERS = (_claude_desktop, _openclaw, _qwen_code, _goose, _continue, _deepseek_harness, _deepseek_headless,
-            _pi_inventory, oh_my_pi.discover_oh_my_pi, _conductor, amp.discover_amp, kiro_cli.discover_kiro_cli,
+            _pi_inventory, oh_my_pi.discover_oh_my_pi_sessions, _conductor, amp.discover_amp, kiro_cli.discover_kiro_cli,
             trae_cli.discover_trae_cli_history,
             crush.discover_crush)
