@@ -115,6 +115,8 @@ TRAE CLI 2.0 在工作区单列，工具家族与 IDE 合计。扫描默认 `~/.
 
 接入 Zed 后累计覆盖 24 个工具家族。识别 Stable、Preview、Nightly 和 Dev 安装包及默认资料目录。从 v1.30.2 的会话索引读取已完成远程连接迁移的本机路径，识别多根工程和关联工作树。原生会话库、工作区索引、日志及配置按保留盘点，会话正文不会进入工程归属解析。旧索引、自定义数据目录、未写入 SQLite 主库的记录和远程会话暂不参与工程归属。 [macOS 路径](https://github.com/zed-industries/zed/blob/v1.30.2/crates/paths/src/paths.rs) · [会话索引](https://github.com/zed-industries/zed/blob/v1.30.2/crates/agent_ui/src/thread_metadata_store.rs) · [工单 #42](https://github.com/Moosphan/lumen/issues/42)
 
+接入 Hermes Agent 后累计覆盖 25 个工具家族。支持默认资料目录、命名配置档以及已授权的 `HERMES_HOME` 中可核验的数据库和配置文件。工程来自 v0.23.4 的会话与当前本机终端策略，SSH、容器和聊天平台会话仅保留盘点。默认历史、配置和标准桌面资料按保留盘点，自定义资料根中的普通文件沿用原有规则。缺少策略的旧会话和还在 WAL 中的记录暂不参与工程归属。 [会话存储](https://github.com/NousResearch/hermes-agent/blob/v0.23.4/website/docs/developer-guide/session-storage.md) · [本机策略](https://github.com/NousResearch/hermes-agent/blob/v0.23.4/gateway/session_policy.py) · [工单 #43](https://github.com/Moosphan/lumen/issues/43)
+
 ## 功能和验收清单
 
 | 编号 | 交付 | 依赖 | 验收 |

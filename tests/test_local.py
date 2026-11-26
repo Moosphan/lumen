@@ -323,6 +323,48 @@ class LocalInventoryTests(unittest.TestCase):
                                action='quarantine')
             self.assertEqual([row['status'] for row in result['last_action']['items']], ['skipped', 'skipped'])
 
+    def test_hermes_custom_profile_is_scoped_and_preserves_state_and_credentials(self):
+        project = self.write('Projects/Hermes Project/source.py').parent
+        home = self.base / 'Custom Hermes'
+        home.mkdir()
+        database = home / 'state.db'
+        with closing(sqlite3.connect(database)) as db:
+            db.executescript('''
+                CREATE TABLE sessions (id TEXT PRIMARY KEY, source TEXT NOT NULL, cwd TEXT);
+                CREATE TABLE state_meta (key TEXT PRIMARY KEY, value TEXT);
+            ''')
+            db.execute('INSERT INTO sessions VALUES (?, ?, ?)', ('session', 'cli', str(project)))
+            db.execute('INSERT INTO state_meta VALUES (?, ?)', ('gateway.local_policy.v1:session', json.dumps({
+                'session_id': 'session', 'entry': {'session_id': 'session'},
+                'policy': {'cwd': str(project), 'terminal_json': json.dumps({'TERMINAL_CWD': str(project)})},
+            })))
+            db.commit()
+        credentials = self.write(home / 'auth.json', b'synthetic credentials')
+        ordinary = self.write(home / 'ordinary.txt', b'user file')
+        history = self.write('.hermes/sessions/session.jsonl', b'{ "body": "synthetic transcript" }')
+        plist = self.write('Applications/Hermes.app/Contents/Info.plist', plistlib.dumps({
+            'CFBundleIdentifier': 'com.nousresearch.hermes', 'CFBundleShortVersionString': '0.23.4',
+        }))
+        with patch.dict(os.environ, {'HERMES_HOME': str(home)}):
+            manual = self.call('scan', roots=[str(history.parent)], deep=True)
+            self.assertEqual(next(row for row in manual['files'] if row['path'] == str(history))['decision'], 'keep')
+            unauthorized = self.call('scan_local', startup=True)
+            self.assertNotIn(str(project), unauthorized['projects'])
+            self.call('scan', roots=[str(home)], deep=False)
+            report = self.call('scan_local', startup=True)
+            self.assertEqual(report['projects'].get(str(project)), ['Hermes Agent'])
+            agent = next(row for row in report['agent_inventory'] if row['name'] == 'Hermes Agent')
+            self.assertTrue(agent['installed'])
+            self.assertEqual(agent['installations'][0]['path'], str(plist.parents[1]))
+            rows = {row['path']: row for row in report['files']}
+            self.assertFalse(rows[str(ordinary)]['agents'])
+            protected = (database, credentials, history)
+            originals = {path: path.read_bytes() for path in protected}
+            self.assertTrue(all(rows[str(path)]['decision'] == 'keep' for path in protected))
+            action = self.call('run', paths=list(map(str, protected)), scan_id=report['scan_id'], action='quarantine')
+            self.assertEqual([row['status'] for row in action['last_action']['items']], ['skipped'] * len(protected))
+            self.assertEqual({path: path.read_bytes() for path in protected}, originals)
+
     def test_zed_app_and_thread_stores_preserve_data_in_automatic_and_manual_scans(self):
         project = self.write('Projects/Zed Project/source.swift').parent
         bundle = self.write('Applications/Zed Preview.app/Contents/Info.plist', plistlib.dumps({

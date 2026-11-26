@@ -239,6 +239,24 @@ with closing(sqlite3.connect(zed_database)) as db:
     db.commit()
 (zed_data / "threads").mkdir()
 (zed_data / "threads/threads.db").write_bytes(b"Opaque Zed conversation storage fixture.")
+hermes_project = home / "Documents/Hermes Project"
+hermes_project.mkdir(parents=True)
+(hermes_project / "source.py").write_text("# synthetic project")
+hermes_database = home / ".hermes/profiles/coder/state.db"
+hermes_database.parent.mkdir(parents=True)
+with closing(sqlite3.connect(hermes_database)) as db:
+    db.executescript("""
+        CREATE TABLE sessions (id TEXT PRIMARY KEY, source TEXT NOT NULL, cwd TEXT);
+        CREATE TABLE state_meta (key TEXT PRIMARY KEY, value TEXT);
+    """)
+    db.execute("INSERT INTO sessions VALUES (?, ?, ?)", ("fixture", "local", str(hermes_project)))
+    db.execute("INSERT INTO state_meta VALUES (?, ?)", ("gateway.local_policy.v1:fixture", json.dumps({
+        "session_id": "fixture", "entry": {"session_id": "fixture"},
+        "policy": {"cwd": str(hermes_project), "terminal_json": json.dumps({
+            "TERMINAL_ENV": "local", "TERMINAL_CWD": str(hermes_project),
+        })},
+    })))
+    db.commit()
 trae_cli = home / ".trae/cli"
 for index, (relative, workspace) in enumerate([
     ("sessions/2026/11/26", aider_project), ("archived_sessions", continue_project),

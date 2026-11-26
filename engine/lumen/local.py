@@ -34,9 +34,12 @@ AGENT_BUNDLES = {
     'dev.zed.Zed-Preview': 'Zed',
     'dev.zed.Zed-Nightly': 'Zed',
     'dev.zed.Zed-Dev': 'Zed',
+    'com.nousresearch.hermes': 'Hermes Agent',
+    'com.nousresearch.hermes-bundled': 'Hermes Agent',
+    'com.nousresearch.hermes-light': 'Hermes Agent',
 }
 AGENT_KINDS = {
-    'Claude Desktop': 'desktop', 'TraeWork': 'desktop',
+    'Claude Desktop': 'desktop', 'TraeWork': 'desktop', 'Hermes Agent': 'desktop',
     'Cursor': 'ide', 'Windsurf': 'ide', 'Kiro': 'ide', 'Trae': 'ide', 'Zed': 'ide',
     'Cline': 'extension', 'Roo Code': 'extension', 'GitHub Copilot VS Code': 'extension',
     'Continue': 'extension', 'Kilo Code VS Code': 'extension',

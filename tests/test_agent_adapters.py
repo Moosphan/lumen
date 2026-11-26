@@ -208,6 +208,72 @@ class AgentAdapterTests(unittest.TestCase):
             with patch.dict(os.environ, {'KILO_DB': 'linked.db'}):
                 self.assertEqual(self.scan(cache=cache, authorized=(data,))[1], {})
 
+    def test_hermes_associates_verified_local_receipts_with_their_current_session(self):
+        folder = self.home / '.hermes'
+        owner = self.home / 'Projects/Named Profile'
+        current = self.home / 'Projects/Current Lineage'
+        stale = self.home / 'Projects/Superseded Lineage'
+        remote = self.home / 'Projects/Remote Lookalike'
+        mismatched = self.home / 'Projects/Changed Policy'
+        imported = self.home / 'Projects/Imported Without Receipt'
+        pending = self.home / 'Projects/Uncheckpointed'
+        deleted = self.home / 'Projects/Deleted Profile'
+        root_schema = """
+            CREATE TABLE sessions (id TEXT PRIMARY KEY, source TEXT NOT NULL, cwd TEXT);
+            CREATE TABLE state_meta (key TEXT PRIMARY KEY, value TEXT);
+        """
+
+        def record(db, sid, cwd, *, origin='local', backend='local', parent=None, terminal_directory=None):
+            db.execute('INSERT INTO sessions VALUES (?, ?, ?)', (sid, origin, str(cwd)))
+            policy = {'cwd': str(cwd), 'request_json': 'PRIVATE REQUEST', 'terminal_json': json.dumps({
+                'TERMINAL_ENV': backend, 'TERMINAL_CWD': str(terminal_directory or cwd),
+            })}
+            receipt = {'session_id': parent or sid, 'entry': {'session_id': sid}, 'policy': policy}
+            db.execute('INSERT INTO state_meta VALUES (?, ?)',
+                       ('gateway.local_policy.v1:' + (parent or sid), json.dumps(receipt)))
+
+        database = folder / 'state.db'
+        database.parent.mkdir(parents=True)
+        db = sqlite3.connect(database)
+        self.addCleanup(db.close)
+        db.execute('PRAGMA journal_mode=WAL')
+        db.executescript(root_schema)
+        record(db, 'local', self.project)
+        db.execute('INSERT INTO sessions VALUES (?, ?, ?)', ('parent', 'local', str(stale)))
+        record(db, 'child', current, parent='parent')
+        record(db, 'remote', remote, backend='ssh')
+        record(db, 'docker', remote, backend='docker')
+        record(db, 'bot', remote, origin='telegram')
+        record(db, 'changed', mismatched, terminal_directory=self.project)
+        db.execute('INSERT INTO sessions VALUES (?, ?, ?)', ('legacy', 'cli', str(imported)))
+        db.execute('INSERT INTO state_meta VALUES (?, ?)', ('gateway.local_policy.v1:invalid', 'broken {'))
+        db.commit()
+        db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+        record(db, 'pending', pending)
+        db.commit()
+        for name, project in (('coder', owner), ('former', deleted)):
+            profile_db = folder / 'profiles' / name / 'state.db'
+            profile_db.parent.mkdir(parents=True)
+            with sqlite3.connect(profile_db) as profile:
+                profile.executescript(root_schema)
+                record(profile, name, project, origin='tui')
+            profile.close()
+        self.write(folder / 'profiles/.deleted/former', b'deleted\n')
+        (folder / 'profiles/link').symlink_to(folder / 'profiles/coder', target_is_directory=True)
+        wal = database.with_name(database.name + '-wal')
+        original = {path: path.read_bytes() for path in (database, wal)}
+        with patch.dict(os.environ, {'HERMES_HOME': ''}):
+            cache, issues = {}, set()
+            result = self.scan(cache=cache, issues=issues)
+            expected = {path: {'Hermes Agent'} for path in (self.project, current, owner)}
+            self.assertEqual(result[1], expected)
+            self.assertTrue(any('检查点' in issue for issue in issues))
+            self.assertNotIn('PRIVATE REQUEST', json.dumps(cache))
+            self.assertEqual({path: path.read_bytes() for path in original}, original)
+            self.assertEqual(self.scan(cache=cache, excluded=(database,))[1], {owner: {'Hermes Agent'}})
+            db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+            self.assertEqual(self.scan(cache=cache)[1], {**expected, pending: {'Hermes Agent'}})
+
     def test_zed_requires_migrated_local_thread_rows_and_unambiguous_path_lists(self):
         root = self.home / 'Library/Application Support/Zed/db'
         database = root / '0-stable/db.sqlite'
