@@ -323,6 +323,40 @@ class LocalInventoryTests(unittest.TestCase):
                                action='quarantine')
             self.assertEqual([row['status'] for row in result['last_action']['items']], ['skipped', 'skipped'])
 
+    def test_vibe_custom_session_root_keeps_verified_data_without_claiming_its_neighbors(self):
+        project = self.write('Projects/Vibe Project/source.py').parent
+        sessions = self.base / 'Custom Vibe Sessions'
+        session_root = sessions / 'session_20261126_201001_7fac124f'
+        meta = self.write(session_root / 'meta.json', json.dumps({
+            'session_id': '7fac124f-4a91-4f0e-9e68-a321432060f2',
+            'environment': {'working_directory': str(project)}, 'total_messages': 1,
+        }).encode())
+        transcript = self.write(session_root / 'messages.jsonl', b'opaque synthetic transcript')
+        outside = self.write(sessions / 'unrelated.mov', b'ordinary material')
+        custom_home = self.home / 'Vibe Custom Home'
+        key = self.write(custom_home / '.env', b'MISTRAL_API_KEY=synthetic')
+        worktree_file = self.write(custom_home / 'worktrees/source-project/worktree/output.mov', b'working output')
+        default_history = self.write('.vibe/logs/session/older.json', b'opaque legacy data')
+        with patch.dict(os.environ, {'VIBE_HOME': str(custom_home), 'VIBE_SESSION_LOGGING__SAVE_DIR': str(sessions)}):
+            manual = self.call('scan', roots=[str(default_history.parent)], deep=True)
+            self.assertEqual(next(row for row in manual['files'] if row['path'] == str(default_history))['decision'], 'keep')
+            unauthorized = self.call('scan_local', startup=True)
+            self.assertNotIn(str(project), unauthorized['projects'])
+            self.call('scan', roots=[str(sessions)], deep=False)
+            report = self.call('scan_local', startup=True)
+            self.assertEqual(report['projects'].get(str(project)), ['Mistral Vibe'])
+            agent = next(row for row in report['agent_inventory'] if row['name'] == 'Mistral Vibe')
+            self.assertEqual(agent['kind'], 'cli')
+            self.assertIn(str(session_root), {store['path'] for store in agent['stores']})
+            self.assertNotIn(str(sessions), {store['path'] for store in agent['stores']})
+            files = {row['path']: row for row in report['files']}
+            self.assertFalse(files[str(outside)]['agents'])
+            originals = {path: path.read_bytes() for path in (meta, transcript, key, worktree_file, default_history)}
+            self.assertTrue(all(files[str(path)]['decision'] == 'keep' for path in originals))
+            action = self.call('run', paths=list(map(str, originals)), scan_id=report['scan_id'], action='quarantine')
+            self.assertEqual([row['status'] for row in action['last_action']['items']], ['skipped'] * len(originals))
+            self.assertEqual({path: path.read_bytes() for path in originals}, originals)
+
     def test_hermes_custom_profile_is_scoped_and_preserves_state_and_credentials(self):
         project = self.write('Projects/Hermes Project/source.py').parent
         home = self.base / 'Custom Hermes'

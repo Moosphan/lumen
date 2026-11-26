@@ -257,6 +257,29 @@ with closing(sqlite3.connect(hermes_database)) as db:
         })},
     })))
     db.commit()
+vibe_project = home / "Documents/Vibe Project"
+vibe_origin = home / "Documents/Vibe Origin"
+for project in (vibe_project, vibe_origin):
+    project.mkdir(parents=True)
+    (project / "source.py").write_text("# synthetic project")
+vibe_id = "d4679b0e-ea09-47a9-8944-7aae071b12c2"
+vibe_session = home / ".vibe/logs/session/unified" / vibe_id
+generation = "0000000000000011"
+manifest = vibe_session / "generations" / generation / "manifest.json"
+manifest.parent.mkdir(parents=True)
+manifest_body = json.dumps({
+    "manifest_version": 1, "session_id": vibe_id, "generation": generation, "snapshot_sequence": 11,
+}, sort_keys=True, separators=(",", ":")).encode()
+manifest.write_bytes(manifest_body + b"\n")
+(vibe_session / "CURRENT").write_text(json.dumps({
+    "store_format": "mistral.vibe.unified-session-store/v1", "store_format_minor": 11,
+    "session_id": vibe_id, "generation": generation, "snapshot_sequence": 11,
+    "manifest_sha256": hashlib.sha256(manifest_body).hexdigest(),
+}) + "\n")
+(vibe_session / "meta.json").write_text(json.dumps({
+    "runtime": "local", "session_id": vibe_id, "origin_directory": str(vibe_origin),
+    "environment": {"working_directory": str(vibe_project)},
+}))
 trae_cli = home / ".trae/cli"
 for index, (relative, workspace) in enumerate([
     ("sessions/2026/11/26", aider_project), ("archived_sessions", continue_project),

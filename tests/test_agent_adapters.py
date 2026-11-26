@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import sqlite3
@@ -207,6 +208,58 @@ class AgentAdapterTests(unittest.TestCase):
             self.assertEqual(self.scan(cache=cache, authorized=(data,))[1], {self.project: {'Kilo Code CLI'}})
             with patch.dict(os.environ, {'KILO_DB': 'linked.db'}):
                 self.assertEqual(self.scan(cache=cache, authorized=(data,))[1], {})
+
+    def test_vibe_requires_a_matching_generation_or_legacy_session_and_revalidates_moves(self):
+        root = self.home / '.vibe/logs/session'
+        initial = self.home / 'Projects/Starting Folder'
+        moved = self.home / 'Projects/New Folder'
+        old = self.home / 'Projects/Legacy Folder'
+        ignored = self.home / 'Projects/Ignored'
+        generation = '0000000000000003'
+
+        def unified(suffix, project, *, runtime='local', minor=10, valid_digest=True):
+            sid = f'25fd89c1-a17f-489d-bacc-4326247a406{suffix}'
+            folder = root / 'unified' / sid
+            manifest = dict(session_id=sid, generation=generation, snapshot_sequence=3, manifest_version=1)
+            canonical = json.dumps(manifest, sort_keys=True, separators=(',', ':')).encode()
+            self.write(folder / 'generations' / generation / 'manifest.json', canonical + b'\n')
+            digest = hashlib.sha256(canonical).hexdigest() if valid_digest else '0' * 64
+            pointer = dict(session_id=sid, store_format='mistral.vibe.unified-session-store/v1',
+                           store_format_minor=minor, generation=generation, snapshot_sequence=3, manifest_sha256=digest)
+            self.write(folder / 'CURRENT', pointer)
+            return self.write(folder / 'meta.json', dict(session_id=sid, runtime=runtime, origin_directory=str(initial),
+                                                        environment={'working_directory': str(project)},
+                                                        title='PRIVATE-VIBE-TITLE'))
+
+        metadata = unified(0, self.project)
+        unified(1, ignored, runtime='cloud')
+        unified(2, ignored, minor=12)
+        unified(3, ignored, valid_digest=False)
+        linked = unified(4, ignored)
+        borrowed = linked.with_name('CURRENT')
+        borrowed.unlink()
+        borrowed.symlink_to(metadata.with_name('CURRENT'))
+        prior = root / 'session_20261126_201000_a1b2c3d4'
+        self.write(prior / 'meta.json', dict(session_id='a1b2c3d4-3819-4323-9c09-dfa87ae12b37',
+                                             environment={'working_directory': str(old)}, total_messages=1))
+        self.write(prior / 'messages.jsonl', b'opaque transcript')
+        wrong = root / 'session_20261126_201000_aaaaaaaa'
+        self.write(wrong / 'meta.json',
+                   dict(session_id='a1b2c3d4-3819-4323-9c09-dfa87ae12b37', environment={'working_directory': str(ignored)}))
+        self.write(wrong / 'messages.jsonl', b'opaque transcript')
+        cache, issues = {}, set()
+        with patch.dict(os.environ, {'VIBE_HOME': '', 'VIBE_SESSION_LOGGING__SAVE_DIR': ''}):
+            stores, projects = self.scan(cache=cache, issues=issues)
+            self.assertEqual(projects, {project: {'Mistral Vibe'} for project in (self.project, initial, old)})
+            self.assertTrue(any('清单' in issue for issue in issues))
+            self.assertTrue(any('版本' in issue for issue in issues))
+            self.assertIn(('Mistral Vibe', root), {(name, path) for name, path, _ in stores})
+            self.assertNotIn('PRIVATE-VIBE-TITLE', json.dumps(cache))
+            updated = json.loads(metadata.read_text())
+            updated['environment']['working_directory'] = str(moved)
+            metadata.write_text(json.dumps(updated))
+            self.assertEqual(self.scan(cache=cache)[1], {project: {'Mistral Vibe'} for project in (moved, initial, old)})
+            self.assertEqual(self.scan(cache=cache, excluded=(metadata,))[1], {old: {'Mistral Vibe'}})
 
     def test_hermes_associates_verified_local_receipts_with_their_current_session(self):
         folder = self.home / '.hermes'

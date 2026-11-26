@@ -15,7 +15,10 @@ from urllib.parse import unquote, urljoin, urlsplit
 from xml.parsers.expat import ExpatError
 from xml.etree.ElementTree import ParseError
 
-from . import agent_ide, agent_local_tools, aider, amp, chromium_cache, crush, hermes, integrations, kiro_cli, trae_cli, zed
+from . import (
+    agent_ide, agent_local_tools, aider, amp, chromium_cache, crush, hermes,
+    integrations, kiro_cli, mistral_vibe, trae_cli, zed,
+)
 
 
 MODELS = {'.gguf', '.safetensors', '.ckpt', '.onnx', '.pt', '.pth', '.ggml'}
@@ -405,8 +408,9 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
         crush_data = 'crush' in folded_path and crush.protected_artifact(p)
         zed_data = '/zed/' in folded_path and zed.protected_artifact(p)
         hermes_data = 'hermes' in folded_path and hermes.protected_artifact(p)
+        vibe_data = '/.vibe/' in folded_path and mistral_vibe.protected_artifact(p)
         if (aider_data or amp_data or browser_code or conductor_data or kiro_data or trae_data or crush_data or zed_data
-                or hermes_data or untitled_workspace
+                or hermes_data or vibe_data or untitled_workspace
                 or (s.st_dev, s.st_ino) in metadata_only_file_ids
                 or metadata_roots and _under(p, metadata_roots)):
             metadata_files.add(p)
@@ -430,7 +434,7 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
             version = parts.index('snapshots') + 1 if 'snapshots' in parts else len(parts)
             files[p]['model_version'] = parts[version] if version < len(parts)-1 else ''
         elif (owner_agent or amp_data or conductor_data or kiro_data or trae_data or crush_data or zed_data or hermes_data
-              or untitled_workspace
+              or vibe_data or untitled_workspace
               or p.suffix.lower() in ('.sqlite', '.sqlite3', '.db', '.plist', '.keychain-db', '.code-workspace')
               or '.git' in p.parts):
             protect(p, '配置、会话或数据库需要保留')

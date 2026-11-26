@@ -261,6 +261,12 @@ private func fallbackReport(_ pid: pid_t) {
                   projects.contains(where: {
                       $0.key.hasSuffix("/Hermes Project") && $0.value == ["Hermes Agent"]
                   }),
+                  projects.contains(where: {
+                      $0.key.hasSuffix("/Vibe Project") && $0.value == ["Mistral Vibe"]
+                  }),
+                  projects.contains(where: {
+                      $0.key.hasSuffix("/Vibe Origin") && $0.value == ["Mistral Vibe"]
+                  }),
                   let agents = report["agent_inventory"] as? [[String: Any]],
                   agents.contains(where: { row in
                       row["name"] as? String == "Gemini CLI" &&
@@ -294,6 +300,10 @@ private func fallbackReport(_ pid: pid_t) {
                               ($0["path"] as? String)?.hasSuffix("/.hermes/profiles/coder") == true
                                   && ($0["bytes"] as? Int ?? 0) > 0
                           }) == true
+                  }),
+                  agents.contains(where: {
+                      $0["name"] as? String == "Mistral Vibe" && $0["kind"] as? String == "cli"
+                          && ($0["bytes"] as? Int ?? 0) > 0
                   }),
                   agents.contains(where: {
                       $0["name"] as? String == "Trae" && $0["installed"] as? Bool == true
@@ -359,6 +369,10 @@ private func fallbackReport(_ pid: pid_t) {
                       ($0["path"] as? String)?.hasSuffix("/.hermes/profiles/coder/state.db") == true
                           && $0["decision"] as? String == "keep"
                   }),
+                  files.contains(where: {
+                      ($0["path"] as? String)?.hasSuffix("/d4679b0e-ea09-47a9-8944-7aae071b12c2/CURRENT") == true
+                          && $0["decision"] as? String == "keep"
+                  }),
                   agents.contains(where: {
                       $0["name"] as? String == "Conductor" && $0["kind"] as? String == "workspace-manager"
                           && ($0["bytes"] as? Int ?? 0) > 0
@@ -385,6 +399,7 @@ private func fallbackReport(_ pid: pid_t) {
         print("Packaged app discovered an unregistered Crush project and retained its session database.")
         print("Packaged app attributed a local Zed project and kept the native conversation database.")
         print("Packaged app attributed a Hermes profile workspace and kept the session database.")
+        print("Packaged app attributed both Mistral Vibe session folders and retained the generation pointer.")
         guard AXIsProcessTrusted() else {
             fallbackReport(pid)
             return

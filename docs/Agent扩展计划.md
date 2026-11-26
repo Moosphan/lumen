@@ -117,6 +117,8 @@ TRAE CLI 2.0 在工作区单列，工具家族与 IDE 合计。扫描默认 `~/.
 
 接入 Hermes Agent 后累计覆盖 25 个工具家族。支持默认资料目录、命名配置档以及已授权的 `HERMES_HOME` 中可核验的数据库和配置文件。工程来自 v0.23.4 的会话与当前本机终端策略，SSH、容器和聊天平台会话仅保留盘点。默认历史、配置和标准桌面资料按保留盘点，自定义资料根中的普通文件沿用原有规则。缺少策略的旧会话和还在 WAL 中的记录暂不参与工程归属。 [会话存储](https://github.com/NousResearch/hermes-agent/blob/v0.23.4/website/docs/developer-guide/session-storage.md) · [本机策略](https://github.com/NousResearch/hermes-agent/blob/v0.23.4/gateway/session_policy.py) · [工单 #43](https://github.com/Moosphan/lumen/issues/43)
 
+接入 Mistral Vibe 后累计覆盖 26 个工具家族。支持 v3.1.5 的统一存储及 v2.26.1 的默认前缀历史目录。新版核验 CURRENT 与当前清单，旧版核验会话目录标识及会话日志存在性，随后从会话元数据关联当前和起始本机目录。默认资料、管理的工作树和临时工作区按保留盘点。外部会话根可通过已授权的 `VIBE_HOME` 或绝对路径 `VIBE_SESSION_LOGGING__SAVE_DIR` 发现，作用于已识别的会话目录。较早的单 JSON 会话、旧版自定义前缀、TOML 指定的自定义会话根、远程会话和工作树与工程的进一步关联仍待验证。 [会话架构](https://github.com/mistralai/mistral-vibe/blob/v3.1.5/docs/adr/0006-local-sessions.md) · [旧版数据写入](https://github.com/mistralai/mistral-vibe/blob/v2.26.1/vibe/core/session/session_logger.py) · [工单 #44](https://github.com/Moosphan/lumen/issues/44)
+
 ## 功能和验收清单
 
 | 编号 | 交付 | 依赖 | 验收 |
