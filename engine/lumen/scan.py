@@ -15,7 +15,7 @@ from urllib.parse import unquote, urljoin, urlsplit
 from xml.parsers.expat import ExpatError
 from xml.etree.ElementTree import ParseError
 
-from . import agent_ide, agent_local_tools, aider, amp, chromium_cache, integrations
+from . import agent_ide, agent_local_tools, aider, amp, chromium_cache, integrations, kiro_cli
 
 
 MODELS = {'.gguf', '.safetensors', '.ckpt', '.onnx', '.pt', '.pth', '.ggml'}
@@ -396,7 +396,8 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
         untitled_workspace = agent_ide.is_windsurf_untitled_workspace(p)
         conductor_data = (('/conductor/workspaces/' in folded_path or '/com.conductor.app/' in folded_path)
                           and agent_local_tools.conductor_user_data(p))
-        if (aider_data or amp_data or browser_code or conductor_data or untitled_workspace
+        kiro_data = (('/.kiro/' in folded_path or '/kiro-cli/' in folded_path) and kiro_cli.protected_artifact(p))
+        if (aider_data or amp_data or browser_code or conductor_data or kiro_data or untitled_workspace
                 or (s.st_dev, s.st_ino) in metadata_only_file_ids
                 or metadata_roots and _under(p, metadata_roots)):
             metadata_files.add(p)
@@ -419,7 +420,7 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
             parts = p.parts
             version = parts.index('snapshots') + 1 if 'snapshots' in parts else len(parts)
             files[p]['model_version'] = parts[version] if version < len(parts)-1 else ''
-        elif (owner_agent or amp_data or conductor_data or untitled_workspace
+        elif (owner_agent or amp_data or conductor_data or kiro_data or untitled_workspace
               or p.suffix.lower() in ('.sqlite', '.sqlite3', '.db', '.plist', '.keychain-db', '.code-workspace')
               or '.git' in p.parts):
             protect(p, '配置、会话或数据库需要保留')

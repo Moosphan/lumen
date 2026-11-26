@@ -40,7 +40,7 @@ lumen_build_id=$(git rev-parse --short HEAD)
 | --- | --- |
 | 空间总览与应用排行 | 快速/深度盘点、按应用独占量或可低影响清理量排序、核对可处理项 |
 | 应用清理详情 | 按应用查看低影响、待确认和保留项目，分析沙盒缓存、临时文件与 Chrome / Chromium 的生成代码缓存 |
-| Agent 工作区 | 20 个工具家族的本地工程或数据盘点，包括 Amp、Conductor、DeepSeek Harness、Pi、Aider 和 Continue。按 Agent 或工程查看共享占用、清理建议、任务收尾单和会话观察 |
+| Agent 工作区 | 20 个工具家族的本地工程或数据盘点，包括 Kiro IDE 与 CLI、Amp、Conductor、DeepSeek Harness、Pi、Aider 和 Continue。按 Agent 或工程查看共享占用、清理建议、任务收尾单和会话观察 |
 | 模型存储 | Ollama、Hugging Face、LM Studio、ComfyUI 的模型、版本、共享权重和已知工作流引用；支持按固定修订重新获取经验证的 Hugging Face 单文件 |
 | 大文件清理 | 多列卡片展示当前层占用，目录下钻复用快照；按视频、图片、音频审阅已索引的素材、引用和重复副本 |
 | 清理建议 | 筛选大文件、旧下载、重复件、卸载残留；查看 Xcode、npm、pnpm、pip、uv、Homebrew 和 Docker 的开发缓存占用与处置依据 |

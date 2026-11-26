@@ -153,7 +153,15 @@ windsurf_untitled = windsurf_state.parents[2] / "Workspaces/1795610510123/worksp
 windsurf_untitled.parent.mkdir(parents=True)
 windsurf_untitled.write_text(json.dumps({"folders": [{"path": str(project)}, {"path": str(gemini_project)}]}))
 kiro = home / ".kiro/sessions"
-kiro.mkdir(parents=True)
+kiro_cli = kiro / "cli"
+kiro_cli.mkdir(parents=True)
+(kiro_cli / "fixture.json").write_text(json.dumps({"cwd": str(continue_project), "session_state": {}}))
+(kiro_cli / "fixture.jsonl").write_text("Protected legacy transcript.")
+kiro_kas = kiro / "0123456789abcdef/sess_fixture"
+kiro_kas.mkdir(parents=True)
+(kiro_kas / "session.json").write_text(json.dumps({
+    "id": "sess_fixture", "workspacePaths": [str(continue_project)],
+}))
 models = home / ".lmstudio/models/Lumen/Sample Weight"
 models.mkdir(parents=True)
 (models / "sample-Q4_K_M.gguf").write_bytes(b"synthetic model metadata")

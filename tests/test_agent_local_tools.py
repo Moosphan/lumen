@@ -23,6 +23,7 @@ class LocalAgentToolTests(unittest.TestCase):
             'OPENCLAW_WORKSPACE_DIR', 'OPENCLAW_PROFILE', 'QWEN_HOME', 'QWEN_RUNTIME_DIR',
             'GOOSE_PATH_ROOT', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_CACHE_HOME',
             'CONTINUE_GLOBAL_DIR', 'DSH_HOME', 'PI_CODING_AGENT_DIR', 'PI_CODING_AGENT_SESSION_DIR',
+            'KIRO_HOME',
         )
         env = patch.dict(os.environ, dict.fromkeys(keys, ''))
         env.start()
@@ -38,6 +39,67 @@ class LocalAgentToolTests(unittest.TestCase):
         from engine.lumen import agent_local_tools
 
         return discover(self.home, True, adapters=agent_local_tools.ADAPTERS, **options)
+
+    def test_kiro_cli_associates_companions_only_in_authorized_locations(self):
+        first = self.write('.kiro/sessions/cli/known.json', {
+            'cwd': str(self.project), 'session_state': {'private': 'should not enter cache'},
+        })
+        self.write(first.with_suffix('.jsonl'), b'private conversation')
+        self.write('.kiro/sessions/cli/orphan.json', {'cwd': str(self.home / 'orphan'), 'session_state': {}})
+        self.write('.kiro/sessions/cli/remote.json', {'cwd': 'ssh://server/repo', 'session_state': {}})
+        self.write('.kiro/sessions/cli/remote.jsonl', b'private')
+        self.write('.kiro/sessions/cli/mismatch.json', {
+            'cwd': str(self.home / 'mismatch'), 'session_id': 'different', 'session_state': {},
+        })
+        self.write('.kiro/sessions/cli/mismatch.jsonl', b'private')
+        linked = self.write('unrelated.json', {'cwd': str(self.home / 'linked'), 'session_state': {}})
+        fake = self.write('.kiro/sessions/cli/link.jsonl', b'private')
+        fake.with_suffix('.json').symlink_to(linked)
+        external = self.base / 'Kiro Data'
+        other = self.home / 'Another Project'
+        custom = self.write(external / 'sessions/cli/custom.json', {'cwd': str(other), 'session_state': {}})
+        self.write(custom.with_suffix('.jsonl'), b'private')
+
+        with patch.dict(os.environ, {'KIRO_HOME': str(external)}):
+            cache = {}
+            self.assertEqual(self.scan(cache=cache)[1], {self.project: {'Kiro CLI'}})
+            self.assertEqual(self.scan(cache=cache, authorized=(external,))[1],
+                             {self.project: {'Kiro CLI'}, other: {'Kiro CLI'}})
+            self.assertNotIn('should not enter cache', json.dumps(cache))
+            self.write(custom, {'cwd': str(self.home / 'Updated'), 'session_state': {}})
+            self.assertEqual(self.scan(cache=cache, authorized=(external,))[1],
+                             {self.project: {'Kiro CLI'}, self.home / 'Updated': {'Kiro CLI'}})
+
+    def test_kiro_cli_classic_database_projects_use_known_schema_and_read_only_keys(self):
+        database = self.home / 'Library/Application Support/kiro-cli/data.sqlite3'
+        database.parent.mkdir(parents=True)
+        secondary = self.home / '另一个工程'
+        with closing(sqlite3.connect(database)) as db:
+            db.execute('PRAGMA journal_mode=WAL')
+            db.executescript('CREATE TABLE conversations (key TEXT PRIMARY KEY, value TEXT);'
+                             'CREATE TABLE conversations_v2 (key TEXT NOT NULL, conversation_id TEXT NOT NULL, '
+                             'value TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, '
+                             'PRIMARY KEY (key, conversation_id));'
+                             'CREATE TABLE auth_kv(key TEXT PRIMARY KEY, value TEXT NOT NULL);')
+            db.execute('INSERT INTO conversations VALUES (?,?)', (str(self.project), 'private body'))
+            db.execute('INSERT INTO conversations_v2 VALUES (?,?,?,?,?)', (str(secondary), 'id', 'private body', 1, 1))
+            db.execute('INSERT INTO auth_kv VALUES (?,?)', (str(self.home / 'fake project'), 'private token'))
+            db.commit()
+            db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+            marker = self.home / 'Uncheckpointed'
+            db.execute('INSERT INTO conversations VALUES (?,?)', (str(marker), 'private WAL data'))
+            db.commit()
+            wal = database.with_name(database.name + '-wal')
+            before = {p: p.read_bytes() for p in (database, wal)}
+            issues, cache = set(), {}
+            self.assertEqual(self.scan(issues=issues, cache=cache)[1],
+                             {self.project: {'Kiro CLI'}, secondary: {'Kiro CLI'}})
+            self.assertTrue(any('主库' in issue for issue in issues))
+            for marker_text in ('private body', 'private token', 'private WAL data'):
+                self.assertNotIn(marker_text, json.dumps(cache))
+            self.assertEqual({p: p.read_bytes() for p in before}, before)
+            db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+            self.assertIn(marker, self.scan(cache=cache)[1])
 
     def test_amp_reads_only_legacy_thread_project_fields_and_revalidates_changes(self):
         threads = '.local/share/amp/threads'

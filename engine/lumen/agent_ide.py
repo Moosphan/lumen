@@ -5,6 +5,7 @@ import re
 from itertools import islice
 from urllib.parse import unquote, urlsplit
 
+from . import kiro_cli
 from .integrations import recorded_path
 
 
@@ -201,7 +202,7 @@ def _roo_code(metadata, store, add):
                     add(item.get('workspace'), 'Roo Code')
 
 
-def _kiro(metadata, store, add):
+def _kiro_kas(metadata, store, add):
     # https://kiro.dev/docs/ide/whats-new-v1/#sessions
     # https://github.com/kirodotdev/Kiro/issues/10534
     # https://github.com/kirodotdev/Kiro/issues/10770
@@ -209,7 +210,11 @@ def _kiro(metadata, store, add):
     store('Kiro', application / 'logs', 'Kiro IDE 日志')
     legacy = application / 'User/globalStorage/kiro.kiroagent/workspace-sessions'
     store('Kiro', legacy, 'Kiro IDE 旧版会话存储')
-    root = metadata.home / '.kiro/sessions'
+    for home in kiro_cli.homes(metadata):
+        _kiro_sessions(metadata, home / 'sessions', store, add)
+
+
+def _kiro_sessions(metadata, root, store, add):
     if not store('Kiro', root, 'Kiro KAS 共享会话存储'):
         return
     sessions = (session for bucket in metadata.children(root, directories=True)
@@ -234,4 +239,4 @@ def _kiro(metadata, store, add):
                 add(workspace, 'Kiro')
 
 
-ADAPTERS = (_copilot_cli, _copilot_vscode, _windsurf, _roo_code, _kiro)
+ADAPTERS = (_copilot_cli, _copilot_vscode, _windsurf, _roo_code, _kiro_kas)

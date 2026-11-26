@@ -17,7 +17,7 @@ class AgentIDEAdapterTests(unittest.TestCase):
         self.home = self.base / 'home'
         self.home.mkdir()
         self.project = self.home / 'Projects/电影 Project'
-        environment = patch.dict(os.environ, {'COPILOT_HOME': ''})
+        environment = patch.dict(os.environ, {'COPILOT_HOME': '', 'KIRO_HOME': ''})
         environment.start()
         self.addCleanup(environment.stop)
 
@@ -243,3 +243,15 @@ class AgentIDEAdapterTests(unittest.TestCase):
         remaining, projects = self.scan(excluded=(item.parents[1],))
         self.assertEqual(projects, {})
         self.assertEqual(remaining, stores)
+
+    def test_kiro_custom_kas_store_requires_authorization_and_has_shared_attribution(self):
+        custom = self.base / 'Custom Kiro'
+        session = self.write(custom / 'sessions/0123456789abcdef/sess_local/session.json', {
+            'id': 'sess_local', 'workspacePaths': [str(self.project)],
+        })
+        cache = {}
+        with patch.dict(os.environ, {'KIRO_HOME': str(custom)}):
+            self.assertEqual(self.scan(cache=cache), ([], {}))
+            self.assertEqual(self.scan(cache=cache, authorized=(custom,)), (
+                [('Kiro', session.parents[2], 'Kiro KAS 共享会话存储')], {self.project: {'Kiro'}},
+            ))

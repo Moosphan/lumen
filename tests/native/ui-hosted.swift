@@ -230,7 +230,7 @@ private func fallbackReport(_ pid: pid_t) {
                   projects.contains(where: {
                       $0.key.hasSuffix("/Gemini Project") && $0.value == ["Conductor", "Gemini CLI", "Windsurf"]
                   }),
-                  projects.values.contains(["Continue"]),
+                  projects.values.contains(["Continue", "Kiro", "Kiro CLI"]),
                   projects.values.contains(["Aider", "Amp"]),
                   projects.values.contains(["DeepSeek Harness"]),
                   projects.contains(where: {
@@ -243,6 +243,10 @@ private func fallbackReport(_ pid: pid_t) {
                       (row["stores"] as? [[String: Any]])?.contains(where: { ($0["count"] as? Int ?? 0) > 0 }) == true
                   }),
                   agents.contains(where: { $0["name"] as? String == "Kiro" }),
+                  agents.contains(where: {
+                      $0["name"] as? String == "Kiro CLI" && $0["family"] as? String == "Kiro"
+                          && ($0["bytes"] as? Int ?? 0) > 0
+                  }),
                   agents.contains(where: { $0["name"] as? String == "Amp" && ($0["bytes"] as? Int ?? 0) > 0 }),
                   agents.contains(where: {
                       $0["name"] as? String == "Conductor" && $0["kind"] as? String == "workspace-manager"
@@ -265,7 +269,7 @@ private func fallbackReport(_ pid: pid_t) {
                   (data["roots"] as? [String])?.isEmpty == true else { return nil as Bool? }
             return true
         }
-        print("Packaged app automatically inventoried local projects, including both Amp workspace evidence formats and the shared Conductor worktree.")
+        print("Packaged app inventoried local projects, including shared Kiro KAS and legacy CLI attribution.")
         guard AXIsProcessTrusted() else {
             fallbackReport(pid)
             return

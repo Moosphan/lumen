@@ -38,7 +38,11 @@ AGENT_KINDS = {
     'GitHub Copilot CLI': 'cli', 'OpenClaw': 'cli', 'Qwen Code': 'cli', 'goose': 'cli',
     'DeepSeek Harness': 'desktop', 'Pi': 'cli',
     'Conductor': 'workspace-manager',
-    'Amp': 'cli',
+    'Amp': 'cli', 'Kiro CLI': 'cli',
+}
+AGENT_FAMILIES = {
+    'GitHub Copilot CLI': 'GitHub Copilot', 'GitHub Copilot VS Code': 'GitHub Copilot',
+    'Kiro CLI': 'Kiro',
 }
 HIDDEN_SCOPE_NAMES = {'.git', '.Trash', '.Trashes', f'.lumen-vault-{os.getuid()}'}
 
@@ -339,7 +343,7 @@ def agent_inventory(report, extensions=()):
                                 supports_events=name in ('Claude Code', 'Codex', 'Gemini CLI'),
                                 has_verified_cleanup=False,
                                 bytes=0, count=0, shared_bytes=0)
-            agents[name]['family'] = 'GitHub Copilot' if name.startswith('GitHub Copilot ') else name
+            agents[name]['family'] = AGENT_FAMILIES.get(name, name)
             agents[name]['kind'] = AGENT_KINDS.get(name, '')
         return agents[name]
 

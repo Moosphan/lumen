@@ -141,6 +141,41 @@ class LocalInventoryTests(unittest.TestCase):
         config.write_text('{}')
         self.assertNotIn(str(project), self.call('scan_local', startup=True)['projects'])
 
+    def test_kiro_cli_and_kas_share_a_family_and_keep_local_session_data(self):
+        project = self.write('Projects/Kiro Film/source.txt').parent
+        kas = self.write('.kiro/sessions/0123456789abcdef/sess_fixture/session.json', json.dumps({
+            'id': 'sess_fixture', 'workspacePaths': [str(project)],
+        }).encode())
+        legacy = self.write('.kiro/sessions/cli/fixture.json', json.dumps({
+            'cwd': str(project), 'session_state': {},
+        }).encode())
+        transcript = self.write('.kiro/sessions/cli/fixture.jsonl', b'fixture transcript')
+        credential = self.write('Library/Application Support/kiro-cli/settings/token.tmp', b'fixture credential')
+        protected = [kas, legacy, transcript, credential]
+        manual = self.call('scan', roots=[str(kas.parents[2]), str(credential.parents[1])], deep=False)
+        self.assertEqual({row['path']: row['decision'] for row in manual['files']},
+                         {str(path): 'keep' for path in protected})
+        self.call('settings', roots=[])
+
+        report = self.call('scan_local', startup=True)
+        self.assertEqual(report['projects'][str(project)], ['Kiro', 'Kiro CLI'])
+        agents = {row['name']: row for row in report['agent_inventory']}
+        self.assertEqual({agents[name]['family'] for name in ('Kiro', 'Kiro CLI')}, {'Kiro'})
+        self.assertEqual(agents['Kiro CLI']['kind'], 'cli')
+        self.assertGreater(agents['Kiro CLI']['bytes'], 0)
+        result = self.call('run', paths=list(map(str, protected)), scan_id=report['scan_id'], action='quarantine')
+        self.assertEqual([row['status'] for row in result['last_action']['items']], ['skipped'] * len(protected))
+        self.assertTrue(all(path.is_file() for path in protected))
+
+    def test_kiro_custom_session_storage_is_protected_in_manual_only_scan(self):
+        custom = self.base / 'Custom Kiro'
+        transcript = self.write(custom / 'sessions/cli/fixture.jsonl', b'fixture transcript')
+        credential = self.write(custom / 'settings/fixture.tmp', b'fixture credential')
+        with patch.dict(os.environ, {'KIRO_HOME': str(custom)}):
+            report = self.call('scan', roots=[str(custom)], deep=True)
+        self.assertEqual({row['path']: row['decision'] for row in report['files']},
+                         {str(transcript): 'keep', str(credential): 'keep'})
+
     def test_aider_manual_scope_and_discovery_cache_revalidate_marker(self):
         project = self.manual / "worktree"
         project.mkdir()

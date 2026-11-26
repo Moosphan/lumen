@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from . import actions, agent_events, app_cleanup, developer_caches, docker_cache, integrations, local, macmanage
-from . import chromium_cache, mcp_review, model_inventory, model_recovery, model_runtime, space_tree, task_closeout
+from . import chromium_cache, kiro_cli, mcp_review, model_inventory, model_recovery, model_runtime, space_tree, task_closeout
 from .fixture import create_fixture
 from .scan import SYSTEM_ROOTS, _under, scan
 
@@ -259,6 +259,9 @@ def app_protected(config, record, report):
 def inventory(config, state, incremental=False, full=False, quick=False):
     deep = full or (config["deep"] and not quick)
     protected = set(config["keep"])
+    kiro_roots = (kiro_cli.custom_protected_roots(Path(config["_local_home"]))
+                  if config.get("_local_home") else [])
+    protected.update(kiro_roots)
     for task in config["tasks"]:
         protected.update(task["inputs"] + task["outputs"])
         if not task["closed"]:
@@ -303,8 +306,8 @@ def inventory(config, state, incremental=False, full=False, quick=False):
                   keep=sorted(protected | model_scopes), exclude=exclusions,
                   hash_cache=config.setdefault("hash_cache", {}) if incremental else None, installed=installed,
                   agent_stores={Path(row["path"]): row["agent_store"] for row in locations if row.get("agent_store")},
-                  metadata_only_roots=[path for row in cache_locations if row["cache_layout"] != "xcode"
-                                       for path in (row["path"], *row["aliases"])],
+                  metadata_only_roots=kiro_roots + [path for row in cache_locations if row["cache_layout"] != "xcode"
+                                                    for path in (row["path"], *row["aliases"])],
                   metadata_only_file_ids={tuple(row["identity"]) for row in cache_locations
                                           if not row["directory"]},
                   browser_cache_home=Path(config["_local_home"]) if config.get("_local_home") else None)
