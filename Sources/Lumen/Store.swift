@@ -54,6 +54,7 @@ func resource(_ name: String, source: String) -> URL? {
     @Published var busy = ""
     @Published var notice = ""
     @Published var error: String?
+    @Published private(set) var needsDiskAccess = false
     @Published var result: ActionResult?
     @Published private(set) var fixtureState: URL?
     @Published var generation = 0
@@ -78,6 +79,7 @@ func resource(_ name: String, source: String) -> URL? {
         if let fixtureState {
             var env = ProcessInfo.processInfo.environment
             env["LUMEN_STATE_DIR"] = fixtureState.path
+            env["LUMEN_INVENTORY_HOME"] = fixtureState.path
             task.environment = env
         }
         task.standardInput = input
@@ -109,6 +111,10 @@ func resource(_ name: String, source: String) -> URL? {
                     guard self.process === task else { return }
                     self.process = nil
                     self.busy = ""
+                    if envelope?["code"] as? String == "full_disk_access_required" {
+                        self.needsDiskAccess = true
+                        return
+                    }
                     if ["scan", "scan_local", "size_tree"].contains(command) && task.terminationReason == .uncaughtSignal {
                         self.notice = "扫描已停止，保留上次完成的盘点。"
                         return
@@ -117,6 +123,9 @@ func resource(_ name: String, source: String) -> URL? {
                           let dashboard else {
                         self.error = envelope?["error"] as? String ?? "本地引擎未能完成操作（退出码 \(task.terminationStatus)）。"
                         return
+                    }
+                    if self.fixtureState == nil {
+                        self.needsDiskAccess = false
                     }
                     if let presentation {
                         self.data = dashboard
@@ -147,6 +156,11 @@ func resource(_ name: String, source: String) -> URL? {
     func scanLocal(deep: Bool) {
         if fixtureState != nil { scan(roots, deep: deep) }
         else { call("scan_local", ["deep": deep]) }
+    }
+    func openDiskAccessSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
+            NSWorkspace.shared.open(url)
+        }
     }
     func startInventory(done: @escaping (Object) -> Void) {
         call("scan_local", ["startup": true], done: done)

@@ -35,6 +35,16 @@ def native_caller():
         return False
 
 
+def has_full_disk_access():
+    """Conservative preflight using a protected system directory's access bits.
+
+    No directory enumeration, database reads or permission requests are needed.
+    Test in the actual scanning process so a new build or revoked grant is detected.
+    """
+    return sys.platform == "darwin" and os.access(
+        "/Library/Application Support/com.apple.TCC", os.R_OK | os.X_OK)
+
+
 def main():
     cancelled = False
 
@@ -44,12 +54,13 @@ def main():
 
     try:
         request = json.load(sys.stdin)
+        native = native_caller()
         if isinstance(request, dict) and (
                 request.get("cmd") in ("mcp_pending", "mcp_decline", "mcp_approve",
                                        "model_pin", "model_recover", "model_forget", "model_recovery_options",
                                        "docker_cache_usage")
                 or request.get("cmd") == "settings" and "mcp_enabled" in request):
-            if not native_caller():
+            if not native:
                 raise ValueError("请在既白窗口执行此操作")
         if isinstance(request, dict) and request.get("cmd") == "model_recover":
             signal.signal(signal.SIGTERM, cancel_recovery)
@@ -57,6 +68,13 @@ def main():
         state = Path(os.environ.get("LUMEN_STATE_DIR") or
                      (Path.home() / "Library/Application Support/org.lumen.cleaner"))
         fixture_home = os.environ.get("LUMEN_INVENTORY_HOME") if os.environ.get("LUMEN_STATE_DIR") else None
+        if (native and not fixture_home and isinstance(request, dict)
+                and request.get("cmd") != "fixture" and not has_full_disk_access()):
+            sys.stdout.write(json.dumps({
+                "ok": False, "code": "full_disk_access_required",
+                "error": "请在系统设置开启既白的完全磁盘访问权限。"
+            }, ensure_ascii=False))
+            return
         home = Path(fixture_home).resolve() if fixture_home else Path.home()
         result = {"ok": True, "data": dispatch(state, request, local_home=home,
                                                 include_system=fixture_home is None,

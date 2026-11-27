@@ -115,7 +115,7 @@ struct Workbench: View {
                                     Text(page == .apps && selectedApplication != nil ? "应用清理详情" : page.rawValue)
                                         .font(.system(size: 32, weight: .semibold))
                                     Spacer()
-                                    if page == .home || page == .scopes {
+                                    if (page == .home || page == .scopes) && (!store.needsDiskAccess || store.fixtureState != nil) {
                                         scanControl
                                     }
                                 }.id("workspace-heading")
@@ -126,36 +126,40 @@ struct Workbench: View {
                                         Button("取消扫描") { store.cancelScan() }.buttonStyle(.link)
                                     }.foregroundStyle(.secondary)
                                 }
-                                switch page {
-                                case .home: home
-                                case .apps:
-                                    if let path = selectedApplication,
-                                       let app = store.inventory.apps.first(where: { $0.id == path }) {
-                                        AppCleanupDetail(store: store, app: app) { selectedApplication = nil }.id(path)
-                                    } else {
-                                        AppRanking(store: store, drill: { review(owner: $0, verdict: $1) },
-                                                   cleanup: { selectedApplication = $0 })
+                                if store.needsDiskAccess && store.fixtureState == nil {
+                                    diskAccessPanel
+                                } else {
+                                    switch page {
+                                    case .home: home
+                                    case .apps:
+                                        if let path = selectedApplication,
+                                           let app = store.inventory.apps.first(where: { $0.id == path }) {
+                                            AppCleanupDetail(store: store, app: app) { selectedApplication = nil }.id(path)
+                                        } else {
+                                            AppRanking(store: store, drill: { review(owner: $0, verdict: $1) },
+                                                       cleanup: { selectedApplication = $0 })
+                                        }
+                                    case .agents: WorkspaceView(store: store, drill: { bucket in
+                                        review(project: bucket.title)
+                                        bucketPaths = bucket.paths
+                                    })
+                                    case .models: ModelInventoryView(store: store)
+                                    case .review: ReviewView(store: store, owner: $owner, project: $project, verdict: $verdict,
+                                                             bucketPaths: $bucketPaths, path: $reviewPath)
+                                    case .large:
+                                        SpaceBrowser(store: store, canvasHeight: max(320, viewport.size.height - 226),
+                                                     didOpenLevel: { scroll.scrollTo("workspace-heading", anchor: .top) },
+                                                     reviewMedia: { group in
+                                            review(project: MediaReviewGroup.titles[group.id] ?? group.id)
+                                            bucketPaths = group.paths
+                                        }) { path, enroll in
+                                            review()
+                                            reviewPath = path
+                                            if enroll { store.scan(store.roots + [path], deep: false, renewRoots: [path]) }
+                                        }
+                                    case .history: HistoryView(store: store)
+                                    case .scopes: scopes
                                     }
-                                case .agents: WorkspaceView(store: store, drill: { bucket in
-                                    review(project: bucket.title)
-                                    bucketPaths = bucket.paths
-                                })
-                                case .models: ModelInventoryView(store: store)
-                                case .review: ReviewView(store: store, owner: $owner, project: $project, verdict: $verdict,
-                                                         bucketPaths: $bucketPaths, path: $reviewPath)
-                                case .large:
-                                    SpaceBrowser(store: store, canvasHeight: max(320, viewport.size.height - 226),
-                                                 didOpenLevel: { scroll.scrollTo("workspace-heading", anchor: .top) },
-                                                 reviewMedia: { group in
-                                        review(project: MediaReviewGroup.titles[group.id] ?? group.id)
-                                        bucketPaths = group.paths
-                                    }) { path, enroll in
-                                        review()
-                                        reviewPath = path
-                                        if enroll { store.scan(store.roots + [path], deep: false, renewRoots: [path]) }
-                                    }
-                                case .history: HistoryView(store: store)
-                                case .scopes: scopes
                                 }
                             }.padding(26).frame(maxWidth: .infinity, alignment: .leading)
                         }
@@ -163,13 +167,9 @@ struct Workbench: View {
                 }
             }
         }.background(canvas).tint(lilac).preferredColorScheme(.dark)
-        .task {
-            store.startInventory { data in
-                deep = data["deep"] as? Bool ?? false
-            }
-        }
+        .task { startInventory() }
         .onReceive(ticker) { now in
-            guard scheduled, store.fixtureState == nil, now.timeIntervalSince(lastScheduledScan) >= 900, page == .home,
+            guard scheduled, !store.needsDiskAccess, store.fixtureState == nil, now.timeIntervalSince(lastScheduledScan) >= 900, page == .home,
                   store.busy.isEmpty, NSApp.isActive, store.error == nil,
                   NSApp.modalWindow == nil, NSApp.keyWindow?.attachedSheet == nil else { return }
             lastScheduledScan = now
@@ -191,6 +191,27 @@ struct Workbench: View {
         .buttonStyle(.bordered).disabled(!store.busy.isEmpty)
     }
 
+    private func startInventory() {
+        store.startInventory { data in
+            deep = data["deep"] as? Bool ?? false
+        }
+    }
+
+    var diskAccessPanel: some View {
+        Panel {
+            Label("开启完全磁盘访问权限", systemImage: "lock.shield")
+                .font(.title2.weight(.semibold)).foregroundStyle(lilac)
+            Text("在「隐私与安全性 → 完全磁盘访问权限」中启用既白。如果列表里没有既白，请点「＋」添加当前的 Lumen.app。返回后点击再次检测，或按系统提示重新打开应用。")
+                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 12) {
+                Button("打开系统设置") { store.openDiskAccessSettings() }
+                    .buttonStyle(.borderedProminent)
+                Button("再次检测并扫描") { startInventory() }
+                    .buttonStyle(.bordered)
+            }.disabled(!store.busy.isEmpty)
+        }
+    }
+
     var home: some View {
         SpaceOverview(store: store, review: { review(verdict: $0) },
                       applications: { page = .apps }, workspaces: { page = .agents })
@@ -198,6 +219,14 @@ struct Workbench: View {
 
     var scopes: some View {
         VStack(alignment: .leading, spacing: 14) {
+            if store.fixtureState == nil {
+                Panel {
+                    Label("磁盘访问权限", systemImage: "lock.shield").font(.headline)
+                    Text("在系统设置中管理完全磁盘访问。每次扫描前会重新检测权限。")
+                        .font(.callout).foregroundStyle(.secondary)
+                    Button("管理系统权限") { store.openDiskAccessSettings() }
+                }
+            }
             if store.fixtureState == nil { SuggestedScopes(store: store, deep: deep) }
             Panel {
                 Text("已授权目录").font(.headline)

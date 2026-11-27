@@ -30,7 +30,9 @@ lumen_build_id=$(git rev-parse --short HEAD)
 /usr/bin/ditto -c -k --keepParent "dist/$lumen_build_id/Lumen.app" "dist/$lumen_build_id/Lumen.zip"
 ```
 
-启动后自动盘点可读取的应用安装位置、下载、常见缓存、日志与本地 Agent 工程。首页显示已盘点数据的占比和启动盘容量。应用排行支持在 Finder 中显示应用及打开所在目录。可在「扫描范围」排除自动发现的位置，或添加额外目录。清理需要审阅和确认，自动收尾可单独启用。
+首次打开时，通过「打开系统设置」为当前 Lumen.app 开启「隐私与安全性 → 完全磁盘访问权限」。返回既白点击「再次检测并扫描」，或按系统提示重启应用。后续启动会先检测该权限，再自动盘点应用、下载、缓存、日志和本地 Agent 工程。撤回权限时，本机盘点暂停并显示授权入口。更换临时签名的开发包可能需要重新授权。[Apple 的隐私与安全性设置说明](https://support.apple.com/guide/mac-help/change-privacy-security-settings-on-mac-mchl211c911f/mac)
+
+首页显示已盘点数据的占比和启动盘容量。应用排行支持在 Finder 中显示应用及打开所在目录。可在「扫描范围」排除自动发现的位置，或添加额外目录。清理需要审阅和确认，自动收尾可单独启用。
 
 也可以点击侧栏底部的 **创建演练样本**，体验两个 Agent 共用一个视频工程、被两个工程引用的配乐及可处理的日志。演练使用独立的设置、隔离区和废纸篓。
 

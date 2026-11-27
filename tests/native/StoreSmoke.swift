@@ -10,6 +10,22 @@ import Foundation
         fatalError("Timed out waiting for Python bridge")
     }
 
+    @MainActor static func checkDiskAccessGate(state: String) async throws {
+        let store = Store()
+        store.startInventory { _ in fatalError("The real scan must not run without permission") }
+        try await waitForReply(store)
+        precondition(store.needsDiskAccess && store.data.isEmpty)
+        precondition(!FileManager.default.fileExists(atPath: state))
+        store.scanLocal(deep: true)
+        try await waitForReply(store)
+        precondition(store.needsDiskAccess && !FileManager.default.fileExists(atPath: state))
+        store.fixture()
+        try await waitForReply(store)
+        precondition(store.fixtureState != nil && !store.files.isEmpty)
+        precondition(!FileManager.default.fileExists(atPath: state))
+        print("Native Store deferred real disk scans and kept the isolated demo available.")
+    }
+
     static func checkWorkspaceRanking() {
         let projects = ["/a": ["Codex"], "/b": ["Claude Code", "Codex"]]
         func file(_ path: String, _ inode: Int, _ size: Int, _ root: String, _ decision: String) -> Entry {
@@ -85,6 +101,10 @@ import Foundation
               URL(fileURLWithPath: state).deletingLastPathComponent().path ==
               URL(fileURLWithPath: temporaryPath).deletingLastPathComponent().path else {
             fatalError("Use tests/native/smoke.sh to provide an isolated workspace")
+        }
+        if CommandLine.arguments.contains("--verify-disk-access-gate") {
+            try await checkDiskAccessGate(state: state)
+            return
         }
         let lab = URL(fileURLWithPath: temporaryPath).resolvingSymlinksInPath()
         let store = Store()
