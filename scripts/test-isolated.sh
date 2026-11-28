@@ -33,5 +33,6 @@ else:
 case "${1:-}" in
     "") "${sandbox[@]}" /usr/bin/python3 -B -m unittest discover -s tests -v ;;
     --benchmark) "${sandbox[@]}" /usr/bin/python3 -B -m scripts.benchmark ;;
-    *) echo "Usage: $0 [--benchmark]" >&2; exit 2 ;;
+    --benchmark-agent-inventory) "${sandbox[@]}" /usr/bin/python3 -B -m scripts.benchmark --agent-inventory ;;
+    *) echo "Usage: $0 [--benchmark | --benchmark-agent-inventory]" >&2; exit 2 ;;
 esac

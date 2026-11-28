@@ -22,6 +22,8 @@ import subprocess
 import sys
 import uuid
 
+from .aider import protected_artifact
+
 
 def _path(value):
     p = Path(value)
@@ -64,7 +66,7 @@ def _inside(path, root):
 
 def _eligible(p, roots, state):
     names = {v.casefold() for v in p.parts}
-    protected = {'.git', '.ssh', '.gnupg', '.aws', '.azure', '.kube', 'keychains',
+    protected = {'.git', '.ssh', '.gnupg', '.aws', '.azure', '.kube', '.continue', 'keychains',
                  'credentials', 'cookies', 'login data', 'local state', 'sessions',
                  'bookmarks', 'web data', 'places.sqlite', 'logins.json', 'key4.db',
                  'secrets', 'auth.json', '.netrc', '.env', 'wallet.dat',
@@ -72,6 +74,7 @@ def _eligible(p, roots, state):
     restricted = ('/System', '/Library', '/Applications', '/bin', '/sbin',
                   '/usr', '/dev', '/private/etc', '/private/var/db', '/private/var/root')
     if (_inside(Path(str(p).casefold()), Path(str(state).casefold())) or names & protected or
+            protected_artifact(names) or
             any(v.startswith('.env.') or v.endswith(('.pem', '.key', '.p12', '.mobileprovision')) for v in names) or
             any(v.endswith(('.app', '.framework', '.bundle', '.keychain-db')) for v in names) or
             any(_inside(Path(str(p).casefold()), Path(v.casefold())) for v in restricted)):
@@ -214,6 +217,7 @@ def _journal(state_dir):
                     );
                     CREATE TABLE IF NOT EXISTS restore_path (id TEXT PRIMARY KEY, path TEXT NOT NULL);
                     CREATE TABLE IF NOT EXISTS staging (id TEXT PRIMARY KEY, target TEXT NOT NULL);
+                    CREATE TABLE IF NOT EXISTS task_closeout (batch_id TEXT PRIMARY KEY, closeout_id TEXT NOT NULL);
                     CREATE INDEX IF NOT EXISTS item_batch ON item(batch_id);
                 """)
                 _recover(db)
@@ -297,12 +301,19 @@ def _result(db, batch):
     if row is None:
         raise ValueError('找不到此批次')
     items = []
+    linked = db.execute('SELECT closeout_id FROM task_closeout WHERE batch_id=?', (batch,)).fetchone()
     for it in db.execute('SELECT * FROM item WHERE batch_id=? ORDER BY rowid', (batch,)):
+        record = json.loads(it['rec'])
         items.append(dict(path=it['path'], status=it['status'], reason=it['reason'],
-                          size=json.loads(it['rec']).get('size', 0)))
+                          size=record.get('size', 0)))
+        if linked and 'dev' in record and 'ino' in record:
+            items[-1]['identity'] = [record['dev'], record['ino']]
         if it['status'] == 'restored':
             items[-1]['restored_to'] = _restored_to(db, it['id'], it['path'])
-    return dict(id=batch, batch_id=batch, action=row['action'], created_at=row['created_at'], items=items)
+    result = dict(id=batch, batch_id=batch, action=row['action'], created_at=row['created_at'], items=items)
+    if linked:
+        result['closeout_id'] = linked[0]
+    return result
 
 
 def history(state_dir):
@@ -341,7 +352,7 @@ def _execute_one(db, state, roots, action, uid, rec, trash_override):
                 _set(db, uid, 'trashed' if action == 'trash' else 'quarantined')
 
 
-def execute(state_dir, roots, records, action, trash_override=None):
+def execute(state_dir, roots, records, action, trash_override=None, *, closeout_id=None):
     if action not in ('clean', 'trash', 'quarantine'):
         raise ValueError('未知操作')
     roots = sorted((_path(r) for r in roots), key=lambda p: -len(p.parts))
@@ -352,6 +363,8 @@ def execute(state_dir, roots, records, action, trash_override=None):
                   for r in records]
         db.execute('BEGIN')
         db.execute('INSERT INTO batch VALUES (?,?,?)', (batch, action, now))
+        if closeout_id:
+            db.execute('INSERT INTO task_closeout VALUES (?,?)', (batch, closeout_id))
         for uid, rec in staged:
             rec['path'] = str(rec.get('path', ''))
             db.execute("INSERT INTO item VALUES (?,?,?,?,NULL,'pending','')",

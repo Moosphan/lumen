@@ -33,6 +33,7 @@ struct SpaceBrowser: View {
     @ObservedObject var store: Store
     let canvasHeight: CGFloat
     let didOpenLevel: () -> Void
+    let reviewMedia: (MediaReviewGroup) -> Void
     let review: (String, Bool) -> Void
     @State private var trail: [String] = []
     @State private var current: SpaceLevel?
@@ -82,6 +83,7 @@ struct SpaceBrowser: View {
                     ProgressView("正在打开目录…").controlSize(.small).foregroundStyle(.secondary)
                 }
                 browser(current)
+                mediaInventory
             } else if store.busy == "size_tree" {
                 Panel {
                     ProgressView("正在统计目录与子目录的占用…").controlSize(.small)
@@ -110,6 +112,34 @@ struct SpaceBrowser: View {
             Button("取消", role: .cancel) { }
         } message: { path in
             Text("将「\(displayPath(path))」加入扫描范围。扫描会检查文件归属及引用，再显示可审阅的项目。")
+        }
+    }
+
+    private var mediaInventory: some View {
+        Panel {
+            DisclosureGroup("已索引的媒体与引用") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("按扫描范围统计。完全相同的副本来自深度扫描。")
+                        .font(.caption).foregroundStyle(.secondary)
+                    if store.inventory.mediaGroups.isEmpty {
+                        Text("当前扫描未索引媒体文件。").font(.callout).foregroundStyle(.secondary)
+                    }
+                    ForEach(store.inventory.mediaGroups) { group in
+                        let title = MediaReviewGroup.titles[group.id] ?? group.id
+                        HStack(spacing: 10) {
+                            Image(systemName: MediaReviewGroup.icons[group.id] ?? "doc").foregroundStyle(lilac).frame(width: 21)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(title).font(.callout.weight(.medium))
+                                Text("\(group.identities) 项 · \(group.referenced) 项有引用 · \(group.exactCopies) 组相同内容")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Text(bytes(group.allocated)).monospacedDigit()
+                            CleanupIcon(title: "审阅\(title)分组") { reviewMedia(group) }
+                        }
+                    }
+                }.padding(.top, 8)
+            }
         }
     }
 

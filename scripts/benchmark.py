@@ -2,6 +2,8 @@
 
 from pathlib import Path
 import resource
+from statistics import median
+import sys
 from tempfile import TemporaryDirectory
 from time import monotonic
 
@@ -51,5 +53,42 @@ def main():
         print(f"startup: 18,432 files, 72 projects, {monotonic() - started:.2f}s")
 
 
+def agent_inventory_benchmark():
+    with TemporaryDirectory(prefix="lumen-agent-benchmark-") as directory:
+        lab = Path(directory).resolve()
+        home = lab / "home"
+        projects = [home / "Documents/Codex" / f"project-{index:03d}" for index in range(100)]
+        for project in projects:
+            for group in range(10):
+                folder = project / f"group-{group:02d}"
+                folder.mkdir(parents=True)
+                for item in range(100):
+                    (folder / f"asset-{item:03d}.bin").touch()
+
+        samples = []
+        for run in range(3):
+            started = monotonic()
+            report = dispatch(lab / f"state-{run}", {"cmd": "scan_local", "startup": True}, local_home=home)
+            samples.append(monotonic() - started)
+            if len(report["files"]) != 100_000 or len(report["projects"]) != len(projects):
+                raise RuntimeError("Incomplete agent inventory")
+            del report
+        print(f"startup: 100,000 files, {len(projects)} projects, median {median(samples):.3f}s")
+
+        state = lab / "tree"
+        root = dispatch(state, {"cmd": "size_tree"}, local_home=home)
+        queries = []
+        for project in projects:
+            started = monotonic()
+            level = dispatch(state, {"cmd": "size_tree", "path": str(project)}, local_home=home)
+            queries.append((monotonic() - started) * 1000)
+            if level["indexed_at"] != root["indexed_at"] or len(level["children"]) != 10:
+                raise RuntimeError("Directory lookup did not reuse the inventory")
+        print(f"directory index query: P95 {sorted(queries)[94]:.2f} ms")
+
+
 if __name__ == "__main__":
-    main()
+    if sys.argv[1:] == ["--agent-inventory"]:
+        agent_inventory_benchmark()
+    else:
+        main()

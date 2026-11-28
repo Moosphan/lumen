@@ -161,7 +161,13 @@ class ScannerTests(unittest.TestCase):
         names = [
             'Application Support/Google/Chrome/Default/Bookmarks',
             'Application Support/Chromium/Profile 2/Login Data For Account-wal',
+            'Application Support/Chromium/Profile 2/LocalStorage',
+            'Application Support/Chromium/Profile 2/LocalStorage-wal',
+            'Application Support/Chromium/Default/Local Storage/leveldb/000001.log',
             'Application Support/Microsoft Edge/Default/Network/Cookies-journal',
+            'Application Support/Microsoft Edge/Default/SessionStorage',
+            'Application Support/Microsoft Edge/Default/SessionStorage-shm',
+            'Application Support/Microsoft Edge/Default/SessionStorage-journal',
             'Application Support/BraveSoftware/Brave-Browser/Default/Sessions/Session_128',
             'Application Support/Google/Chrome Canary/Profile 3/Service Worker/CacheStorage/origin/body',
             'Application Support/Google/Chrome/Local State',
@@ -180,6 +186,8 @@ class ScannerTests(unittest.TestCase):
         targets = [self.file('Library/' + name) for name in names]
         controls = [self.file('Projects/Google/Chrome/Default/Bookmarks'),
                     self.file('Library/Application Support/Docs/Default/Login Data'),
+                    self.file('Library/Application Support/Docs/Default/LocalStorage-wal'),
+                    self.file('Library/Application Support/Chromium/Default/Cache/LocalStorage'),
                     self.file('Downloads/Cookies-journal'),
                     self.file('Library/Application Support/Google/Chrome/Default/Cache/opaque')]
         _, rows = self.runscan()

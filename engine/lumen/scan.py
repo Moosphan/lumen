@@ -15,7 +15,10 @@ from urllib.parse import unquote, urljoin, urlsplit
 from xml.parsers.expat import ExpatError
 from xml.etree.ElementTree import ParseError
 
-from . import integrations
+from . import (
+    agent_ide, agent_local_tools, aider, amp, chromium_cache, crush, hermes,
+    integrations, kiro_cli, mistral_vibe, oh_my_pi, openhands, trae_cli, zed,
+)
 
 
 MODELS = {'.gguf', '.safetensors', '.ckpt', '.onnx', '.pt', '.pth', '.ggml'}
@@ -79,6 +82,7 @@ PROFILE_FILES = {
     'bookmarks', 'reading list', 'login data', 'login data for account', 'web data', 'account web data',
     'cookies', 'bound session cookies', 'network persistent state', 'history', 'last session', 'current session', 'last tabs', 'current tabs',
     'preferences', 'secure preferences', 'favicons', 'top sites', 'affiliation database',
+    'localstorage', 'sessionstorage',
 }
 PROFILE_STORES = {
     'sessions', 'local storage', 'session storage', 'indexeddb', 'service worker', 'file system',
@@ -221,8 +225,9 @@ def _cwd_records(stream, agent, max_bytes=None):
             if obj.get('type') not in ('session_meta', 'turn_context'):
                 continue
             obj = obj.get('payload')
-        if isinstance(obj, dict) and isinstance(obj.get('cwd'), str):
-            dirs.add(obj['cwd'])
+        path = integrations.recorded_path(obj.get('cwd')) if isinstance(obj, dict) else None
+        if path and path != Path('/'):
+            dirs.add(str(path))
     return dirs
 
 
@@ -237,7 +242,7 @@ def _idle(path):
 
 
 def _registered_code(identifier='com.microsoft.VSCode'):
-    """Ask AppKit about stable Code bundle IDs only, without reading process arguments."""
+    """Ask AppKit about known bundle IDs without reading process arguments."""
     ctypes.CDLL('/System/Library/Frameworks/AppKit.framework/AppKit')
     objc = ctypes.CDLL('/usr/lib/libobjc.A.dylib')
     ptr = ctypes.c_void_p
@@ -259,19 +264,22 @@ def _registered_code(identifier='com.microsoft.VSCode'):
         if not workspace or not runner:
             raise ValueError('AppKit 注册服务不可用')
         bundle_id = None
-        for suffix in ('', '.helper', '.helper.GPU', '.helper.Plugin', '.helper.Renderer'):
+        suffixes = ('', '.helper', '.helper.GPU', '.helper.Plugin', '.helper.Renderer')
+        if identifier in chromium_cache.PRODUCTS:
+            suffixes += ('.helper.gpu', '.helper.plugin', '.helper.renderer')
+        for suffix in suffixes:
             name = ctypes.c_char_p((identifier + suffix).encode())
             string = send_arg(objc.objc_getClass(b'NSString'), selector(b'stringWithUTF8String:'), name)
             running = send_arg(runner, selector(b'runningApplicationsWithBundleIdentifier:'), string)
             if not running:
-                raise ValueError('无法查询 VS Code 应用或辅助进程')
+                raise ValueError('无法查询应用或辅助进程')
             if count(running, selector(b'count')):
                 return True, []
             if not suffix:
                 bundle_id = string
         urls = send_arg(workspace, selector(b'URLsForApplicationsWithBundleIdentifier:'), bundle_id)
         if not urls:
-            raise ValueError('无法查询 VS Code 安装位置')
+            raise ValueError('无法查询应用安装位置')
         apps = []
         for index in range(count(urls, selector(b'count'))):
             url = at(urls, selector(b'objectAtIndex:'), index)
@@ -343,8 +351,12 @@ def _space(files):
                 shared_allocated_bytes=shared, unique_files=len(physical))
 
 
-def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=None, installed=None):
+def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=None, installed=None,
+         agent_stores=None, metadata_only_roots=(), metadata_only_file_ids=frozenset(), browser_cache_home=None,
+         trae_cli_home=None):
     root_set, exclusions, kept = _paths(roots), _paths(exclude), _paths(keep)
+    metadata_roots = _paths(metadata_only_roots)
+    metadata_files = set()
     issues, files, directories, repositories = set(), {}, set(), set()
     apps, app_ids, duplicates = {}, defaultdict(list), {}
     link_targets, volumes = {}, {}
@@ -352,6 +364,8 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
     suggested_projects = set()
     project_agents = {Path(os.path.abspath(p)): set([a] if isinstance(a, str) else a)
                       for p, a in (projects or {}).items()}
+    agent_stores = agent_stores or {}
+    store_by_directory = {}
 
     def issue(p, why):
         issues.add(f'{p} · {why}')
@@ -364,19 +378,56 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
         if files[p]['decision'] != 'defer':
             files[p].update(decision='keep', reason=why)
 
+    def store_for(directory):
+        if directory not in store_by_directory:
+            owner = next((parent for parent in (directory, *directory.parents)
+                          if parent in agent_stores or parent in project_agents), None)
+            store_by_directory[directory] = owner if owner in agent_stores else None
+        return store_by_directory[directory]
+
     def register(p, s):
         link = stat.S_ISLNK(s.st_mode)
         if not link and not stat.S_ISREG(s.st_mode):
             issue(p, '特殊文件，仅跳过')
             return
         kind = 'symlink' if link else _kind(p)
-        owner_agent = _agent(p)
+        folded_path = str(p).casefold()
+        aider_data = '.aider' in folded_path and aider.protected_artifact(p.parts)
+        amp_data = (('/amp/' in folded_path or '/.amp/' in folded_path or '/com.ampcode.amp.macos/' in folded_path)
+                    and amp.protected_artifact(p))
+        browser_code = (chromium_cache.identify(p, browser_cache_home)
+                        if browser_cache_home is not None and '/code cache' in folded_path else None)
+        untitled_workspace = agent_ide.is_windsurf_untitled_workspace(p)
+        conductor_data = (('/conductor/workspaces/' in folded_path or '/com.conductor.app/' in folded_path)
+                          and agent_local_tools.conductor_user_data(p))
+        kiro_data = (('/.kiro/' in folded_path or '/kiro-cli/' in folded_path) and kiro_cli.protected_artifact(p))
+        trae_data = (('/application support/trae' in folded_path or '/.trae/' in folded_path
+                      or '/.trae-cn/' in folded_path) and agent_ide.is_trae_user_data(p)
+                     or trae_cli.is_legacy_session_data(folded_path)
+                     or trae_cli.protected_artifact(p, trae_cli_home))
+        crush_data = 'crush' in folded_path and crush.protected_artifact(p)
+        zed_data = '/zed/' in folded_path and zed.protected_artifact(p)
+        hermes_data = 'hermes' in folded_path and hermes.protected_artifact(p)
+        vibe_data = '/.vibe/' in folded_path and mistral_vibe.protected_artifact(p)
+        omp_data = '/.omp/' in folded_path and oh_my_pi.protected_artifact(p)
+        openhands_data = 'openhands' in folded_path and openhands.protected_artifact(p)
+        if (aider_data or amp_data or browser_code or conductor_data or kiro_data or trae_data or crush_data or zed_data
+                or hermes_data or vibe_data or omp_data or openhands_data or untitled_workspace
+                or (s.st_dev, s.st_ino) in metadata_only_file_ids
+                or metadata_roots and _under(p, metadata_roots)):
+            metadata_files.add(p)
+        store = p if p in agent_stores else store_for(p.parent) if agent_stores else None
+        owner_agent = agent_stores[store] if store else 'Aider' if aider_data else _agent(p)
         files[p] = dict(path=str(p), dev=s.st_dev, ino=s.st_ino, size=s.st_size,
                         mtime_ns=s.st_mtime_ns, ctime_ns=s.st_ctime_ns, nlink=s.st_nlink, kind=kind, allocated_bytes=s.st_blocks * 512,
                         owner='', app_path='', bundle_id='', duplicate_group='',
                         agents=[owner_agent] if owner_agent else [], projects=[], refs=[],
                         location='Library' if 'Library' in p.parts else '其他位置',
                         decision='review', reason='需要核对用途，当前证据不足以直接清理')
+        if browser_code is not None:
+            files[p]['browser_code_cache'] = browser_code
+        if store:
+            files[p]['agent_store_path'] = str(store)
         if link or s.st_nlink > 1:
             protect(p, '符号链接，仅盘点链接本身' if link else '硬链接共享底层数据')
         elif kind == 'model':
@@ -384,7 +435,10 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
             parts = p.parts
             version = parts.index('snapshots') + 1 if 'snapshots' in parts else len(parts)
             files[p]['model_version'] = parts[version] if version < len(parts)-1 else ''
-        elif owner_agent or p.suffix.lower() in ('.sqlite', '.sqlite3', '.db', '.plist', '.keychain-db') or '.git' in p.parts:
+        elif (owner_agent or amp_data or conductor_data or kiro_data or trae_data or crush_data or zed_data or hermes_data
+              or vibe_data or omp_data or openhands_data or untitled_workspace
+              or p.suffix.lower() in ('.sqlite', '.sqlite3', '.db', '.plist', '.keychain-db', '.code-workspace')
+              or '.git' in p.parts):
             protect(p, '配置、会话或数据库需要保留')
         elif p.suffix.lower() in {'.part', '.download', '.crdownload', '.partial'}:
             defer(p, '可能正在下载，完成后重扫')
@@ -425,16 +479,23 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
                     link_targets[root] = Path(os.path.normpath(root.parent / os.readlink(root)))
                 continue
             def walk_error(exc):
-                issue(exc.filename or root, str(exc))
+                path = Path(exc.filename) if exc.filename else root
+                issue(path if path.is_absolute() else root, str(exc))
             for folder, names, leaves, fd in os.fwalk(root, onerror=walk_error, follow_symlinks=False):
                 directory = Path(folder)
                 if directory in directories:
                     names.clear()
                     continue
                 directories.add(directory)
-                if directory.suffix.lower() == '.app' and not any(a.suffix.lower() == '.app' for a in directory.parents):
+                if (installed is None and directory.suffix.lower() == '.app'
+                        and not (agent_stores and store_for(directory))
+                        and not any(a.suffix.lower() == '.app' for a in directory.parents)):
                     apps[directory] = dict(name=directory.stem, path=str(directory), bundle_id='', version='')
-                if '.git' in names or '.git' in leaves:
+                if (('.git' in names or '.git' in leaves)
+                        and not (agent_stores and store_for(directory)) and not _under(directory, metadata_roots)
+                        and not agent_ide.is_trae_user_data(directory)
+                        and not trae_cli.is_legacy_session_data(str(directory).casefold())
+                        and not trae_cli.protected_artifact(directory, trae_cli_home)):
                     repositories.add(directory)
                 for name in sorted(names + leaves):
                     p = directory / name
@@ -490,8 +551,9 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
     for p, row in files.items():
         if row['kind'] == 'symlink':
             continue
-        agent = _agent(p)
-        if p.suffix == '.jsonl' and ('.codex/sessions/' in p.as_posix() or '.claude/projects/' in p.as_posix()):
+        if (p.suffix == '.jsonl' and not row.get('agent_store_path') and p not in metadata_files and
+                ('.codex/sessions/' in p.as_posix() or '.claude/projects/' in p.as_posix())):
+            agent = _agent(p)
             try:
                 for cwd in _read(p, row, lambda stream: _cwd_records(stream, agent)):
                     proj = Path(cwd)
@@ -520,8 +582,8 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
                     protect(tracked, 'Git 已跟踪')
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
             issue(repo, f'Git 工作区读取不完整：{exc}')
-            for p in files:
-                if repo in p.parents:
+            for p, row in files.items():
+                if repo in p.parents and row['decision'] != 'keep':
                     defer(p, 'Git 索引无法核对')
     # VS Code keeps its current session and nine previous sessions:
     # https://github.com/microsoft/vscode/blob/1.95.3/src/vs/code/electron-utility/sharedProcess/contrib/logsDataCleaner.ts#L27-L40
@@ -534,10 +596,14 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
             session_names[directory.parent].append(directory)
     expired_sessions = {p for paths in session_names.values() for p in sorted(paths)[:-10]}
     editor_state = {}
+    project_by_directory = {}
     for p, row in files.items():
         # Nearest declared project controls path ownership; references can
         # subsequently add projects outside the containing directory.
-        proj = next((parent for parent in p.parents if parent in project_agents), None)
+        parent = p.parent
+        if parent not in project_by_directory:
+            project_by_directory[parent] = next((root for root in p.parents if root in project_agents), None)
+        proj = project_by_directory[parent]
         if proj:
             row.update(projects=[str(proj)], agents=sorted(set(row['agents']) | project_agents[proj]), location='项目内')
         if row.get('shared_container'):
@@ -590,13 +656,17 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
                        app_version=apps[app]['version'])
 
     for p, row in files.items():
-        if p.suffix.lower() in {'.prproj', '.drp', '.fcpbundle', '.aep'}:
+        if row.get('agent_store_path') or p in metadata_files:
+            continue
+        if p.suffix.lower() in {'.prproj', '.drp', '.fcpbundle', '.aep', '.otioz'}:
             issue(p, '此工程格式的素材引用尚未解析')
         parser = None
         if p.name == 'manifest.json' and p.parent.name == '.vite':
             parser = integrations.vite_outputs
         elif p.suffix.lower() == '.fcpxml':
             parser = integrations.fcpxml_sources
+        elif p.suffix.lower() == '.otio':
+            parser = integrations.otio_sources
         if parser and row['kind'] != 'symlink':
             try:
                 for target, label in parser(p, _read(p, row, _small)):
@@ -610,7 +680,7 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
                     asset['refs'] = sorted(set(asset['refs']) | {f'{p}#{label}'})
                     asset['projects'] = sorted(set(asset['projects']) | set(row['projects']))
                     asset['agents'] = sorted(set(asset['agents']) | set(row['agents']))
-                    protect(target, 'Vite 构建清单或 Final Cut Pro 工程存在引用')
+                    protect(target, '构建清单或媒体时间线存在静态引用')
             except (ValueError, RecursionError, ParseError, OSError) as exc:
                 issue(p, f'清单或工程引用未完整解析：{exc}')
         if row['kind'] != 'html':
@@ -668,6 +738,8 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
 
     hub_refs = defaultdict(set)
     for p, row in files.items():
+        if row.get('agent_store_path') or p in metadata_files:
+            continue
         ref = integrations.hub_ref(p)
         if ref and row['kind'] != 'symlink':
             protect(p, '模型仓库修订引用')
@@ -694,7 +766,7 @@ def scan(roots, deep=True, projects=None, keep=None, exclude=None, hash_cache=No
     if deep:
         sizes = defaultdict(list)
         for p, row in files.items():
-            if row['kind'] != 'symlink' and row['size']:
+            if row['kind'] != 'symlink' and row['size'] and not row.get('agent_store_path') and p not in metadata_files:
                 sizes[row['size']].append(p)
         for paths in sizes.values():
             if len({(files[p]['dev'], files[p]['ino']) for p in paths}) < 2:

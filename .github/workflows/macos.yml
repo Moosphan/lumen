@@ -9,6 +9,32 @@ concurrency:
 permissions:
   contents: read
 jobs:
+  vendor-integration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify integrated builder accounting against a real Docker engine
+        timeout-minutes: 2
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
+        run: python3 -B tests/hosted-integrations.py docker
+      - name: Reacquire a pinned public Hugging Face artifact
+        if: always() && !cancelled()
+        timeout-minutes: 2
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
+        run: python3 -B tests/hosted-integrations.py hugging-face
+      - name: Verify draft and status from a real Codex client
+        if: always() && !cancelled()
+        timeout-minutes: 3
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
+        run: |
+          npm install --prefix "$RUNNER_TEMP/lumen-codex-cli" --ignore-scripts --no-fund --no-audit @openai/codex@0.172.0
+          LUMEN_CODEX_CLI="$RUNNER_TEMP/lumen-codex-cli/node_modules/.bin/codex" \
+            python3 -B tests/hosted-integrations.py codex-mcp
+
   verify:
     runs-on: macos-15
     timeout-minutes: 20
@@ -45,3 +71,31 @@ jobs:
         env:
           LUMEN_RUNNER_ENVIRONMENT: ${{ runner.environment }}
         run: /usr/bin/python3 -B tests/hosted-vscode.py
+
+  chrome-regression:
+    runs-on: macos-15
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify generated-code cleanup across real Chrome restarts
+        timeout-minutes: 4
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
+        run: node tests/hosted-chromium.mjs
+
+      - name: Verify Persistent Cache protection across real Chrome restarts
+        timeout-minutes: 3
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
+        run: node tests/hosted-chromium.mjs persistent
+
+  chromium-snapshot:
+    runs-on: macos-15
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify isolated cleanup with an official Chromium snapshot
+        timeout-minutes: 5
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
+        run: node tests/hosted-chromium.mjs simple chromium

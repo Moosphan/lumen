@@ -25,8 +25,14 @@ mkdir -m 700 "$lab/tmp"
 export LUMEN_STATE_DIR="$lab/workspace-state" TMPDIR="$lab/tmp"
 export LUMEN_INVENTORY_HOME="$lab/home"
 /usr/bin/python3 -B - <<'PY'
+import gzip
 import os
+import json
+import hashlib
 import plistlib
+import sqlite3
+import struct
+from contextlib import closing
 from pathlib import Path
 
 home = Path(os.environ["LUMEN_INVENTORY_HOME"])
@@ -35,6 +41,20 @@ contents.mkdir(parents=True)
 (contents / "Info.plist").write_bytes(plistlib.dumps({
     "CFBundleIdentifier": "org.lumen.sample-studio", "CFBundleName": "Sample Studio",
 }))
+chromium = home / "Applications/Chromium Fixture.app/Contents"
+chromium.mkdir(parents=True)
+(chromium / "Info.plist").write_bytes(plistlib.dumps({
+    "CFBundleIdentifier": "org.chromium.Chromium", "CFBundleName": "Chromium Fixture",
+}))
+code_cache = home / "Library/Caches/Chromium/Default/Code Cache/js"
+code_cache.mkdir(parents=True)
+format_header = struct.pack("<QIIII", 0xfcfb6d1ba7725c30, 5, 3, 0, 0)
+format_footer = struct.pack("<QIIII", 0xf4fa6f45970d41d8, 0, 0, 0, 0)
+(code_cache / "ab1234567890cdef_0").write_bytes(format_header + b"key-fixture-code" + format_footer * 2)
+(code_cache / "index").write_bytes(b"fixture index")
+database = code_cache.parent / "pc" / "fixture.db"
+database.parent.mkdir()
+database.write_bytes(b"SQLite format 3\0fixture")
 downloads = home / "Downloads"
 downloads.mkdir()
 (downloads / "archive.zip").write_bytes(b"sample" * 8192)
@@ -44,10 +64,328 @@ project.mkdir(parents=True)
 (project / "empty-marker").touch()
 (project / "long-shoot-name-with-color-reference-and-export-notes-2026.txt").write_text("Small reference.")
 (project / "render.mov").write_bytes(b"render" * 600_000)
+gemini_project = home / "conductor/workspaces/lumen/Gemini Project"
+gemini_project.mkdir(parents=True)
+(gemini_project / "scene.txt").write_text("Keep this source.")
+(gemini_project / ".git").write_text(f"gitdir: {home}/Projects/lumen/.git/worktrees/gemini\n")
+(gemini_project / ".context").mkdir()
+(gemini_project / ".context/notes.md").write_text("Keep this worktree handoff.")
+gemini = home / ".gemini"
+gemini.mkdir()
+(gemini / "projects.json").write_text(json.dumps({"projects": {str(gemini_project): "gemini-project"}}))
+continue_project = home / "Projects/Continue Project"
+continue_project.mkdir(parents=True)
+(continue_project / "notes.txt").write_text("Keep this local project.")
+continue_sessions = home / ".continue/sessions"
+continue_sessions.mkdir(parents=True)
+continue_id = "5492b813-1f5f-42fa-8013-aa3e5584fd4c"
+(continue_sessions / f"{continue_id}.json").write_text("fixture session bytes")
+(continue_sessions / "sessions.json").write_text(json.dumps([
+    {"sessionId": continue_id, "workspaceDirectory": continue_project.as_uri()},
+]))
+aider_project = home / "Projects/Aider Project"
+aider_project.mkdir()
+(aider_project / "notes.txt").write_text("Keep this Aider project source.")
+(aider_project / ".aider.chat.history.md").write_text("\n# aider chat started at 2026-11-25 12:00:00\n\nSynthetic session.")
+(aider_project / ".amp").mkdir()
+(aider_project / ".amp/settings.jsonc").write_text('{ // workspace config\n "amp.showCosts": true,\n}')
+amp_threads = home / ".local/share/amp/threads"
+amp_threads.mkdir(parents=True)
+amp_id = "T-0199aaaa-bbbb-7ccc-8ddd-eeeeffff0001"
+(amp_threads / f"{amp_id}.json").write_text(json.dumps({
+    "id": amp_id, "v": 1, "created": 1768178184664,
+    "env": {"initial": {"platform": {"client": "CLI"}, "trees": [{"uri": project.as_uri()}]}},
+    "messages": [{"role": "user", "content": "Synthetic prompt"}],
+}))
+harness = home / "Applications/DeepSeek Harness.app/Contents"
+harness.mkdir(parents=True)
+(harness / "Info.plist").write_bytes(plistlib.dumps({
+    "CFBundleIdentifier": "com.deepseek.dsh", "CFBundleName": "DeepSeek Harness",
+    "CFBundleShortVersionString": "0.1.0",
+}))
+harness_project = home / "Projects/Harness Project"
+harness_project.mkdir()
+(harness_project / "scene.txt").write_bytes(b"scene" * 8192)
+registry = home / ".dsh/storages"
+registry.mkdir(parents=True)
+harness_id = "49fb9c05-a1c4-419e-9254-a6379f88240a"
+(registry / "workspace.json").write_text(json.dumps({
+    "unit": {"name": "workspace", "version": 2},
+    "global": {"initialized": True, "workspaceIds": [harness_id]},
+    "tables": {"workspaces": {harness_id: {"path": str(harness_project)}}},
+}))
+cli_project = home / "Projects/Harness CLI Project"
+cli_project.mkdir()
+(cli_project / "scene.txt").write_bytes(b"cli scene" * 8192)
+cli_id = "session-fixture-headless"
+bucket = "--" + str(cli_project).replace("/", "-").replace(" ", "~0020").lstrip("-") + "--"
+cli_session = home / ".dsh/sessions" / bucket / cli_id
+cli_session.mkdir(parents=True)
+header = (json.dumps({
+    "type": "session", "version": 4, "id": cli_id, "cwd": str(cli_project),
+    "createdAt": 1795610528154, "isSeeded": False, "delegationDepth": 0,
+}) + "\n").encode()
+frame = bytes.fromhex("28b52ffda0") + struct.pack("<I", len(header)) + (len(header) * 8 + 1).to_bytes(3, "little")
+(cli_session / "session.v4.jsonl.zstd").write_bytes(frame + header + b"unread fixture body")
+pi_project = home / "Projects/Pi Project"
+pi_project.mkdir()
+(pi_project / "edit.txt").write_bytes(b"draft" * 4096)
+pi_sessions = home / ".pi/agent/sessions/--fixture--"
+pi_sessions.mkdir(parents=True)
+(pi_sessions / "example.jsonl").write_text(json.dumps({
+    "type": "session", "version": 3, "id": "fixture-session", "cwd": str(pi_project),
+}) + "\n")
+devin = home / "Applications/Devin.app/Contents"
+devin.mkdir(parents=True)
+(devin / "Info.plist").write_bytes(plistlib.dumps({
+    "CFBundleIdentifier": "com.exafunction.windsurf", "CFBundleName": "Devin",
+    "CFBundleShortVersionString": "3.14.30833",
+}))
+windsurf_state = home / "Library/Application Support/Devin/User/workspaceStorage/fixture"
+windsurf_state.mkdir(parents=True)
+windsurf_manifest = home / "Documents/Editing.code-workspace"
+windsurf_manifest.write_text('''{
+    // A saved workspace can include projects already associated with other tools.
+    "folders": [
+        {"path": "../conductor/workspaces/lumen/Gemini Project"},
+    ],
+}''')
+(windsurf_state / "workspace.json").write_text(json.dumps({"workspace": windsurf_manifest.as_uri()}))
+(windsurf_state / "state.vscdb").write_bytes(b"protected editor state")
+windsurf_untitled = windsurf_state.parents[2] / "Workspaces/1795610510123/workspace.json"
+windsurf_untitled.parent.mkdir(parents=True)
+windsurf_untitled.write_text(json.dumps({"folders": [{"path": str(project)}, {"path": str(gemini_project)}]}))
+kiro = home / ".kiro/sessions"
+kiro_cli = kiro / "cli"
+kiro_cli.mkdir(parents=True)
+(kiro_cli / "fixture.json").write_text(json.dumps({"cwd": str(continue_project), "session_state": {}}))
+(kiro_cli / "fixture.jsonl").write_text("Protected legacy transcript.")
+kiro_kas = kiro / "0123456789abcdef/sess_fixture"
+kiro_kas.mkdir(parents=True)
+(kiro_kas / "session.json").write_text(json.dumps({
+    "id": "sess_fixture", "workspacePaths": [str(continue_project)],
+}))
+trae_bundle = home / "Applications/Trae.app/Contents"
+trae_bundle.mkdir(parents=True)
+(trae_bundle / "Info.plist").write_bytes(plistlib.dumps({"CFBundleIdentifier": "com.trae.app"}))
+trae_data = home / "Library/Application Support/Trae CN"
+trae_workspace = trae_data / "User/workspaceStorage/fixture"
+trae_workspace.mkdir(parents=True)
+(trae_workspace / "workspace.json").write_text(json.dumps({"folder": aider_project.as_uri()}))
+trae_snapshot = trae_data / "ModularData/ai-agent/snapshot/editor-changes.tmp"
+trae_snapshot.parent.mkdir(parents=True)
+trae_snapshot.write_text("Keep the editor snapshot.")
+traework_bundle = home / "Applications/TRAE SOLO CN.app/Contents"
+traework_bundle.mkdir(parents=True)
+(traework_bundle / "Info.plist").write_bytes(plistlib.dumps({
+    "CFBundleIdentifier": "cn.trae.solo.app", "CFBundleName": "TRAE SOLO CN",
+}))
+traework = home / "Library/Application Support/TRAE SOLO CN"
+work_project = traework / "ModularData/ai-agent/work-mode-projects/6a4db2ef0f25b4742bf9cdc2"
+work_project.mkdir(parents=True)
+(work_project / "delivery.html").write_text("Protected delivery.")
+work_runtime = traework / "ModularData/ai-agent/vm/vms/fixture.img"
+work_runtime.parent.mkdir(parents=True)
+work_runtime.write_bytes(b"Protected local runtime fixture.")
+work_storage = traework / "User/workspaceStorage/fixture"
+work_storage.mkdir(parents=True)
+(work_storage / "workspace.json").write_text(json.dumps({"folder": continue_project.as_uri()}))
+migrated_id = "6a4db2ef0f25b4742bf9cdc8"
+work_relative = Path("ModularData/ai-agent/work-mode-projects") / migrated_id
+migrated_project = trae_data / work_relative
+migrated_project.mkdir(parents=True)
+(migrated_project / "migrated-delivery.html").write_text("Protected migrated delivery.")
+old_stub = traework / work_relative
+old_stub.mkdir()
+(old_stub / f"TRAE_PROJECT_MOVED_{migrated_id}.md").write_text(
+    f"This project was migrated to:\n\n{migrated_project}\n\n"
+    "Use the target directory above. This directory only records migration state.\n"
+)
+kilo_project = home / "Documents/Kilo Project"
+kilo_project.mkdir(parents=True)
+(kilo_project / "source.css").write_text("/* synthetic project */")
+kilo_db = home / ".local/share/kilo/kilo.db"
+kilo_db.parent.mkdir(parents=True)
+with closing(sqlite3.connect(kilo_db)) as db:
+    db.execute("CREATE TABLE session (project_id TEXT, directory TEXT, workspace_id TEXT)")
+    db.execute("INSERT INTO session VALUES (?, ?, ?)", ("global", str(kilo_project), None))
+    db.commit()
+kilo_extension = home / ".vscode/extensions/kilocode.kilo-code-7.8.32"
+kilo_extension.mkdir(parents=True, exist_ok=True)
+(kilo_extension / "package.json").write_text(json.dumps({
+    "publisher": "kilocode", "name": "kilo-code", "version": "7.8.32",
+}))
+crush_project = home / "Documents/Crush Project"
+crush_database = crush_project / ".crush/crush.db"
+crush_database.parent.mkdir(parents=True)
+with closing(sqlite3.connect(crush_database)) as db:
+    db.execute("CREATE TABLE sessions (id TEXT PRIMARY KEY)")
+    db.commit()
+(crush_project / "source.ts").write_text("/* synthetic project */")
+zed_project = home / "Documents/Zed Project"
+zed_project.mkdir(parents=True)
+(zed_project / "source.rs").write_text("// synthetic project")
+zed_data = home / "Library/Application Support/Zed"
+zed_database = zed_data / "db/0-stable/db.sqlite"
+zed_database.parent.mkdir(parents=True)
+with closing(sqlite3.connect(zed_database)) as db:
+    db.executescript("""
+        CREATE TABLE kv_store (key TEXT PRIMARY KEY, value TEXT);
+        INSERT INTO kv_store VALUES ('thread-metadata-remote-connection-backfill', '1');
+        CREATE TABLE sidebar_threads (folder_paths TEXT, folder_paths_order TEXT,
+            main_worktree_paths TEXT, main_worktree_paths_order TEXT, remote_connection TEXT, updated_at TEXT);
+    """)
+    db.execute("INSERT INTO sidebar_threads VALUES (?, ?, ?, ?, ?, ?)",
+               (str(zed_project), "0", None, None, None, "2026-11-26"))
+    db.commit()
+(zed_data / "threads").mkdir()
+(zed_data / "threads/threads.db").write_bytes(b"Opaque Zed conversation storage fixture.")
+hermes_project = home / "Documents/Hermes Project"
+hermes_project.mkdir(parents=True)
+(hermes_project / "source.py").write_text("# synthetic project")
+hermes_database = home / ".hermes/profiles/coder/state.db"
+hermes_database.parent.mkdir(parents=True)
+with closing(sqlite3.connect(hermes_database)) as db:
+    db.executescript("""
+        CREATE TABLE sessions (id TEXT PRIMARY KEY, source TEXT NOT NULL, cwd TEXT);
+        CREATE TABLE state_meta (key TEXT PRIMARY KEY, value TEXT);
+    """)
+    db.execute("INSERT INTO sessions VALUES (?, ?, ?)", ("fixture", "local", str(hermes_project)))
+    db.execute("INSERT INTO state_meta VALUES (?, ?)", ("gateway.local_policy.v1:fixture", json.dumps({
+        "session_id": "fixture", "entry": {"session_id": "fixture"},
+        "policy": {"cwd": str(hermes_project), "terminal_json": json.dumps({
+            "TERMINAL_ENV": "local", "TERMINAL_CWD": str(hermes_project),
+        })},
+    })))
+    db.commit()
+vibe_project = home / "Documents/Vibe Project"
+vibe_origin = home / "Documents/Vibe Origin"
+for project in (vibe_project, vibe_origin):
+    project.mkdir(parents=True)
+    (project / "source.py").write_text("# synthetic project")
+vibe_id = "d4679b0e-ea09-47a9-8944-7aae071b12c2"
+vibe_session = home / ".vibe/logs/session/unified" / vibe_id
+generation = "0000000000000011"
+manifest = vibe_session / "generations" / generation / "manifest.json"
+manifest.parent.mkdir(parents=True)
+manifest_body = json.dumps({
+    "manifest_version": 1, "session_id": vibe_id, "generation": generation, "snapshot_sequence": 11,
+}, sort_keys=True, separators=(",", ":")).encode()
+manifest.write_bytes(manifest_body + b"\n")
+(vibe_session / "CURRENT").write_text(json.dumps({
+    "store_format": "mistral.vibe.unified-session-store/v1", "store_format_minor": 11,
+    "session_id": vibe_id, "generation": generation, "snapshot_sequence": 11,
+    "manifest_sha256": hashlib.sha256(manifest_body).hexdigest(),
+}) + "\n")
+(vibe_session / "meta.json").write_text(json.dumps({
+    "runtime": "local", "session_id": vibe_id, "origin_directory": str(vibe_origin),
+    "environment": {"working_directory": str(vibe_project)},
+}))
+omp_project = home / "Documents/Oh My Pi Project"
+omp_additional = home / "Documents/Oh My Pi Additional"
+for project in (omp_project, omp_additional):
+    project.mkdir(parents=True)
+    (project / "source.ts").write_text("// synthetic")
+omp_id = "019c625b-b900-7000-8000-000000000001"
+omp_timestamp = "2026-11-26T20:40:10.000Z"
+omp_session = (home / ".omp/profiles/coder/agent/sessions/-Documents-Oh My Pi Project"
+               / f"2026-11-26T20-40-10-000Z_{omp_id}.jsonl")
+omp_session.parent.mkdir(parents=True)
+omp_title = {"type": "title", "v": 1, "title": "隔离会话", "updatedAt": omp_timestamp, "pad": ""}
+def encode_json(value):
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode() + b"\n"
+omp_title["pad"] = " " * (256 - len(encode_json(omp_title)))
+omp_session.write_bytes(encode_json(omp_title) + encode_json({
+    "type": "session", "version": 3, "id": omp_id, "timestamp": omp_timestamp,
+    "cwd": str(omp_project), "additionalDirectories": [str(omp_additional)],
+}))
+omp_historical = home / "Documents/Oh My Pi Historical"
+omp_historical.mkdir()
+(omp_historical / "source.ts").write_text("// synthetic archived workspace")
+omp_archive_id = "019c625b-b900-7000-8000-000000000002"
+omp_archive = (home / ".omp/profiles/coder/agent/archive/sessions/-Documents-Oh My Pi Historical"
+               / f"2026-11-26T20-40-10-000Z_{omp_archive_id}.jsonl.gz")
+omp_archive.parent.mkdir(parents=True)
+omp_archive.write_bytes(gzip.compress(encode_json(omp_title) + encode_json({
+    "type": "session", "version": 3, "id": omp_archive_id, "timestamp": omp_timestamp,
+    "cwd": str(omp_historical),
+}) + b'{"type":"message","synthetic":"archive"}\n' * 20_000, mtime=0))
+openhands_app = home / "Applications/OpenHands Agent Canvas.app/Contents"
+openhands_app.mkdir(parents=True)
+(openhands_app / "Info.plist").write_bytes(plistlib.dumps({
+    "CFBundleIdentifier": "dev.openhands.agent-canvas", "CFBundleName": "OpenHands Agent Canvas",
+}))
+openhands_root = home / ".openhands"
+openhands_id = "0196af9c754f430799ef39aa868a6700"
+openhands_managed = openhands_root / "agent-canvas/workspaces" / openhands_id
+openhands_cli = home / "Documents/OpenHands CLI Project"
+for project in (openhands_managed, openhands_cli):
+    project.mkdir(parents=True)
+    (project / "source.py").write_text("# synthetic project")
+openhands_sdk_id = "868ce027-f044-4dbd-b1bd-db264d48a88b"
+for metadata, identity, project in (
+    (f"agent-canvas/dev_conversations/{openhands_id}/meta.json", openhands_id, openhands_managed),
+    (f"conversations/{openhands_sdk_id.replace('-', '')}/base_state.json", openhands_sdk_id, openhands_cli),
+):
+    record = openhands_root / metadata
+    record.parent.mkdir(parents=True)
+    record.write_bytes(encode_json({
+        "id": identity, "workspace": {"kind": "LocalWorkspace", "working_dir": str(project)},
+    }))
+trae_cli = home / ".trae/cli"
+for index, (relative, workspace) in enumerate([
+    ("sessions/2026/11/26", aider_project), ("archived_sessions", continue_project),
+]):
+    session_id = f"019fbcca-9fd4-7d20-83dc-0762b2f839b{index}"
+    rollout = trae_cli / relative / f"rollout-2026-11-26T11-22-33-{session_id}.jsonl"
+    rollout.parent.mkdir(parents=True)
+    metadata_line = (json.dumps({"type": "session_meta", "payload": {
+        "id": session_id, "cwd": str(workspace),
+    }}) + "\n").encode()
+    if relative == "archived_sessions":
+        blocks = [metadata_line, *([b"keep archived transcript " * 4000] * 4)]
+        frame = bytes.fromhex("28b52ffda0") + struct.pack("<I", sum(map(len, blocks)))
+        for position, block in enumerate(blocks):
+            frame += (len(block) * 8 + (position == len(blocks) - 1)).to_bytes(3, "little") + block
+        rollout.with_suffix(".jsonl.zst").write_bytes(frame)
+    else:
+        rollout.write_bytes(metadata_line)
+(trae_cli / "history.jsonl").write_text("Keep the CLI history.")
+with closing(sqlite3.connect(trae_cli / "state_5.sqlite")) as database:
+    database.execute(
+        "CREATE TABLE threads (id TEXT PRIMARY KEY, cwd TEXT NOT NULL, rollout_path TEXT NOT NULL, "
+        "source TEXT NOT NULL, updated_at INTEGER NOT NULL, title TEXT NOT NULL)"
+    )
+    database.execute("INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?)", (
+        "019fbcca-9fd4-7d20-83dc-0762b2f839b2", str(pi_project), "", "cli", 1, "Private fixture title",
+    ))
+    database.commit()
+(trae_cli / "thread_history_1.sqlite").write_bytes(b"Opaque fixture history.")
+coco = home / "Library/Caches/coco"
+legacy_id = "019fbcca-9fd4-7d20-83dc-0762b2f839b5"
+legacy_session = coco / "sessions" / legacy_id
+legacy_session.mkdir(parents=True)
+(legacy_session / "session.json").write_text(json.dumps({
+    "id": legacy_id, "metadata": {"cwd": str(gemini_project)},
+}))
+(legacy_session / "events.jsonl").write_text("Private CoCo session body.")
+(coco / "history.jsonl").write_text("Private CoCo prompt history.")
+models = home / ".lmstudio/models/Lumen/Sample Weight"
+models.mkdir(parents=True)
+(models / "sample-Q4_K_M.gguf").write_bytes(b"synthetic model metadata")
+hub = home / ".cache/huggingface/hub/models--fixture--managed"
+weight = b"isolated fictional model content"
+blob = hub / "blobs" / hashlib.sha256(weight).hexdigest()
+blob.parent.mkdir(parents=True)
+blob.write_bytes(weight)
+snapshot = hub / "snapshots" / ("a" * 40) / "example.safetensors"
+snapshot.parent.mkdir(parents=True)
+snapshot.symlink_to(os.path.relpath(blob, snapshot.parent))
 for folder, name, size in [
     (".cache", "tool-cache.bin", 2_000_000),
     ("Desktop", "capture.png", 900_000),
     ("Downloads", "recording.mov", 1_360_000),
+    ("Documents/Breakdown", "guide.pdf", 600_000),
     ("Pictures", "photo-library.bin", 1_100_000),
     ("Movies", "studio-preview.mov", 1_850_000),
     (".pub-cache", "packages.bin", 1_600_000),

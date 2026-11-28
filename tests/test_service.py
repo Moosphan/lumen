@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from engine.lumen.fixture import create_fixture
 from engine.lumen.service import dispatch
@@ -38,6 +39,74 @@ class Workflow(unittest.TestCase):
         self.assertTrue(call({'cmd':'scan','roots':[str(self.root)]})['ok'])
         self.assertTrue(call({'cmd':'status'})['data']['files'])
         self.assertFalse(call({'cmd':'run','action':'exec','paths':[str(self.root)]})['ok'])
+
+    def test_agent_observations_are_deduplicated_without_finishing_the_task(self):
+        root = str(self.root / 'Projects/Trailer')
+        self.scan()
+        output = self.root / 'Projects/Trailer/preview/temporary.txt'
+        output.write_text('registered temporary')
+        task = dict(id='codex-session:session-1', agent='Codex', root=root, temporary=[str(output)])
+        self.cmd('task', **task)
+        self.cmd('settings', automatic_rules=['task.declared-temporary.quarantine.v1'])
+        event = dict(hook_event_name='Stop', session_id='session-1', cwd=root, turn_id='turn-1',
+                     last_assistant_message='private output', transcript_path=str(self.root / 'private'))
+        self.assertFalse(self.cmd('agent_event', agent='Codex', event=event)['duplicate'])
+        self.assertTrue(self.cmd('agent_event', agent='Codex', event=event)['duplicate'])
+        self.assertFalse(self.cmd('agent_event', agent='Codex', event={**event, 'hook_event_name': 'SessionEnd',
+                                                                      'reason': 'other'})['duplicate'])
+        dashboard = self.cmd('status')
+        self.assertEqual([item['stage'] for item in dashboard['agent_observations']],
+                         ['session_ended', 'turn_finished'])
+        self.assertFalse(dashboard['tasks'][0]['closed'])
+        self.assertTrue(output.exists())
+        self.assertNotIn('private output', (self.state / 'workspace.json').read_text())
+        script = Path(__file__).resolve().parents[1] / 'engine/agent_event.py'
+        hook = subprocess.run([sys.executable, '-I', '-B', str(script), 'Codex'],
+                              input=json.dumps(event), env={**os.environ, 'LUMEN_STATE_DIR': str(self.state)},
+                              capture_output=True, text=True, check=True)
+        self.assertEqual(json.loads(hook.stdout), {})
+        self.assertEqual(hook.stderr, '')
+        self.assertEqual(self.cmd('settings', roots=[])['agent_observations'], [])
+
+    def test_closeout_tracks_task_batch_and_later_recovery(self):
+        self.scan()
+        root = self.root / 'Projects/Trailer'
+        source = root / 'media/theme.wav'
+        cache = root / '.cache/transcode.dat'
+        cache.parent.mkdir(exist_ok=True)
+        cache.write_text('temporary content')
+        task = dict(id='edit-1', agent='Codex', root=str(root),
+                    inputs=[str(source)], temporary=[str(cache)])
+        self.cmd('task', **task)
+        self.cmd('settings', automatic_rules=['task.declared-temporary.quarantine.v1'])
+        dashboard = self.cmd('task', **task, closed=True)
+        summary, = dashboard['task_closeouts']
+        item = next(row for row in summary['items'] if row['path'] == str(cache))
+        self.assertEqual(item['actions'][0]['status'], 'quarantined')
+        self.assertTrue(any(row['path'] == str(source) and row['refs'] for row in summary['items']))
+        batch, = summary['batch_ids']
+        self.cmd('restore', batch_id=batch)
+        summary, = self.cmd('status')['task_closeouts']
+        item = next(row for row in summary['items'] if row['path'] == str(cache))
+        self.assertEqual(item['actions'][0]['status'], 'restored')
+
+    def test_interrupted_closeout_recovers_committed_batch_link_without_repeating_the_move(self):
+        self.scan()
+        root = self.root / 'Projects/Trailer'
+        draft = root / 'preview/temp.txt'
+        draft.write_text('temporary content')
+        task = dict(id='interrupted', agent='Codex', root=str(root), temporary=[str(draft)])
+        self.cmd('task', **task)
+        self.cmd('settings', automatic_rules=['task.declared-temporary.quarantine.v1'])
+        with patch('engine.lumen.service.measure_batch', side_effect=RuntimeError('interrupted')):
+            with self.assertRaisesRegex(RuntimeError, 'interrupted'):
+                self.cmd('task', **task, closed=True)
+        summary, = self.cmd('status')['task_closeouts']
+        item, = summary['items']
+        self.assertEqual(item['actions'][0]['status'], 'quarantined')
+        self.assertFalse(item['indexed'])
+        self.assertTrue(self.cmd('task', **task, closed=True)['duplicate'])
+        self.assertEqual(self.cmd('status')['task_closeouts'][0]['batch_ids'], summary['batch_ids'])
 
     def test_scan_clean_and_preserve_offline_workspace(self):
         dashboard = self.scan()

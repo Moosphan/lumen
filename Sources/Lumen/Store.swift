@@ -54,6 +54,9 @@ func resource(_ name: String, source: String) -> URL? {
     @Published var busy = ""
     @Published var notice = ""
     @Published var error: String?
+    @Published private(set) var needsDiskAccess = false
+    @Published private(set) var diskUsage: Object?
+    @Published private(set) var diskUsageError: String?
     @Published var result: ActionResult?
     @Published private(set) var fixtureState: URL?
     @Published var generation = 0
@@ -78,6 +81,7 @@ func resource(_ name: String, source: String) -> URL? {
         if let fixtureState {
             var env = ProcessInfo.processInfo.environment
             env["LUMEN_STATE_DIR"] = fixtureState.path
+            env["LUMEN_INVENTORY_HOME"] = fixtureState.path
             task.environment = env
         }
         task.standardInput = input
@@ -88,6 +92,7 @@ func resource(_ name: String, source: String) -> URL? {
         do {
             let json = try JSONSerialization.data(withJSONObject: body)
             try task.run()
+            if command == "scan_disk_usage" { diskUsageError = nil }
             busy = command
             notice = ""
             process = task
@@ -100,27 +105,49 @@ func resource(_ name: String, source: String) -> URL? {
                 task.waitUntilExit()
                 let envelope = (try? JSONSerialization.jsonObject(with: reply)) as? Object
                 let dashboard = envelope?["data"] as? Object
-                let presentation = ["fixture", "size_tree"].contains(command) ? nil : dashboard.map(InventoryPresentation.init)
+                let standalone = ["fixture", "size_tree", "scan_disk_usage", "docker_cache_usage", "model_runtime", "model_recovery_options", "model_recover",
+                                  "model_pin", "model_forget",
+                                  "mcp_pending", "mcp_decline"].contains(command)
+                let presentation = standalone
+                    ? nil : dashboard.map(InventoryPresentation.init)
                 DispatchQueue.main.async {
                     guard self.process === task else { return }
                     self.process = nil
                     self.busy = ""
-                    if ["scan", "scan_local", "size_tree"].contains(command) && task.terminationReason == .uncaughtSignal {
+                    if envelope?["code"] as? String == "full_disk_access_required" {
+                        self.needsDiskAccess = true
+                        return
+                    }
+                    if ["scan", "scan_local", "size_tree", "scan_disk_usage"].contains(command) && task.terminationReason == .uncaughtSignal {
                         self.notice = "扫描已停止，保留上次完成的盘点。"
                         return
                     }
                     guard task.terminationStatus == 0, envelope?["ok"] as? Bool == true,
                           let dashboard else {
-                        self.error = envelope?["error"] as? String ?? "本地引擎未能完成操作（退出码 \(task.terminationStatus)）。"
+                        let message = envelope?["error"] as? String ?? "本地引擎未能完成操作（退出码 \(task.terminationStatus)）。"
+                        if command == "scan_disk_usage" { self.diskUsageError = message }
+                        else { self.error = message }
                         return
                     }
+                    if self.fixtureState == nil, command == "scan_local" {
+                        self.needsDiskAccess = dashboard.string("disk_access") == "limited"
+                    }
                     if let presentation {
+                        if command != "status" { self.diskUsage = nil }
                         self.data = dashboard
                         self.inventory = presentation
                         self.generation += 1
                     }
-                    if command != "status" && command != "fixture" {
-                        self.notice = ["scan", "scan_local"].contains(command) ? "扫描完成，共 \(self.files.count) 个文件。" : "已更新本地记录。"
+                    if command == "scan_disk_usage" { self.diskUsage = dashboard }
+                    if !standalone && command != "status" {
+                        if dashboard["mcp_startup_deferred"] as? Bool == true {
+                            self.notice = "保留了待处理 MCP 草案关联的扫描结果。"
+                        } else if dashboard.string("disk_access") == "limited" {
+                            self.notice = "已盘点应用程序。"
+                        } else {
+                            self.notice = ["scan", "scan_local"].contains(command)
+                                ? "扫描完成，共 \(self.files.count) 个文件。" : "已更新本地记录。"
+                        }
                     }
                     if let last = dashboard["last_action"] as? Object {
                         let batches = dashboard.rows("last_actions")
@@ -139,6 +166,11 @@ func resource(_ name: String, source: String) -> URL? {
         if fixtureState != nil { scan(roots, deep: deep) }
         else { call("scan_local", ["deep": deep]) }
     }
+    func openDiskAccessSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
+            NSWorkspace.shared.open(url)
+        }
+    }
     func startInventory(done: @escaping (Object) -> Void) {
         call("scan_local", ["startup": true], done: done)
     }
@@ -147,6 +179,12 @@ func resource(_ name: String, source: String) -> URL? {
     }
     func cancelSpaceAnalysis() {
         if busy == "size_tree", let process, process.isRunning { process.terminate() }
+    }
+    func cancelDiskUsage() {
+        if busy == "scan_disk_usage", let process, process.isRunning { process.terminate() }
+    }
+    func cancelModelRecovery() {
+        if busy == "model_recover", let process, process.isRunning { process.terminate() }
     }
     func addScope(deep: Bool) {
         guard fixtureState == nil else { return }
@@ -195,9 +233,11 @@ func resource(_ name: String, source: String) -> URL? {
     func exitFixture() {
         guard busy.isEmpty else { return }
         fixtureState = nil
+        diskUsage = nil
         data = [:]
         inventory = InventoryPresentation()
-        call("status")
+        if needsDiskAccess { call("scan_local", ["startup": true]) }
+        else { call("status") }
     }
 
     func fixture() {
@@ -206,6 +246,7 @@ func resource(_ name: String, source: String) -> URL? {
             URL(fileURLWithPath: $0).deletingLastPathComponent()
         } ?? FileManager.default.temporaryDirectory
         fixtureState = base.appendingPathComponent("Lumen-State-" + UUID().uuidString)
+        diskUsage = nil
         data = [:]
         inventory = InventoryPresentation()
         call("fixture") { result in

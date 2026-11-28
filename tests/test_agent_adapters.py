@@ -1,0 +1,444 @@
+import hashlib
+import json
+import os
+import sqlite3
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from engine.lumen.agent_adapters import discover, extension_installations
+
+
+class AgentAdapterTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.base = Path(temp.name).resolve()
+        self.home = self.base / 'home'
+        self.home.mkdir()
+        self.project = self.home / 'Projects/电影 Project'
+        env = patch.dict(os.environ, {'GEMINI_CLI_HOME': '', 'XDG_DATA_HOME': '', 'XDG_CACHE_HOME': ''})
+        env.start()
+        self.addCleanup(env.stop)
+
+    def write(self, relative, value):
+        path = self.home / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(value if isinstance(value, bytes) else json.dumps(value).encode())
+        return path
+
+    def scan(self, quick=True, **kwargs):
+        return discover(self.home, quick, **kwargs)
+
+    def test_cursor_decodes_local_folder_uri_and_ignores_remote_or_workspace_file(self):
+        root = 'Library/Application Support/Cursor/User/workspaceStorage'
+        source = self.write(f'{root}/a/workspace.json', {'folder': self.project.as_uri()})
+        self.write(f'{root}/b/workspace.json', {'folder': f'file://remote{self.project}'})
+        self.write(f'{root}/c/workspace.json', {'workspace': (self.project / 'foo.code-workspace').as_uri()})
+        self.write(f'{root}/d/workspace.json', {'folder': 'vscode-remote://ssh-remote+host/repo'})
+        stores, projects = self.scan()
+        self.assertEqual(projects, {self.project: {'Cursor'}})
+        self.assertEqual([(agent, path) for agent, path, _ in stores], [('Cursor', source.parents[1])])
+
+    def test_incremental_discovery_caches_only_projections_and_revalidates_changes(self):
+        from engine.lumen.agent_adapters import _Metadata
+
+        cursor = self.write('Library/Application Support/Cursor/User/workspaceStorage/id/workspace.json',
+                            {'folder': self.project.as_uri()})
+        transcript = self.write('.cline/data/tasks/taskHistory.json', [
+            {'id': 't', 'cwdOnTaskInitialization': str(self.project), 'task': 'private task example'},
+        ])
+        cache = {}
+        expected = self.scan(cache=cache)
+        self.assertNotIn('private task example', json.dumps(cache))
+        with patch.object(_Metadata, 'read_json', side_effect=AssertionError("parsed unchanged metadata")):
+            self.assertEqual(self.scan(cache=cache), expected)
+
+        destination = self.home / 'Projects/another'
+        cursor.write_text(json.dumps({'folder': destination.as_uri()}))
+        _, projects = self.scan(cache=cache)
+        self.assertEqual(projects, {destination: {'Cursor'}, self.project: {'Cline'}})
+        _, projects = self.scan(cache=cache, excluded=(transcript.parent,))
+        self.assertEqual(projects, {destination: {'Cursor'}})
+
+    def test_incremental_discovery_detects_new_metadata_under_an_empty_store(self):
+        cache = {}
+        self.assertEqual(self.scan(cache=cache), ([], {}))
+        self.write('.gemini/projects.json', {'projects': {str(self.project): 'film'}})
+        self.assertEqual(self.scan(cache=cache)[1], {self.project: {'Gemini CLI'}})
+
+    def test_gemini_uses_project_registry_and_honors_explicit_in_home_override(self):
+        source = self.write('.gemini/projects.json', {'projects': {str(self.project): 'film'}})
+        alternate = self.home / 'agent-home'
+        other = self.home / 'Projects/other'
+        custom = self.write('agent-home/.gemini/projects.json', {'projects': {str(other): 'other'}})
+        with patch.dict(os.environ, {'GEMINI_CLI_HOME': str(alternate)}):
+            stores, projects = self.scan()
+        self.assertEqual(projects, {self.project: {'Gemini CLI'}, other: {'Gemini CLI'}})
+        self.assertEqual({path for _, path, _ in stores}, {source.parent, custom.parent})
+
+    def test_gemini_external_config_requires_scope_for_the_derived_store(self):
+        target = self.base / "config" / ".gemini"
+        target.mkdir(parents=True)
+        (target / "projects.json").write_text(json.dumps({"projects": {str(self.project): "film"}}))
+        with patch.dict(os.environ, {"GEMINI_CLI_HOME": str(target.parent)}):
+            self.assertEqual(self.scan(), ([], {}))
+            stores, projects = self.scan(authorized=[target])
+        self.assertEqual({path for _, path, _ in stores}, {target})
+        self.assertEqual(projects, {self.project: {"Gemini CLI"}})
+
+    def test_gemini_prefers_project_root_marker_when_registry_conflicts(self):
+        old = self.home / 'Projects/old'
+        self.write('.gemini/projects.json', {'projects': {str(old): 'film'}})
+        self.write('.gemini/tmp/film/.project_root', str(self.project).encode())
+        _, projects = self.scan()
+        self.assertEqual(projects, {self.project: {'Gemini CLI'}})
+
+    def test_gemini_ambiguous_registry_keeps_the_store_unlinked(self):
+        other = self.home / 'Projects/other'
+        path = self.write('.gemini/projects.json', {'projects': {str(self.project): 'same', str(other): 'same'}})
+        issues = set()
+        stores, projects = self.scan(issues=issues)
+        self.assertEqual(projects, {})
+        self.assertEqual([row[1] for row in stores], [path.parent])
+        self.assertTrue(any(str(path) in issue for issue in issues))
+
+    def test_cline_uses_actual_task_cwd_in_legacy_and_shared_storage(self):
+        legacy = self.write('Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/state/taskHistory.json', [
+            {'id': 'task', 'ts': 1, 'cwdOnTaskInitialization': str(self.project),
+             'shadowGitConfigWorkTree': str(self.home / 'Projects/shadow')},
+        ])
+        other = self.home / 'Projects/other'
+        current = self.write('.cline/data/tasks/taskHistory.json', [
+            {'id': 'task2', 'ts': 2, 'cwdOnTaskInitialization': str(other)},
+            {'id': 'task3', 'ts': 3, 'task': str(self.home / 'Projects/mentioned')},
+        ])
+        stores, projects = self.scan()
+        self.assertEqual(projects, {self.project: {'Cline'}, other: {'Cline'}})
+        self.assertEqual({path for _, path, _ in stores}, {legacy.parents[1], current.parents[1]})
+
+    def test_opencode_recognizes_legacy_project_and_current_sqlite_worktree(self):
+        other = self.home / 'Projects/other'
+        worktree = self.home / 'Worktrees/branch'
+        plain = self.home / 'Projects/without-git'
+        legacy = self.write('.local/share/opencode/storage/project/legacy.json', {'id': 'legacy', 'worktree': str(self.project)})
+        database = legacy.parents[2] / 'opencode.db'
+        with sqlite3.connect(database) as db:
+            db.executescript('''
+                CREATE TABLE project (id TEXT PRIMARY KEY, worktree TEXT, sandboxes TEXT);
+                CREATE TABLE worktree (project_id TEXT, directory TEXT);
+                CREATE TABLE session_v2 (project_id TEXT, directory TEXT);
+            ''')
+            db.execute('INSERT INTO project VALUES (?, ?, ?)', ('project', str(other), '[]'))
+            db.execute('INSERT INTO project VALUES (?, ?, ?)', ('global', '/', '[]'))
+            db.execute('INSERT INTO worktree VALUES (?, ?)', ('project', str(worktree)))
+            db.execute('INSERT INTO session_v2 VALUES (?, ?)', ('project', str(other / 'subdir')))
+            db.execute('INSERT INTO session_v2 VALUES (?, ?)', ('global', str(plain)))
+        contents = database.read_bytes()
+        stores, projects = self.scan()
+        self.assertEqual(projects, {path: {'OpenCode'} for path in (self.project, other, worktree, plain)})
+        self.assertEqual({path for _, path, _ in stores}, {database.parent})
+        self.assertEqual(database.read_bytes(), contents)
+        self.assertEqual(sorted(p.name for p in database.parent.iterdir()), ['opencode.db', 'storage'])
+
+    def test_kilo_projects_and_plain_sessions_are_read_without_mutating_the_database(self):
+        directory = self.home / '.local/share/kilo'
+        directory.mkdir(parents=True)
+        database = directory / 'kilo.db'
+        alternate = self.home / 'Worktrees/alternate'
+        checkout = self.home / 'Projects/a separate checkout'
+        plain = self.home / 'Projects/without git'
+        cloud = self.home / 'Projects/cloud lookalike'
+        oversized_remote = self.home / 'Projects/oversized remote lookalike'
+        with sqlite3.connect(database) as db:
+            db.executescript('''
+                CREATE TABLE project (id TEXT PRIMARY KEY, worktree TEXT, sandboxes TEXT);
+                CREATE TABLE project_directory (project_id TEXT, directory TEXT, type TEXT);
+                CREATE TABLE session (project_id TEXT, directory TEXT, workspace_id TEXT);
+            ''')
+            db.execute('INSERT INTO project VALUES (?, ?, ?)', ('project', str(self.project), json.dumps([str(alternate)])))
+            db.execute('INSERT INTO project_directory VALUES (?, ?, ?)', ('project', str(checkout), 'git_worktree'))
+            db.execute('INSERT INTO session VALUES (?, ?, ?)', ('global', str(plain), None))
+            db.execute('INSERT INTO session VALUES (?, ?, ?)', ('global', str(cloud), 'workspace-remote'))
+            db.execute('INSERT INTO session VALUES (?, ?, ?)', ('global', str(oversized_remote), 'x' * 4097))
+            db.execute('INSERT INTO session VALUES (?, ?, ?)', ('global', 'vscode-remote://ssh-remote+host/repo', None))
+            db.execute('INSERT INTO session VALUES (?, ?, ?)', ('project', str(self.project / 'subdir'), None))
+        db.close()
+        original = database.read_bytes()
+        cache = {}
+        with patch.dict(os.environ, {'KILO_DB': ''}):
+            stores, projects = self.scan(cache=cache)
+            expected = {p: {'Kilo Code CLI'} for p in (self.project, alternate, checkout, plain)}
+            self.assertEqual(projects, expected)
+            self.assertEqual([(name, path) for name, path, _ in stores], [('Kilo Code CLI', directory)])
+            self.assertEqual(database.read_bytes(), original)
+            self.assertEqual(list(directory.iterdir()), [database])
+            with sqlite3.connect(database) as db:
+                db.execute('UPDATE session SET directory = ? WHERE directory = ?', (str(cloud), str(plain)))
+            db.close()
+            expected[cloud] = expected.pop(plain)
+            self.assertEqual(self.scan(cache=cache)[1], expected)
+            journal = database.with_name(database.name + '-journal')
+            journal.write_bytes(b'rollback in progress')
+            issues = set()
+            self.assertEqual(self.scan(cache=cache, issues=issues)[1], {})
+            self.assertTrue(any('回滚日志' in issue for issue in issues))
+            self.assertEqual(journal.read_bytes(), b'rollback in progress')
+            journal.unlink()
+            self.assertEqual(self.scan(cache=cache)[1], expected)
+
+    def test_kilo_relative_database_uses_authorized_xdg_root_and_rejects_links(self):
+        data = self.base / 'xdg'
+        root = data / 'kilo'
+        root.mkdir(parents=True)
+        database = root / 'profile.db'
+        fallback = self.home / '.local/share/kilo/profile.db'
+        fallback.parent.mkdir(parents=True)
+        for path, project in ((database, self.project), (fallback, self.home / 'Incorrect Legacy Fallback')):
+            with sqlite3.connect(path) as db:
+                db.execute('CREATE TABLE session (project_id TEXT, directory TEXT, workspace_id TEXT)')
+                db.execute('INSERT INTO session VALUES (?, ?, ?)', ('global', str(project), None))
+            db.close()
+        link = root / 'linked.db'
+        link.symlink_to(database)
+        cache = {}
+        with patch.dict(os.environ, {'XDG_DATA_HOME': str(data), 'KILO_DB': 'profile.db'}):
+            self.assertEqual(self.scan(cache=cache)[1], {})
+            self.assertEqual(self.scan(cache=cache, authorized=(data,))[1], {self.project: {'Kilo Code CLI'}})
+            with patch.dict(os.environ, {'KILO_DB': 'linked.db'}):
+                self.assertEqual(self.scan(cache=cache, authorized=(data,))[1], {})
+
+    def test_vibe_requires_a_matching_generation_or_legacy_session_and_revalidates_moves(self):
+        root = self.home / '.vibe/logs/session'
+        initial = self.home / 'Projects/Starting Folder'
+        moved = self.home / 'Projects/New Folder'
+        old = self.home / 'Projects/Legacy Folder'
+        ignored = self.home / 'Projects/Ignored'
+        generation = '0000000000000003'
+
+        def unified(suffix, project, *, runtime='local', minor=10, valid_digest=True):
+            sid = f'25fd89c1-a17f-489d-bacc-4326247a406{suffix}'
+            folder = root / 'unified' / sid
+            manifest = dict(session_id=sid, generation=generation, snapshot_sequence=3, manifest_version=1)
+            canonical = json.dumps(manifest, sort_keys=True, separators=(',', ':')).encode()
+            self.write(folder / 'generations' / generation / 'manifest.json', canonical + b'\n')
+            digest = hashlib.sha256(canonical).hexdigest() if valid_digest else '0' * 64
+            pointer = dict(session_id=sid, store_format='mistral.vibe.unified-session-store/v1',
+                           store_format_minor=minor, generation=generation, snapshot_sequence=3, manifest_sha256=digest)
+            self.write(folder / 'CURRENT', pointer)
+            return self.write(folder / 'meta.json', dict(session_id=sid, runtime=runtime, origin_directory=str(initial),
+                                                        environment={'working_directory': str(project)},
+                                                        title='PRIVATE-VIBE-TITLE'))
+
+        metadata = unified(0, self.project)
+        unified(1, ignored, runtime='cloud')
+        unified(2, ignored, minor=12)
+        unified(3, ignored, valid_digest=False)
+        linked = unified(4, ignored)
+        borrowed = linked.with_name('CURRENT')
+        borrowed.unlink()
+        borrowed.symlink_to(metadata.with_name('CURRENT'))
+        prior = root / 'session_20261126_201000_a1b2c3d4'
+        self.write(prior / 'meta.json', dict(session_id='a1b2c3d4-3819-4323-9c09-dfa87ae12b37',
+                                             environment={'working_directory': str(old)}, total_messages=1))
+        self.write(prior / 'messages.jsonl', b'opaque transcript')
+        wrong = root / 'session_20261126_201000_aaaaaaaa'
+        self.write(wrong / 'meta.json',
+                   dict(session_id='a1b2c3d4-3819-4323-9c09-dfa87ae12b37', environment={'working_directory': str(ignored)}))
+        self.write(wrong / 'messages.jsonl', b'opaque transcript')
+        cache, issues = {}, set()
+        with patch.dict(os.environ, {'VIBE_HOME': '', 'VIBE_SESSION_LOGGING__SAVE_DIR': ''}):
+            stores, projects = self.scan(cache=cache, issues=issues)
+            self.assertEqual(projects, {project: {'Mistral Vibe'} for project in (self.project, initial, old)})
+            self.assertTrue(any('清单' in issue for issue in issues))
+            self.assertTrue(any('版本' in issue for issue in issues))
+            self.assertIn(('Mistral Vibe', root), {(name, path) for name, path, _ in stores})
+            self.assertNotIn('PRIVATE-VIBE-TITLE', json.dumps(cache))
+            updated = json.loads(metadata.read_text())
+            updated['environment']['working_directory'] = str(moved)
+            metadata.write_text(json.dumps(updated))
+            self.assertEqual(self.scan(cache=cache)[1], {project: {'Mistral Vibe'} for project in (moved, initial, old)})
+            self.assertEqual(self.scan(cache=cache, excluded=(metadata,))[1], {old: {'Mistral Vibe'}})
+
+    def test_hermes_associates_verified_local_receipts_with_their_current_session(self):
+        folder = self.home / '.hermes'
+        owner = self.home / 'Projects/Named Profile'
+        current = self.home / 'Projects/Current Lineage'
+        stale = self.home / 'Projects/Superseded Lineage'
+        remote = self.home / 'Projects/Remote Lookalike'
+        mismatched = self.home / 'Projects/Changed Policy'
+        imported = self.home / 'Projects/Imported Without Receipt'
+        pending = self.home / 'Projects/Uncheckpointed'
+        deleted = self.home / 'Projects/Deleted Profile'
+        root_schema = """
+            CREATE TABLE sessions (id TEXT PRIMARY KEY, source TEXT NOT NULL, cwd TEXT);
+            CREATE TABLE state_meta (key TEXT PRIMARY KEY, value TEXT);
+        """
+
+        def record(db, sid, cwd, *, origin='local', backend='local', parent=None, terminal_directory=None):
+            db.execute('INSERT INTO sessions VALUES (?, ?, ?)', (sid, origin, str(cwd)))
+            policy = {'cwd': str(cwd), 'request_json': 'PRIVATE REQUEST', 'terminal_json': json.dumps({
+                'TERMINAL_ENV': backend, 'TERMINAL_CWD': str(terminal_directory or cwd),
+            })}
+            receipt = {'session_id': parent or sid, 'entry': {'session_id': sid}, 'policy': policy}
+            db.execute('INSERT INTO state_meta VALUES (?, ?)',
+                       ('gateway.local_policy.v1:' + (parent or sid), json.dumps(receipt)))
+
+        database = folder / 'state.db'
+        database.parent.mkdir(parents=True)
+        db = sqlite3.connect(database)
+        self.addCleanup(db.close)
+        db.execute('PRAGMA journal_mode=WAL')
+        db.executescript(root_schema)
+        record(db, 'local', self.project)
+        db.execute('INSERT INTO sessions VALUES (?, ?, ?)', ('parent', 'local', str(stale)))
+        record(db, 'child', current, parent='parent')
+        record(db, 'remote', remote, backend='ssh')
+        record(db, 'docker', remote, backend='docker')
+        record(db, 'bot', remote, origin='telegram')
+        record(db, 'changed', mismatched, terminal_directory=self.project)
+        db.execute('INSERT INTO sessions VALUES (?, ?, ?)', ('legacy', 'cli', str(imported)))
+        db.execute('INSERT INTO state_meta VALUES (?, ?)', ('gateway.local_policy.v1:invalid', 'broken {'))
+        db.commit()
+        db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+        record(db, 'pending', pending)
+        db.commit()
+        for name, project in (('coder', owner), ('former', deleted)):
+            profile_db = folder / 'profiles' / name / 'state.db'
+            profile_db.parent.mkdir(parents=True)
+            with sqlite3.connect(profile_db) as profile:
+                profile.executescript(root_schema)
+                record(profile, name, project, origin='tui')
+            profile.close()
+        self.write(folder / 'profiles/.deleted/former', b'deleted\n')
+        (folder / 'profiles/link').symlink_to(folder / 'profiles/coder', target_is_directory=True)
+        wal = database.with_name(database.name + '-wal')
+        original = {path: path.read_bytes() for path in (database, wal)}
+        with patch.dict(os.environ, {'HERMES_HOME': ''}):
+            cache, issues = {}, set()
+            result = self.scan(cache=cache, issues=issues)
+            expected = {path: {'Hermes Agent'} for path in (self.project, current, owner)}
+            self.assertEqual(result[1], expected)
+            self.assertTrue(any('检查点' in issue for issue in issues))
+            self.assertNotIn('PRIVATE REQUEST', json.dumps(cache))
+            self.assertEqual({path: path.read_bytes() for path in original}, original)
+            self.assertEqual(self.scan(cache=cache, excluded=(database,))[1], {owner: {'Hermes Agent'}})
+            db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+            self.assertEqual(self.scan(cache=cache)[1], {**expected, pending: {'Hermes Agent'}})
+
+    def test_zed_requires_migrated_local_thread_rows_and_unambiguous_path_lists(self):
+        root = self.home / 'Library/Application Support/Zed/db'
+        database = root / '0-stable/db.sqlite'
+        database.parent.mkdir(parents=True)
+        main = self.home / 'Worktrees/Main'
+        current = self.home / 'Worktrees/Linked'
+        remote = self.home / 'Projects/Remote Collision'
+        ambiguous = self.home / 'Projects/Invalid Order'
+        fresh = self.home / 'Projects/WAL Only'
+        ordered = '\n'.join(sorted(map(str, (self.project, current))))
+        cache, issues = {}, set()
+        db = sqlite3.connect(database)
+        self.addCleanup(db.close)
+        db.execute('PRAGMA journal_mode=WAL')
+        db.executescript('''
+            CREATE TABLE kv_store (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE sidebar_threads (folder_paths TEXT, folder_paths_order TEXT,
+                main_worktree_paths TEXT, main_worktree_paths_order TEXT, remote_connection TEXT,
+                updated_at TEXT, title TEXT);
+        ''')
+        db.executemany('INSERT INTO sidebar_threads VALUES (?, ?, ?, ?, ?, ?, ?)', (
+            (ordered, '1,0', str(main), '0', None, '2026-11-26', 'private thread title'),
+            (str(remote), '0', None, None, 'private remote record', '2026-11-26', 'remote'),
+            (f'{ambiguous}\n{remote}', '0', None, None, None, '2026-11-26', 'ambiguous'),
+        ))
+        db.commit()
+        db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+        self.assertEqual(self.scan(cache=cache, issues=issues)[1], {})
+        self.assertTrue(any('迁移' in issue for issue in issues))
+
+        db.execute("INSERT INTO kv_store VALUES ('thread-metadata-remote-connection-backfill', '1')")
+        db.commit()
+        db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+        db.execute('INSERT INTO sidebar_threads VALUES (?, ?, ?, ?, ?, ?, ?)',
+                   (str(fresh), '0', None, None, None, '2026-11-27', 'pending title'))
+        db.commit()
+        legacy = root / '0-preview/db.sqlite'
+        legacy.parent.mkdir()
+        with sqlite3.connect(legacy) as other:
+            other.execute('CREATE TABLE sidebar_threads (folder_paths TEXT, folder_paths_order TEXT)')
+            other.execute('INSERT INTO sidebar_threads VALUES (?, ?)', (str(ambiguous), '0'))
+        other.close()
+        linked = root / '0-nightly'
+        linked.symlink_to(database.parent, target_is_directory=True)
+        wal = database.with_name(database.name + '-wal')
+        original = {path: path.read_bytes() for path in (database, wal)}
+        expected = {path: {'Zed'} for path in (self.project, current, main)}
+        issues.clear()
+        self.assertEqual(self.scan(cache=cache, issues=issues)[1], expected)
+        self.assertTrue(any('检查点' in issue for issue in issues))
+        self.assertNotIn('private thread title', json.dumps(cache))
+        self.assertNotIn('private remote record', json.dumps(cache))
+        self.assertEqual({path: path.read_bytes() for path in original}, original)
+        self.assertEqual(self.scan(cache=cache, excluded=(database,))[1], {})
+        db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+        self.assertEqual(self.scan(cache=cache)[1], {**expected, fresh: {'Zed'}})
+
+    def test_ignored_symlinks_and_exclusions_cannot_supply_metadata(self):
+        outside = self.base / 'outside'
+        outside.mkdir()
+        (outside / 'projects.json').write_text(json.dumps({'projects': {str(self.project): 'film'}}))
+        (self.home / '.gemini').symlink_to(outside, target_is_directory=True)
+        root = 'Library/Application Support/Cursor/User/workspaceStorage'
+        excluded = self.write(f'{root}/a/workspace.json', {'folder': self.project.as_uri()})
+        (outside / 'workspace.json').write_text(json.dumps({'folder': self.project.as_uri()}))
+        (excluded.parents[1] / 'b').symlink_to(outside, target_is_directory=True)
+        cline = self.write('.cline/data/tasks/taskHistory.json', [])
+        cline.unlink()
+        cline.symlink_to(outside / 'projects.json')
+        stores, projects = self.scan(excluded=(excluded.parent,))
+        self.assertEqual(projects, {})
+        self.assertEqual({agent for agent, _, _ in stores}, {'Cursor', 'Cline'})
+
+    def test_malformed_and_oversize_metadata_leave_store_visible_with_issue(self):
+        broken = self.write('.gemini/projects.json', b'[[[[[[[')
+        oversize = self.write('.cline/data/tasks/taskHistory.json', b' ' * (4 * 1024 * 1024 + 1))
+        issues = set()
+        stores, projects = self.scan(issues=issues)
+        self.assertEqual(projects, {})
+        self.assertEqual({agent for agent, _, _ in stores}, {'Gemini CLI', 'Cline'})
+        self.assertTrue(any(str(broken) in issue for issue in issues))
+        self.assertTrue(any(str(oversize) in issue for issue in issues))
+
+    def test_projects_in_multiple_stores_share_one_path(self):
+        self.write('.gemini/projects.json', {'projects': {str(self.project): 'film'}})
+        self.write('.cline/data/tasks/taskHistory.json', [{'id': 't', 'ts': 1, 'cwdOnTaskInitialization': str(self.project)}])
+        _, projects = self.scan()
+        self.assertEqual(projects, {self.project: {'Gemini CLI', 'Cline'}})
+
+    def test_cline_installation_requires_matching_manifest_and_is_not_obsolete(self):
+        root = '.vscode/extensions/saoudrizwan.claude-dev'
+        manifest = {'publisher': 'saoudrizwan', 'name': 'claude-dev', 'version': '3.45.1'}
+        valid = self.write(f'{root}-3.45.1/package.json', manifest)
+        self.write(f'{root}-3.40.0/package.json', {**manifest, 'version': '3.40.0'})
+        self.write(f'{root}-3.46.0/package.json', {**manifest, 'publisher': 'different'})
+        self.write('.vscode/extensions/.obsolete', {'saoudrizwan.claude-dev-3.40.0': True})
+        copilot = self.write('.vscode/extensions/github.copilot-chat-0.44.0/package.json', {
+            'publisher': 'GitHub', 'name': 'copilot-chat', 'version': '0.44.0',
+        })
+        self.assertEqual(extension_installations(self.home), [
+            ('Cline', valid.parent, '3.45.1'), ('GitHub Copilot VS Code', copilot.parent, '0.44.0'),
+        ])
+
+    @unittest.skipIf(os.geteuid() == 0, 'root can read permission-denied fixtures')
+    def test_inaccessible_metadata_is_reported_and_respects_exclusion(self):
+        path = self.write('.gemini/projects.json', {'projects': {str(self.project): 'film'}})
+        path.chmod(0)
+        issues = set()
+        stores, projects = self.scan(issues=issues)
+        self.assertEqual({agent for agent, _, _ in stores}, {'Gemini CLI'})
+        self.assertEqual(projects, {})
+        self.assertTrue(any(str(path) in issue for issue in issues))
+        issues.clear()
+        self.scan(issues=issues, excluded=(path,))
+        self.assertEqual(issues, set())
