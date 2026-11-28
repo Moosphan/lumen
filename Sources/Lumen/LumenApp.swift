@@ -59,11 +59,13 @@ struct Workbench: View {
     @State var bucketPaths: Set<String>?
     @State var reviewPath = ""
     @State var selectedApplication: String?
+    @State private var showingUnclassified = false
     @State var verdict = ""
     @AppStorage("scheduledLocalInventory") var scheduled = false
     @State var lastScheduledScan = Date()
     @State var automaticConfirmation = false
     let ticker = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
+    private var onUnclassifiedPage: Bool { page == .home && showingUnclassified }
     func review(owner: String = "", project: String = "", verdict: String = "") {
         self.owner = owner
         self.project = project
@@ -87,6 +89,7 @@ struct Workbench: View {
                     }
                     Button {
                         selectedApplication = nil
+                        showingUnclassified = false
                         if link == .review { review() } else { page = link }
                     } label: {
                         Label(link.rawValue, systemImage: link.icon)
@@ -98,10 +101,10 @@ struct Workbench: View {
                 Spacer()
                 Divider()
                 if store.fixtureState != nil {
-                    Button("返回本机工作区") { store.exitFixture(); page = .home }
+                    Button("返回本机工作区") { store.exitFixture(); showingUnclassified = false; page = .home }
                         .disabled(!store.busy.isEmpty)
                 } else {
-                    Button("创建演练样本") { store.fixture(); page = .home }
+                    Button("创建演练样本") { store.fixture(); showingUnclassified = false; page = .home }
                         .disabled(!store.busy.isEmpty).buttonStyle(.plain).foregroundStyle(.secondary)
                 }
             }.padding(16).frame(width: 180).background(Color.black.opacity(0.15))
@@ -111,12 +114,21 @@ struct Workbench: View {
                     ScrollViewReader { scroll in
                         ScrollView {
                             VStack(alignment: .leading, spacing: 16) {
-                                HStack {
-                                    Text(page == .apps && selectedApplication != nil ? "应用清理详情" : page.rawValue)
-                                        .font(.system(size: 32, weight: .semibold))
-                                    Spacer()
-                                    if (page == .home || page == .scopes) && (!store.needsDiskAccess || store.fixtureState != nil) {
-                                        scanControl
+                                VStack(alignment: .leading, spacing: 14) {
+                                    if onUnclassifiedPage {
+                                        Button {
+                                            showingUnclassified = false
+                                        } label: {
+                                            Label("返回空间总览", systemImage: "chevron.left")
+                                        }.buttonStyle(.link).keyboardShortcut(.cancelAction)
+                                    }
+                                    HStack {
+                                        Text(pageTitle).font(.system(size: 32, weight: .semibold))
+                                        Spacer()
+                                        if !onUnclassifiedPage && (page == .home || page == .scopes)
+                                            && (!store.needsDiskAccess || store.fixtureState != nil) {
+                                            scanControl
+                                        }
                                     }
                                 }.id("workspace-heading")
                                 if store.scanning {
@@ -126,12 +138,17 @@ struct Workbench: View {
                                         Button("取消扫描") { store.cancelScan() }.buttonStyle(.link)
                                     }.foregroundStyle(.secondary)
                                 }
-                                if store.needsDiskAccess && store.fixtureState == nil {
+                                if store.needsDiskAccess && store.fixtureState == nil && !onUnclassifiedPage {
                                     diskAccessPanel
                                 }
                                 if !store.needsDiskAccess || store.fixtureState != nil || page == .home || page == .apps {
                                     switch page {
-                                    case .home: home
+                                    case .home:
+                                        if onUnclassifiedPage {
+                                            UnclassifiedUsageDetail(store: store)
+                                        } else {
+                                            home
+                                        }
                                     case .apps:
                                         if let path = selectedApplication,
                                            let app = store.inventory.apps.first(where: { $0.id == path }) {
@@ -164,6 +181,9 @@ struct Workbench: View {
                                 }
                             }.padding(26).frame(maxWidth: .infinity, alignment: .leading)
                         }
+                        .onChange(of: showingUnclassified) { _ in
+                            scroll.scrollTo("workspace-heading", anchor: .top)
+                        }
                     }
                 }
             }
@@ -171,7 +191,7 @@ struct Workbench: View {
         .task { startInventory() }
         .onReceive(ticker) { now in
             guard scheduled, !store.needsDiskAccess, store.fixtureState == nil, now.timeIntervalSince(lastScheduledScan) >= 900, page == .home,
-                  store.busy.isEmpty, NSApp.isActive, store.error == nil,
+                  !showingUnclassified, store.busy.isEmpty, NSApp.isActive, store.error == nil,
                   NSApp.modalWindow == nil, NSApp.keyWindow?.attachedSheet == nil else { return }
             lastScheduledScan = now
             store.scanLocal(deep: deep)
@@ -183,6 +203,12 @@ struct Workbench: View {
         .alert("操作未完成", isPresented: Binding(get: { store.error != nil }, set: { if !$0 { store.error = nil } })) {
             Button("好") { store.error = nil }
         } message: { Text(store.error ?? "") }
+    }
+
+    private var pageTitle: String {
+        if onUnclassifiedPage { return "未归类占用明细" }
+        if page == .apps && selectedApplication != nil { return "应用清理详情" }
+        return page.rawValue
     }
 
     var scanControl: some View {
@@ -225,7 +251,13 @@ struct Workbench: View {
 
     var home: some View {
         SpaceOverview(store: store, review: { review(verdict: $0) },
-                      applications: { page = .apps }, workspaces: { page = .agents })
+                      applications: { page = .apps }, workspaces: { page = .agents },
+                      unclassified: { refresh in
+                          showingUnclassified = true
+                          if (refresh || store.diskUsage == nil) && !store.needsDiskAccess {
+                              store.call("scan_disk_usage")
+                          }
+                      })
     }
 
     var scopes: some View {

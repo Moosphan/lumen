@@ -1,3 +1,4 @@
+import errno
 import gzip
 import json
 import hashlib
@@ -57,6 +58,8 @@ class LocalInventoryTests(unittest.TestCase):
     def test_disk_classification_reads_files_outside_cleanup_scope_without_modifying_preview(self):
         document = self.write("Documents/report.pdf")
         movie = self.write("Documents/footage.mov")
+        archive = self.write("Documents/assets.zip")
+        dependencies = self.write("Scratch/node_modules/example/index.js")
         app = self.write("Applications/Editor.app/Contents/Info.plist",
                          plistlib.dumps({"CFBundleIdentifier": "example.editor"}))
         download = self.write("Downloads/already-indexed.zip")
@@ -78,7 +81,7 @@ class LocalInventoryTests(unittest.TestCase):
         self.assertEqual(before, (self.state / "workspace.json").read_bytes())
         self.assertEqual(self.call("status")["scan_id"], report["scan_id"])
         categories = {row["id"]: row["bytes"] for row in result["categories"]}
-        self.assertEqual(categories["documents"], document.stat().st_blocks * 512)
+        self.assertEqual(categories["documents"], (document.stat().st_blocks + archive.stat().st_blocks) * 512)
         self.assertEqual(categories["media"], movie.stat().st_blocks * 512)
         self.assertGreater(categories["agent"], 0)
         self.assertGreater(categories["trash"], 0)
@@ -86,7 +89,7 @@ class LocalInventoryTests(unittest.TestCase):
         self.assertEqual(sum(categories.values()), result["used_bytes"])
         details = result["unclassified_details"]
         amounts = {row["id"]: row["bytes"] for row in details["categories"]}
-        self.assertEqual(amounts, {kind: categories[kind] for kind in ("documents", "media", "trash")})
+        self.assertEqual(amounts, {kind: categories[kind] for kind in ("documents", "media", "trash", "other")})
         self.assertNotIn("apps", amounts)
         self.assertNotIn("downloads", amounts)
         self.assertTrue(app.exists() and download.exists())
@@ -94,8 +97,59 @@ class LocalInventoryTests(unittest.TestCase):
         self.assertEqual(details["remaining_bytes"], categories.get("unclassified", 0))
         locations = {row["path"]: row for row in details["locations"]}
         self.assertEqual(locations[str(document.parent)]["bytes"], amounts["documents"] + amounts["media"])
-        self.assertEqual(locations[str(document.parent)]["count"], 2)
+        self.assertEqual(locations[str(document.parent)]["count"], 3)
         self.assertNotIn(str(self.home / "Documents/Excluded"), locations)
+        groups = {row["id"]: row for row in details["categories"]}
+        document_types = {row["id"]: row for row in groups["documents"]["subcategories"]}
+        self.assertEqual(document_types["pdf"]["bytes"], document.stat().st_blocks * 512)
+        self.assertEqual(document_types["archives"]["bytes"], archive.stat().st_blocks * 512)
+        self.assertEqual(groups["media"]["subcategories"][0]["id"], "video")
+        self.assertEqual(groups["other"]["subcategories"][0]["id"], "dependencies")
+        self.assertTrue(dependencies.exists())
+
+    def test_disk_classification_retains_siblings_when_directory_listing_times_out(self):
+        from engine.lumen import disk_usage
+
+        stalled = self.write("Stalled/missing.pdf").parent
+        accessible = self.write("Documents/available.pdf")
+        original = os.scandir
+
+        def scan_directory(fd):
+            if isinstance(fd, int) and os.fstat(fd).st_ino == stalled.stat().st_ino:
+                raise OSError(errno.ETIMEDOUT, "Operation timed out", fd)
+            return original(fd)
+
+        with patch.object(disk_usage.os, "scandir", side_effect=scan_directory):
+            report = self.call("scan_disk_usage")
+
+        detail = report["unclassified_details"]
+        self.assertEqual(detail["found_bytes"], accessible.stat().st_blocks * 512)
+        self.assertEqual(detail["skipped_reasons"]["timeout"], 1)
+        self.assertEqual(detail["skipped_locations"], [{"path": str(stalled), "reason": "timeout"}])
+
+    def test_disk_classification_breaks_down_library_storage(self):
+        samples = {
+            "caches": "Caches/Renderer/tiles.bin",
+            "containers": "Containers/example.editor/Data/document.bin",
+            "device_backups": "Application Support/MobileSync/Backup/fixture/data.bin",
+            "simulators": "Developer/CoreSimulator/Devices/fixture/data.bin",
+            "virtual_disks": "Containers/com.docker.docker/Data/vms/0/data/Docker.raw",
+        }
+        files = {category: self.write(f"Library/{path}") for category, path in samples.items()}
+        details = self.call("scan_disk_usage")["unclassified_details"]
+        group, = details["categories"]
+        self.assertEqual(group["id"], "library")
+        self.assertEqual(group["count"], len(samples))
+        parts = {row["id"]: row for row in group["subcategories"]}
+        self.assertEqual(set(parts), set(samples))
+        for category, file in files.items():
+            entry = parts[category]
+            with self.subTest(category=category):
+                self.assertEqual(entry["bytes"], file.stat().st_blocks * 512)
+                location, = entry["locations"]
+                self.assertTrue(Path(location["path"]) in file.parents)
+                self.assertEqual((location["bytes"], location["count"]), (entry["bytes"], 1))
+        self.assertEqual(group["bytes"], sum(entry["bytes"] for entry in parts.values()))
 
     def test_default_scan_finds_installed_apps_and_agent_projects(self):
         app = self.write("Applications/Editor.app/Contents/Info.plist",

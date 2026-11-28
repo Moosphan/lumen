@@ -1,4 +1,5 @@
 """Read-only startup disk accounting, independent of cleanup eligibility."""
+import errno
 import os
 import stat
 import subprocess
@@ -15,6 +16,17 @@ ORDER = ("apps", "agent", "documents", "media", "downloads", "library", "models"
          "trash", "macos", "other", "unclassified")
 DOCUMENTS = {".txt", ".md", ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
              ".pages", ".numbers", ".key", ".rtf", ".odt", ".epub"}
+ARCHIVES = {".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar", ".zst"}
+INSTALLERS = {".dmg", ".pkg", ".mpkg", ".iso"}
+VIRTUAL_DISKS = {".qcow2", ".vmdk", ".vdi", ".vhd", ".vhdx"}
+LIBRARY_FOLDERS = {
+    "caches": "caches", "logs": "logs", "application support": "app_support",
+    "containers": "containers", "group containers": "shared_containers",
+    "developer": "developer", "cloudstorage": "cloud", "mobile documents": "cloud",
+    "preferences": "preferences",
+}
+DEPENDENCIES = {"node_modules", ".npm", ".gradle", ".pub-cache", ".cargo", ".venv"}
+BUILD_FOLDERS = {"build", "dist", "deriveddata", ".build", ".dart_tool", ".next"}
 
 
 def _data_path(path):
@@ -148,10 +160,110 @@ def overview(report, home, system):
 def _detail_location(path, home):
     if home in path.parents:
         relative = path.relative_to(home)
-        depth = 2 if relative.parts[0] == "Library" else 1
+        depth = 3 if relative.parts[0] == "Library" else 2
         return home.joinpath(*relative.parts[:min(depth, len(relative.parts) - 1)])
-    depth = 2 if path.parts[1] in ("Users", "Library", "private") else 1
+    depth = 3 if path.parts[1] in ("Users", "Library", "private") else 2
     return Path("/").joinpath(*path.parts[1:1 + min(depth, len(path.parts) - 2)])
+
+
+def _detail_kind(path, kind, group, home):
+    parts = path.parts
+    folders = {part.lower() for part in parts[:-1]}
+    suffix = path.suffix.lower()
+    if suffix in VIRTUAL_DISKS or (path.name == "Docker.raw" and "com.docker.docker" in folders):
+        return "virtual_disks"
+    if group == "library":
+        library = home / "Library"
+        if library not in path.parents:
+            library = Path("/").joinpath(*parts[1:4]) if parts[1] == "Users" else Path("/Library")
+        section = path.relative_to(library).parts if library in path.parents else ()
+        if section[:2] == ("Application Support", "MobileSync"):
+            return "device_backups"
+        if section[:2] == ("Developer", "CoreSimulator"):
+            return "simulators"
+        return LIBRARY_FOLDERS.get(section[0].lower(), "library_other") if len(section) > 1 else "library_other"
+    if group == "apps":
+        return "app_bundle"
+    if group == "models":
+        return "weights" if kind == "model" else "model_support"
+    if ".git" in folders:
+        return "git"
+    if folders & DEPENDENCIES:
+        return "dependencies"
+    if suffix in ARCHIVES:
+        return "archives"
+    if suffix in INSTALLERS:
+        return "installers"
+    if folders & BUILD_FOLDERS:
+        return "build"
+    if kind in ("image", "audio", "video"):
+        return kind
+    if suffix == ".pdf":
+        return "pdf"
+    if suffix in {".txt", ".md", ".rtf", ".csv", ".tsv"}:
+        return "text"
+    if suffix in DOCUMENTS:
+        return "office"
+    if suffix in {".sqlite", ".sqlite3", ".db"}:
+        return "databases"
+    if suffix == ".log":
+        return "logs"
+    if suffix == ".tmp" or folders & {".cache", "caches", "tmp"}:
+        return "caches"
+    return "other"
+
+
+def _skip_reason(error):
+    return {
+        errno.ETIMEDOUT: "timeout", errno.EACCES: "permission", errno.EPERM: "permission",
+        errno.ENOENT: "changed", errno.ENOTDIR: "changed", errno.ELOOP: "changed",
+    }.get(error.errno, "unreadable")
+
+
+def _walk_disk(directory, fd, device, blocked, missed, depth=0):
+    try:
+        with os.scandir(fd) as entries:
+            for entry in entries:
+                path = directory / entry.name
+                if path in blocked:
+                    missed(path, "excluded")
+                    continue
+                try:
+                    info = entry.stat(follow_symlinks=False)
+                    if info.st_dev != device:
+                        missed(path, "volume")
+                    elif stat.S_ISREG(info.st_mode):
+                        yield path, info
+                    elif stat.S_ISDIR(info.st_mode):
+                        if depth == 128:
+                            missed(path, "depth")
+                            continue
+                        child_fd = os.open(entry.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY, dir_fd=fd)
+                        try:
+                            pinned = os.fstat(child_fd)
+                            if (pinned.st_dev, pinned.st_ino) == (info.st_dev, info.st_ino):
+                                yield from _walk_disk(path, child_fd, device, blocked, missed, depth + 1)
+                            else:
+                                missed(path, "changed")
+                        finally:
+                            os.close(child_fd)
+                except OSError as error:
+                    missed(path, _skip_reason(error))
+    except OSError as error:
+        missed(directory, _skip_reason(error))
+
+
+def _add_amount(records, key, size):
+    records[key][0] += size
+    records[key][1] += 1
+
+
+def _by_size(records):
+    return sorted(records.items(), key=lambda item: (-item[1][0], str(item[0])))
+
+
+def _location_rows(records):
+    return [dict(path=str(path), bytes=size, count=count) for path, (size, count) in _by_size(records)]
 
 
 def scan_disk(home, system, report, excluded):
@@ -164,78 +276,67 @@ def scan_disk(home, system, report, excluded):
         Path("/private/var/db"), Path("/private/var/root"),
         Path("/Library/Application Support/com.apple.TCC"),
     }
-    device = root.stat().st_dev
     totals = defaultdict(int)
-    found = defaultdict(int)
+    found = defaultdict(lambda: [0, 0])
     locations = defaultdict(lambda: [0, 0])
-    indexed = {(row["dev"], row["ino"]) for row in report.get("files", ()) if row["dev"] == device}
-    indexed_apps = {_data_path(Path(app["path"])) for app in report.get("apps", ())
-                    if app.get("inventory_device") == device and app.get("inventory_bytes", 0) > 0}
+    subdivisions = defaultdict(lambda: defaultdict(lambda: [0, 0]))
+    subdivision_locations = defaultdict(lambda: defaultdict(lambda: [0, 0]))
     home = _data_path(home)
     links = set()
-    gaps = 0
+    skipped = defaultdict(int)
+    examples = defaultdict(list)
 
-    def missed(_):
-        nonlocal gaps
-        gaps += 1
+    def missed(path, reason):
+        skipped[reason] += 1
+        if len(examples[reason]) < 6:
+            examples[reason].append(dict(path=str(path), reason=reason))
 
-    with _directory(root) as root_fd:
-        for folder, dirs, names, fd in os.fwalk(".", dir_fd=root_fd, follow_symlinks=False, onerror=missed):
-            directory = root / folder
-            retained = []
-            for name in dirs:
-                child = directory / name
-                if _data_path(child) in blocked:
-                    gaps += 1
-                    continue
-                try:
-                    info = os.stat(name, dir_fd=fd, follow_symlinks=False)
-                    if stat.S_ISDIR(info.st_mode) and info.st_dev == device:
-                        retained.append(name)
-                    elif not stat.S_ISLNK(info.st_mode):
-                        gaps += 1
-                except OSError:
-                    gaps += 1
-            dirs[:] = retained
-            for name in names:
-                path = directory / name
-                if _data_path(path) in blocked:
-                    gaps += 1
-                    continue
-                try:
-                    info = os.stat(name, dir_fd=fd, follow_symlinks=False)
-                except OSError:
-                    gaps += 1
-                    continue
-                if not stat.S_ISREG(info.st_mode) or info.st_dev != device or not info.st_blocks:
+    try:
+        with _directory(root) as root_fd:
+            device = os.fstat(root_fd).st_dev
+            indexed = {(row["dev"], row["ino"]) for row in report.get("files", ()) if row["dev"] == device}
+            indexed_apps = {_data_path(Path(app["path"])) for app in report.get("apps", ())
+                            if app.get("inventory_device") == device and app.get("inventory_bytes", 0) > 0}
+            for path, info in _walk_disk(_data_path(root), root_fd, device, blocked, missed):
+                if not info.st_blocks:
                     continue
                 key = info.st_dev, info.st_ino
                 if info.st_nlink > 1:
                     if key in links:
                         continue
                     links.add(key)
-                group = classify(path, _kind(path))
+                kind = _kind(path)
+                group = classify(path, kind)
                 size = info.st_blocks * 512
                 totals[group] += size
                 if key in indexed:
                     continue
-                canonical = _data_path(path)
-                if group == "apps" and any(parent in indexed_apps for parent in canonical.parents):
+                if group == "apps" and any(parent in indexed_apps for parent in path.parents):
                     continue
-                found[group] += size
-                location = locations[_detail_location(canonical, home)]
-                location[0] += size
-                location[1] += 1
+                subdivision = _detail_kind(path, kind, group, home)
+                location = _detail_location(path, home)
+                _add_amount(found, group, size)
+                _add_amount(locations, location, size)
+                _add_amount(subdivisions[group], subdivision, size)
+                _add_amount(subdivision_locations[group, subdivision], location, size)
+        total, free = _capacity(root)
+    except OSError as error:
+        raise ValueError("暂时无法读取启动盘数据卷，请稍后重新盘点。") from error
     if root == DATA_VOLUME:
         totals["macos"] = _system_used()
-    total, free = _capacity(root)
-    result = _result(totals, total, free, coverage="disk", gaps=gaps)
-    largest = sorted(locations.items(), key=lambda item: (-item[1][0], str(item[0])))
+    result = _result(totals, total, free, coverage="disk", gaps=sum(skipped.values()))
     result["unclassified_details"] = dict(
-        found_bytes=sum(found.values()),
+        found_bytes=sum(size for size, _ in found.values()),
         remaining_bytes=max(0, result["used_bytes"] - result["classified_bytes"]),
-        categories=[dict(id=kind, bytes=size) for kind, size in sorted(
-            found.items(), key=lambda item: (-item[1], item[0]))],
-        locations=[dict(path=str(path), bytes=size, count=count) for path, (size, count) in largest],
+        categories=[
+            dict(id=group, bytes=size, count=count, subcategories=[
+                dict(id=kind, bytes=amount, count=items,
+                     locations=_location_rows(subdivision_locations[group, kind]))
+                for kind, (amount, items) in _by_size(subdivisions[group])
+            ]) for group, (size, count) in _by_size(found)
+        ],
+        locations=_location_rows(locations),
+        skipped_reasons=dict(skipped),
+        skipped_locations=[item for reason in sorted(examples) for item in examples[reason]],
     )
     return result

@@ -42,9 +42,9 @@ struct SpaceOverview: View {
     let review: (String) -> Void
     let applications: () -> Void
     let workspaces: () -> Void
+    let unclassified: (Bool) -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var highlighted: String?
-    @State private var showingUnclassified = false
     var body: some View {
         let disk = store.fixtureState == nil
             ? (store.diskUsage ?? store.data["disk_usage"] as? Object) : nil
@@ -65,14 +65,11 @@ struct SpaceOverview: View {
                         ProgressView().controlSize(.small)
                         Button("停止盘点") { store.cancelDiskUsage() }
                     } else if disk != nil && !store.needsDiskAccess {
-                        Button("盘点启动盘分类") {
-                            showingUnclassified = true
-                            store.call("scan_disk_usage")
-                        }
+                        Button("盘点启动盘分类") { unclassified(true) }
                             .disabled(!store.busy.isEmpty)
                     }
                     if store.diskUsage?["unclassified_details"] != nil && !categories.contains(where: { $0.id == "unclassified" }) {
-                        Button("查看补查明细") { showUnclassified() }
+                        Button("查看补查明细") { unclassified(false) }
                     }
                 }
                 if categories.isEmpty {
@@ -153,16 +150,6 @@ struct SpaceOverview: View {
                 }
             }.buttonStyle(.plain)
         }
-        .sheet(isPresented: $showingUnclassified) {
-            UnclassifiedUsageDetail(store: store, overview: store.data["disk_usage"] as? Object)
-        }
-    }
-
-    private func showUnclassified() {
-        showingUnclassified = true
-        if store.diskUsage == nil && !store.needsDiskAccess {
-            store.call("scan_disk_usage")
-        }
     }
 
     @ViewBuilder
@@ -182,7 +169,7 @@ struct SpaceOverview: View {
         .padding(.vertical, 5).padding(.horizontal, 8)
         .contentShape(Rectangle())
         if actionable {
-            Button(action: showUnclassified) { row }
+            Button { unclassified(false) } label: { row }
                 .buttonStyle(.plain)
                 .accessibilityLabel("查看未归类占用")
                 .accessibilityValue(bytes(category.amount))

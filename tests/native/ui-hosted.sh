@@ -385,6 +385,7 @@ for folder, name, size in [
     (".cache", "tool-cache.bin", 2_000_000),
     ("Desktop", "capture.png", 900_000),
     ("Downloads", "recording.mov", 1_360_000),
+    ("Documents/Breakdown", "guide.pdf", 600_000),
     ("Pictures", "photo-library.bin", 1_100_000),
     ("Movies", "studio-preview.mov", 1_850_000),
     (".pub-cache", "packages.bin", 1_600_000),
