@@ -145,6 +145,15 @@ def overview(report, home, system):
                      total=total, free=free, system_bytes=system_bytes)
 
 
+def _detail_location(path, home):
+    if home in path.parents:
+        relative = path.relative_to(home)
+        depth = 2 if relative.parts[0] == "Library" else 1
+        return home.joinpath(*relative.parts[:min(depth, len(relative.parts) - 1)])
+    depth = 2 if path.parts[1] in ("Users", "Library", "private") else 1
+    return Path("/").joinpath(*path.parts[1:1 + min(depth, len(path.parts) - 2)])
+
+
 def scan_disk(home, system, report, excluded):
     root = _root(home, system)
     if root == Path("/"):
@@ -157,6 +166,12 @@ def scan_disk(home, system, report, excluded):
     }
     device = root.stat().st_dev
     totals = defaultdict(int)
+    found = defaultdict(int)
+    locations = defaultdict(lambda: [0, 0])
+    indexed = {(row["dev"], row["ino"]) for row in report.get("files", ()) if row["dev"] == device}
+    indexed_apps = {_data_path(Path(app["path"])) for app in report.get("apps", ())
+                    if app.get("inventory_device") == device and app.get("inventory_bytes", 0) > 0}
+    home = _data_path(home)
     links = set()
     gaps = 0
 
@@ -194,13 +209,33 @@ def scan_disk(home, system, report, excluded):
                     continue
                 if not stat.S_ISREG(info.st_mode) or info.st_dev != device or not info.st_blocks:
                     continue
+                key = info.st_dev, info.st_ino
                 if info.st_nlink > 1:
-                    key = info.st_dev, info.st_ino
                     if key in links:
                         continue
                     links.add(key)
-                totals[classify(path, _kind(path))] += info.st_blocks * 512
+                group = classify(path, _kind(path))
+                size = info.st_blocks * 512
+                totals[group] += size
+                if key in indexed:
+                    continue
+                canonical = _data_path(path)
+                if group == "apps" and any(parent in indexed_apps for parent in canonical.parents):
+                    continue
+                found[group] += size
+                location = locations[_detail_location(canonical, home)]
+                location[0] += size
+                location[1] += 1
     if root == DATA_VOLUME:
         totals["macos"] = _system_used()
     total, free = _capacity(root)
-    return _result(totals, total, free, coverage="disk", gaps=gaps)
+    result = _result(totals, total, free, coverage="disk", gaps=gaps)
+    largest = sorted(locations.items(), key=lambda item: (-item[1][0], str(item[0])))
+    result["unclassified_details"] = dict(
+        found_bytes=sum(found.values()),
+        remaining_bytes=max(0, result["used_bytes"] - result["classified_bytes"]),
+        categories=[dict(id=kind, bytes=size) for kind, size in sorted(
+            found.items(), key=lambda item: (-item[1], item[0]))],
+        locations=[dict(path=str(path), bytes=size, count=count) for path, (size, count) in largest],
+    )
+    return result

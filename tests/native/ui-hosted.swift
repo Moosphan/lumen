@@ -458,6 +458,11 @@ private func fallbackReport(_ pid: pid_t) {
         }
         _ = try eventually("the native window title") { window(ax) }
         _ = try eventually("the storage chart legend") { element("存储构成", in: ax, button: false) }
+        try press("查看未归类占用", in: ax)
+        _ = try eventually("the unclassified storage sheet") { element("未归类占用明细", in: ax, button: false) }
+        _ = try eventually("the supplementary disk scan") { element("本次补查到的文件", in: ax, button: false) }
+        _ = try eventually("the remaining unattributed storage") { element("仍未归因", in: ax, button: false) }
+        try press("完成", in: ax)
         try press("应用排行", in: ax)
         _ = try eventually("the installed application row") { element("Sample Studio", in: ax, button: false) }
         _ = try eventually("the application Finder action") { element("打开目录", in: ax, button: true) }

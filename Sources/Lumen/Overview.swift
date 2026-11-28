@@ -44,6 +44,7 @@ struct SpaceOverview: View {
     let workspaces: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var highlighted: String?
+    @State private var showingUnclassified = false
     var body: some View {
         let disk = store.fixtureState == nil
             ? (store.diskUsage ?? store.data["disk_usage"] as? Object) : nil
@@ -64,8 +65,14 @@ struct SpaceOverview: View {
                         ProgressView().controlSize(.small)
                         Button("停止盘点") { store.cancelDiskUsage() }
                     } else if disk != nil && !store.needsDiskAccess {
-                        Button("盘点启动盘分类") { store.call("scan_disk_usage") }
+                        Button("盘点启动盘分类") {
+                            showingUnclassified = true
+                            store.call("scan_disk_usage")
+                        }
                             .disabled(!store.busy.isEmpty)
+                    }
+                    if store.diskUsage?["unclassified_details"] != nil && !categories.contains(where: { $0.id == "unclassified" }) {
+                        Button("查看补查明细") { showUnclassified() }
                     }
                 }
                 if categories.isEmpty {
@@ -98,21 +105,11 @@ struct SpaceOverview: View {
                         .accessibilityHidden(true)
                         VStack(spacing: 3) {
                             ForEach(categories) { category in
-                                HStack(spacing: 8) {
-                                    Circle().fill(category.color).frame(width: 8, height: 8)
-                                    Text(category.label).lineLimit(1)
-                                    Spacer(minLength: 6)
-                                    Text(bytes(category.amount)).foregroundStyle(.secondary)
-                                    Text(share(category.amount, total: chartTotal))
-                                        .frame(width: 54, alignment: .trailing)
-                                }
-                                .font(.system(size: 12)).monospacedDigit()
-                                .padding(.vertical, 5).padding(.horizontal, 8)
+                                legendEntry(category, total: chartTotal)
                                 .background(.white.opacity(highlighted == category.id ? 0.06 : 0), in: RoundedRectangle(cornerRadius: 6))
                                 .onHover { hovered in
                                     withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) { highlighted = hovered ? category.id : nil }
                                 }
-                                .accessibilityElement(children: .combine)
                             }
                         }
                     }.padding(.vertical, 8)
@@ -155,6 +152,42 @@ struct SpaceOverview: View {
                     overviewLink("Agent 工作区", icon: "square.3.layers.3d", count: "\(store.projects.count.formatted()) 个工程")
                 }
             }.buttonStyle(.plain)
+        }
+        .sheet(isPresented: $showingUnclassified) {
+            UnclassifiedUsageDetail(store: store, overview: store.data["disk_usage"] as? Object)
+        }
+    }
+
+    private func showUnclassified() {
+        showingUnclassified = true
+        if store.diskUsage == nil && !store.needsDiskAccess {
+            store.call("scan_disk_usage")
+        }
+    }
+
+    @ViewBuilder
+    private func legendEntry(_ category: InventoryCategory, total: Int64) -> some View {
+        let actionable = category.id == "unclassified"
+        let row = HStack(spacing: 8) {
+            Circle().fill(category.color).frame(width: 8, height: 8)
+            Text(category.label).lineLimit(1)
+            Spacer(minLength: 6)
+            Text(bytes(category.amount)).foregroundStyle(.secondary)
+            Text(share(category.amount, total: total))
+                .frame(width: 54, alignment: .trailing)
+            if actionable { Image(systemName: "chevron.right").foregroundStyle(lilac) }
+            else { Color.clear.frame(width: 8) }
+        }
+        .font(.system(size: 12)).monospacedDigit()
+        .padding(.vertical, 5).padding(.horizontal, 8)
+        .contentShape(Rectangle())
+        if actionable {
+            Button(action: showUnclassified) { row }
+                .buttonStyle(.plain)
+                .accessibilityLabel("查看未归类占用")
+                .accessibilityValue(bytes(category.amount))
+        } else {
+            row.accessibilityElement(children: .combine)
         }
     }
 

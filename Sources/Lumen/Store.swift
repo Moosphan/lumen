@@ -56,6 +56,7 @@ func resource(_ name: String, source: String) -> URL? {
     @Published var error: String?
     @Published private(set) var needsDiskAccess = false
     @Published private(set) var diskUsage: Object?
+    @Published private(set) var diskUsageError: String?
     @Published var result: ActionResult?
     @Published private(set) var fixtureState: URL?
     @Published var generation = 0
@@ -91,6 +92,7 @@ func resource(_ name: String, source: String) -> URL? {
         do {
             let json = try JSONSerialization.data(withJSONObject: body)
             try task.run()
+            if command == "scan_disk_usage" { diskUsageError = nil }
             busy = command
             notice = ""
             process = task
@@ -122,14 +124,16 @@ func resource(_ name: String, source: String) -> URL? {
                     }
                     guard task.terminationStatus == 0, envelope?["ok"] as? Bool == true,
                           let dashboard else {
-                        self.error = envelope?["error"] as? String ?? "本地引擎未能完成操作（退出码 \(task.terminationStatus)）。"
+                        let message = envelope?["error"] as? String ?? "本地引擎未能完成操作（退出码 \(task.terminationStatus)）。"
+                        if command == "scan_disk_usage" { self.diskUsageError = message }
+                        else { self.error = message }
                         return
                     }
                     if self.fixtureState == nil, command == "scan_local" {
                         self.needsDiskAccess = dashboard.string("disk_access") == "limited"
                     }
                     if let presentation {
-                        if dashboard.string("disk_access") == "limited" { self.diskUsage = nil }
+                        if command != "status" { self.diskUsage = nil }
                         self.data = dashboard
                         self.inventory = presentation
                         self.generation += 1

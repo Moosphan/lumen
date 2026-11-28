@@ -57,6 +57,9 @@ class LocalInventoryTests(unittest.TestCase):
     def test_disk_classification_reads_files_outside_cleanup_scope_without_modifying_preview(self):
         document = self.write("Documents/report.pdf")
         movie = self.write("Documents/footage.mov")
+        app = self.write("Applications/Editor.app/Contents/Info.plist",
+                         plistlib.dumps({"CFBundleIdentifier": "example.editor"}))
+        download = self.write("Downloads/already-indexed.zip")
         self.write("Documents/Excluded/not-included.pdf", b"excluded" * 5000)
         self.write("Projects/Agent/build.bin")
         self.write(".codex/sessions/rollout.jsonl", json.dumps({
@@ -81,6 +84,18 @@ class LocalInventoryTests(unittest.TestCase):
         self.assertGreater(categories["trash"], 0)
         self.assertGreater(result["gaps"], 0)
         self.assertEqual(sum(categories.values()), result["used_bytes"])
+        details = result["unclassified_details"]
+        amounts = {row["id"]: row["bytes"] for row in details["categories"]}
+        self.assertEqual(amounts, {kind: categories[kind] for kind in ("documents", "media", "trash")})
+        self.assertNotIn("apps", amounts)
+        self.assertNotIn("downloads", amounts)
+        self.assertTrue(app.exists() and download.exists())
+        self.assertEqual(details["found_bytes"], sum(amounts.values()))
+        self.assertEqual(details["remaining_bytes"], categories.get("unclassified", 0))
+        locations = {row["path"]: row for row in details["locations"]}
+        self.assertEqual(locations[str(document.parent)]["bytes"], amounts["documents"] + amounts["media"])
+        self.assertEqual(locations[str(document.parent)]["count"], 2)
+        self.assertNotIn(str(self.home / "Documents/Excluded"), locations)
 
     def test_default_scan_finds_installed_apps_and_agent_projects(self):
         app = self.write("Applications/Editor.app/Contents/Info.plist",
