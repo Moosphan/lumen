@@ -428,6 +428,11 @@ private func fallbackReport(_ pid: pid_t) {
                   models.contains(where: { $0["tool"] as? String == "LM Studio" &&
                       $0["quantization"] as? String == "Q4_K_M" }),
                   let categories = report["categories"] as? [[String: Any]], categories.count >= 3,
+                  let disk = report["disk_usage"] as? [String: Any],
+                  let capacity = disk["total_bytes"] as? Int64, let free = disk["free_bytes"] as? Int64,
+                  let used = disk["used_bytes"] as? Int64, used == capacity - free,
+                  let diskCategories = disk["categories"] as? [[String: Any]],
+                  diskCategories.contains(where: { $0["id"] as? String == "unclassified" }),
                   (data["roots"] as? [String])?.isEmpty == true else { return nil as Bool? }
             return true
         }

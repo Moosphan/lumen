@@ -12,7 +12,11 @@ struct InventoryCategory: Identifiable {
         case "library": return "缓存与资源库"
         case "downloads": return "下载"
         case "media": return "图片、音频与视频"
+        case "documents": return "文档"
+        case "trash": return "废纸篓"
+        case "macos": return "macOS"
         case "models": return "本地模型"
+        case "unclassified": return "未归类占用"
         default: return "其他文件"
         }
     }
@@ -23,7 +27,11 @@ struct InventoryCategory: Identifiable {
         case "library": return Color(red: 0.94, green: 0.62, blue: 0.72)
         case "downloads": return Color(red: 0.98, green: 0.74, blue: 0.48)
         case "media": return Color(red: 0.53, green: 0.80, blue: 0.62)
+        case "documents": return Color(red: 0.69, green: 0.81, blue: 0.97)
+        case "trash": return Color(red: 0.74, green: 0.60, blue: 0.51)
+        case "macos": return Color(red: 0.71, green: 0.69, blue: 0.81)
         case "models": return Color(red: 0.46, green: 0.60, blue: 0.95)
+        case "unclassified": return Color(white: 0.33)
         default: return Color(white: 0.54)
         }
     }
@@ -36,11 +44,13 @@ struct SpaceOverview: View {
     let workspaces: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var highlighted: String?
-    @State private var disk: (total: Int64, free: Int64) = (0, 0)
-
     var body: some View {
-        let categories = store.data.rows("categories").map { InventoryCategory(id: $0.string("id"), amount: $0.number("bytes")) }
-        let total = store.data.number("indexed_bytes")
+        let disk = store.fixtureState == nil
+            ? (store.diskUsage ?? store.data["disk_usage"] as? Object) : nil
+        let categories = (disk ?? store.data).rows("categories")
+            .map { InventoryCategory(id: $0.string("id"), amount: $0.number("bytes")) }
+        let chartTotal = categories.reduce(Int64(0)) { $0 + $1.amount }
+        let total = disk?.number("used_bytes") ?? chartTotal
         let safe = store.inventory.safeCount
         let pending = store.inventory.reviewCount
         let current = categories.first { $0.id == highlighted }
@@ -50,7 +60,13 @@ struct SpaceOverview: View {
                     Label("存储构成", systemImage: "chart.donut")
                         .font(.system(size: 15, weight: .semibold))
                     Spacer()
-                    if total > 0 { Text("按已盘点数据计算").font(.caption).foregroundStyle(.secondary) }
+                    if store.busy == "scan_disk_usage" {
+                        ProgressView().controlSize(.small)
+                        Button("停止盘点") { store.cancelDiskUsage() }
+                    } else if disk != nil && !store.needsDiskAccess {
+                        Button("盘点启动盘分类") { store.call("scan_disk_usage") }
+                            .disabled(!store.busy.isEmpty)
+                    }
                 }
                 if categories.isEmpty {
                     ContentPlaceholder(icon: "internaldrive", title: store.busy.isEmpty ? "暂无可显示的空间数据" : "正在盘点本机空间",
@@ -62,10 +78,10 @@ struct SpaceOverview: View {
                             ForEach(Array(categories.enumerated()), id: \.element.id) { index, category in
                                 let start = categories.prefix(index).reduce(Int64(0)) { $0 + $1.amount }
                                 let end = start + category.amount
-                                let fraction = Double(category.amount) / Double(total)
+                                let fraction = Double(category.amount) / Double(chartTotal)
                                 let gap = min(fraction * 0.15, 0.004)
-                                Circle().trim(from: Double(start) / Double(total) + gap,
-                                              to: Double(end) / Double(total) - gap)
+                                Circle().trim(from: Double(start) / Double(chartTotal) + gap,
+                                              to: Double(end) / Double(chartTotal) - gap)
                                     .stroke(category.color.opacity(highlighted == nil || highlighted == category.id ? 1 : 0.24),
                                             style: StrokeStyle(lineWidth: 16, lineCap: .butt))
                                     .rotationEffect(.degrees(-90))
@@ -74,7 +90,8 @@ struct SpaceOverview: View {
                                 Text(bytes(current?.amount ?? total))
                                     .font(.system(size: 26, weight: .semibold, design: .rounded)).monospacedDigit()
                                     .lineLimit(1).minimumScaleFactor(0.68)
-                                Text(current?.label ?? "已盘点占用").font(.caption).foregroundStyle(.secondary)
+                                Text(current?.label ?? (disk == nil ? "已盘点占用" : "启动盘已用"))
+                                    .font(.caption).foregroundStyle(.secondary)
                             }.padding(16)
                         }
                         .frame(width: 168, height: 168).padding(10)
@@ -86,7 +103,7 @@ struct SpaceOverview: View {
                                     Text(category.label).lineLimit(1)
                                     Spacer(minLength: 6)
                                     Text(bytes(category.amount)).foregroundStyle(.secondary)
-                                    Text((Double(category.amount) / Double(total)).formatted(.percent.precision(.fractionLength(1))))
+                                    Text(share(category.amount, total: chartTotal))
                                         .frame(width: 54, alignment: .trailing)
                                 }
                                 .font(.system(size: 12)).monospacedDigit()
@@ -100,15 +117,18 @@ struct SpaceOverview: View {
                         }
                     }.padding(.vertical, 8)
                 }
-                if disk.total > 0 {
+                if let disk {
+                    let capacity = disk.number("total_bytes")
+                    let free = disk.number("free_bytes")
                     Divider().padding(.top, 4)
                     HStack {
                         Label("启动盘容量", systemImage: "internaldrive").font(.caption.weight(.semibold))
                         Spacer()
-                        Text("\(bytes(disk.free)) 可用 / \(bytes(disk.total))")
+                        Text("\(bytes(free)) 可用 / \(bytes(capacity))")
                             .font(.caption).monospacedDigit().foregroundStyle(.secondary)
                     }
-                    ProportionBar(value: Double(max(0, disk.total - disk.free)) / Double(disk.total), color: lilac.opacity(0.7))
+                    ProportionBar(value: Double(total) / Double(max(1, capacity)), color: lilac.opacity(0.7))
+                    coverageNote(disk)
                 }
             }
             Panel {
@@ -136,12 +156,26 @@ struct SpaceOverview: View {
                 }
             }.buttonStyle(.plain)
         }
-        .task(id: store.generation) {
-            let path = store.fixtureState == nil ? NSHomeDirectory() : store.roots.first ?? NSHomeDirectory()
-            let attributes = try? FileManager.default.attributesOfFileSystem(forPath: path)
-            disk = ((attributes?[.systemSize] as? NSNumber)?.int64Value ?? 0,
-                    (attributes?[.systemFreeSize] as? NSNumber)?.int64Value ?? 0)
+    }
+
+    private func share(_ amount: Int64, total: Int64) -> String {
+        let fraction = Double(amount) / Double(total)
+        return fraction < 0.0005 ? "<0.1%" : fraction.formatted(.percent.precision(.fractionLength(1)))
+    }
+
+    private func coverageNote(_ disk: Object) -> some View {
+        let classified = bytes(disk.number("classified_bytes"))
+        let gaps = disk.number("gaps")
+        let note: String
+        if disk["allocation_overlaps"] as? Bool == true {
+            note = "已归类 \(classified)。APFS 共享空间可能重复计量，比例按已归类空间计算。"
+        } else if disk.string("coverage") == "disk" {
+            note = "已归类 \(classified)。未归类占用可能包括快照、其他卷及未能读取的位置。"
+        } else {
+            note = "已归类 \(classified)。盘点启动盘分类可补查清理索引以外的位置。"
         }
+        return Text(gaps > 0 ? "\(note) 跳过了 \(gaps.formatted()) 处位置。" : note)
+            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
     }
 
     private func overviewLink(_ title: String, icon: String, count: String) -> some View {

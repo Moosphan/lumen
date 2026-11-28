@@ -13,6 +13,7 @@ from pathlib import Path
 
 from . import actions, agent_events, app_cleanup, developer_caches, docker_cache, integrations, local, macmanage
 from . import chromium_cache, kiro_cli, mcp_review, model_inventory, model_recovery, model_runtime, space_tree, task_closeout, trae_cli
+from . import disk_usage
 from .fixture import create_fixture
 from .scan import SYSTEM_ROOTS, _under, scan
 
@@ -384,6 +385,11 @@ def inventory(config, state, incremental=False, full=False, quick=False):
             if item["path"] in model_paths:
                 item.update(decision="keep", reason="模型文件、共享权重或模型依赖需要保留")
     local.summarize(report)
+    if installed is not None:
+        try:
+            report["disk_usage"] = disk_usage.overview(report, Path(config["_local_home"]), config["_include_system"])
+        except OSError:
+            pass
     report["agent_inventory"] = local.agent_inventory(report, extensions)
     return report
 
@@ -789,6 +795,12 @@ def dispatch(state, request, local_home=None, include_system=False, *, cancel=No
         config = load_config(state)
         if local_home is not None:
             config.update(_local_home=str(local_home), _include_system=include_system)
+        if cmd == "scan_disk_usage":
+            if local_home is None or config.get("labs"):
+                raise ValueError("当前工作区不支持启动盘分类盘点")
+            fcntl.flock(lock, fcntl.LOCK_UN)
+            return disk_usage.scan_disk(Path(local_home), include_system, config["report"],
+                                        [state, *config["exclude"], *config.get("local_exclude", [])])
         if cmd == "agent_event":
             return observe_agent(config, state, request)
         if cmd == "model_runtime":

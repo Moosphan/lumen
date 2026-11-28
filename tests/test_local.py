@@ -34,6 +34,54 @@ class LocalInventoryTests(unittest.TestCase):
     def call(self, cmd, **args):
         return dispatch(self.state, {"cmd": cmd, **args}, local_home=self.home)
 
+    def test_startup_disk_breakdown_fills_gaps_without_counting_external_files(self):
+        from engine.lumen import disk_usage
+
+        files = [
+            dict(path=str(self.home / "report.pdf"), kind="other", projects=[], agents=[],
+                 dev=1, ino=1, allocated_bytes=200),
+            dict(path="/Volumes/External/archive.mov", kind="video", projects=[], agents=[],
+                 dev=2, ino=2, allocated_bytes=300),
+        ]
+        files.append({**files[0], "path": str(self.home / "report-copy.pdf")})
+        apps = [{"path": "/Applications/Editor.app", "inventory_bytes": 100, "inventory_device": 1}]
+        usage = disk_usage.reconcile(files, apps, self.home, {1}, {}, total=1000, free=300)
+        self.assertEqual(usage["used_bytes"], 700)
+        self.assertEqual({row["id"]: row["bytes"] for row in usage["categories"]},
+                         {"apps": 100, "documents": 200, "unclassified": 400})
+        overlap = disk_usage.reconcile(files, apps, self.home, {1}, {}, total=400, free=300)
+        self.assertEqual(overlap["used_bytes"], 100)
+        self.assertEqual(overlap["classified_bytes"], 300)
+        self.assertTrue(overlap["allocation_overlaps"])
+
+    def test_disk_classification_reads_files_outside_cleanup_scope_without_modifying_preview(self):
+        document = self.write("Documents/report.pdf")
+        movie = self.write("Documents/footage.mov")
+        self.write("Documents/Excluded/not-included.pdf", b"excluded" * 5000)
+        self.write("Projects/Agent/build.bin")
+        self.write(".codex/sessions/rollout.jsonl", json.dumps({
+            "type": "session_meta", "payload": {"cwd": str(self.home / "Projects/Agent")},
+        }).encode())
+        os.link(document, self.home / "Documents/report-copy.pdf")
+        self.write(".Trash/item.txt")
+        (self.home / "Documents/alias").symlink_to(self.manual)
+        self.call("settings", local_exclude=[str(self.home / "Documents/Excluded")])
+        report = self.call("scan_local", startup=True)
+        self.assertNotIn(str(document), {row["path"] for row in report["files"]})
+        usage = report["disk_usage"]
+        self.assertEqual(usage["used_bytes"], usage["total_bytes"] - usage["free_bytes"])
+        before = (self.state / "workspace.json").read_bytes()
+        result = self.call("scan_disk_usage")
+        self.assertEqual(before, (self.state / "workspace.json").read_bytes())
+        self.assertEqual(self.call("status")["scan_id"], report["scan_id"])
+        categories = {row["id"]: row["bytes"] for row in result["categories"]}
+        self.assertEqual(categories["documents"], document.stat().st_blocks * 512)
+        self.assertEqual(categories["media"], movie.stat().st_blocks * 512)
+        self.assertGreater(categories["agent"], 0)
+        self.assertGreater(categories["trash"], 0)
+        self.assertGreater(result["gaps"], 0)
+        self.assertEqual(sum(categories.values()), result["used_bytes"])
+
     def test_default_scan_finds_installed_apps_and_agent_projects(self):
         app = self.write("Applications/Editor.app/Contents/Info.plist",
                          plistlib.dumps({"CFBundleIdentifier": "example.editor"}))

@@ -48,6 +48,7 @@ import Foundation
         try await waitForReply(store)
         precondition(!store.needsDiskAccess && !store.data.string("scan_id").isEmpty)
         precondition(store.files.contains { $0.path == sample.path })
+        precondition((store.data["disk_usage"] as? Object)?.number("used_bytes") ?? 0 > 0)
 
         let workspace = URL(fileURLWithPath: state).appendingPathComponent("workspace.json")
         let original = try Data(contentsOf: workspace)

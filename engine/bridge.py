@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from lumen import local
+from lumen import disk_usage, local
 from lumen.actions import _directory
 from lumen.service import dispatch
 
@@ -57,6 +57,10 @@ def limited_inventory(home):
     apps = local.installed_apps(home, True, ())
     report = {"disk_access": "limited", "apps": list(apps.values()), "files": [], "local_locations": []}
     local.summarize(report)
+    try:
+        report["disk_usage"] = disk_usage.overview(report, home, True)
+    except OSError:
+        pass
     report["agent_inventory"] = local.agent_inventory({**report, "issues": [], "projects": {}})
     return report
 

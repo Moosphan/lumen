@@ -116,12 +116,14 @@ def installed_apps(home, system, excluded):
                     if not isinstance(identifier, str) or not identifier:
                         continue
                     size, partial = bundle_size(app, seen, excluded)
+                    device = app.stat().st_dev
                 except (OSError, ValueError, TypeError, AttributeError, OverflowError, ExpatError, plistlib.InvalidFileException):
                     continue
                 apps[app] = {
                     'path': str(app), 'name': str(metadata.get('CFBundleDisplayName') or metadata.get('CFBundleName') or app.stem),
                     'bundle_id': identifier, 'version': str(metadata.get('CFBundleShortVersionString') or ''),
-                    'inventory_bytes': size, 'size_partial': partial, 'system': str(app).startswith('/System/'),
+                    'inventory_bytes': size, 'inventory_device': device,
+                    'size_partial': partial, 'system': str(app).startswith('/System/'),
                 }
     return apps
 
