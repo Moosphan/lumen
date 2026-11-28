@@ -17,6 +17,7 @@ cat > "$lab/profile.sb" <<'PROFILE'
 (allow file-write* (subpath (param "LAB")) (literal "/dev/null"))
 (deny file-read-data (subpath (param "USERDIR")))
 (allow file-read-data (subpath (param "REPO")) (subpath (param "LAB")))
+(deny file-read-data (literal "/Applications") (literal "/System/Applications"))
 (deny file-read-data (subpath "/Library/Application Support/com.apple.TCC"))
 PROFILE
 sandbox=(/usr/bin/sandbox-exec -D "LAB=$lab" -D "REPO=$(pwd -P)" -D "USERDIR=$HOME" -f "$lab/profile.sb")
@@ -36,3 +37,6 @@ cat > "$bundle/Info.plist" <<'PLIST'
 </dict></plist>
 PLIST
 LUMEN_STATE_DIR="$lab/permission-state" "${sandbox[@]}" "$bundle/MacOS/Lumen" --verify-disk-access-gate
+mkdir "$lab/permission-home"
+LUMEN_STATE_DIR="$lab/recovery-state" "${sandbox[@]}" /usr/bin/env HOME="$lab/permission-home" \
+    "$bundle/MacOS/Lumen" --verify-disk-access-recovery

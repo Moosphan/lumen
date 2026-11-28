@@ -103,7 +103,7 @@ struct AppCleanupDetail: View {
                     FinderButton(path: app.id, reveal: true)
                     Button { store.call("scan_app", ["path": app.id]) } label: {
                         Label("分析应用缓存", systemImage: "viewfinder")
-                    }.disabled(!ready || store.fixtureState != nil)
+                    }.disabled(!ready || store.fixtureState != nil || store.needsDiskAccess)
                 }
                 Divider()
                 HStack(spacing: 24) {

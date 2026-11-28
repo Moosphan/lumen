@@ -12,9 +12,9 @@ import Foundation
 
     @MainActor static func checkDiskAccessGate(state: String) async throws {
         let store = Store()
-        store.startInventory { _ in fatalError("The real scan must not run without permission") }
+        store.startInventory { report in precondition(report.string("disk_access") == "limited") }
         try await waitForReply(store)
-        precondition(store.needsDiskAccess && store.data.isEmpty)
+        precondition(store.needsDiskAccess && store.data.string("scan_id").isEmpty && store.files.isEmpty)
         precondition(!FileManager.default.fileExists(atPath: state))
         store.scanLocal(deep: true)
         try await waitForReply(store)
@@ -23,7 +23,41 @@ import Foundation
         try await waitForReply(store)
         precondition(store.fixtureState != nil && !store.files.isEmpty)
         precondition(!FileManager.default.fileExists(atPath: state))
-        print("Native Store deferred real disk scans and kept the isolated demo available.")
+        store.exitFixture()
+        try await waitForReply(store)
+        precondition(store.fixtureState == nil && store.data.string("disk_access") == "limited")
+        precondition(!FileManager.default.fileExists(atPath: state))
+        print("Native Store loaded limited inventory without indexing protected files and kept the isolated demo available.")
+    }
+
+    @MainActor static func checkDiskAccessRecovery(state: String) async throws {
+        let home = URL(fileURLWithPath: ProcessInfo.processInfo.environment["HOME"] ?? "")
+        precondition(home.path == URL(fileURLWithPath: state).deletingLastPathComponent()
+            .appendingPathComponent("permission-home").path)
+        let trash = home.appendingPathComponent(".Trash")
+        let sample = home.appendingPathComponent("Downloads/fixture.txt")
+        let store = Store()
+        store.startInventory { _ in }
+        try await waitForReply(store)
+        precondition(store.needsDiskAccess && !FileManager.default.fileExists(atPath: state))
+
+        try FileManager.default.createDirectory(at: trash, withIntermediateDirectories: false)
+        try FileManager.default.createDirectory(at: sample.deletingLastPathComponent(), withIntermediateDirectories: false)
+        try Data("synthetic download".utf8).write(to: sample)
+        store.startInventory { _ in }
+        try await waitForReply(store)
+        precondition(!store.needsDiskAccess && !store.data.string("scan_id").isEmpty)
+        precondition(store.files.contains { $0.path == sample.path })
+
+        let workspace = URL(fileURLWithPath: state).appendingPathComponent("workspace.json")
+        let original = try Data(contentsOf: workspace)
+        try FileManager.default.removeItem(at: trash)
+        store.scanLocal(deep: false)
+        try await waitForReply(store)
+        precondition(store.needsDiskAccess && store.data.string("scan_id").isEmpty && store.files.isEmpty)
+        let after = try Data(contentsOf: workspace)
+        precondition(original == after)
+        print("Native Store resumed a complete scan after access was available and preserved its snapshot when access was lost.")
     }
 
     static func checkWorkspaceRanking() {
@@ -104,6 +138,10 @@ import Foundation
         }
         if CommandLine.arguments.contains("--verify-disk-access-gate") {
             try await checkDiskAccessGate(state: state)
+            return
+        }
+        if CommandLine.arguments.contains("--verify-disk-access-recovery") {
+            try await checkDiskAccessRecovery(state: state)
             return
         }
         let lab = URL(fileURLWithPath: temporaryPath).resolvingSymlinksInPath()

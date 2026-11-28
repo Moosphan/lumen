@@ -128,7 +128,8 @@ struct Workbench: View {
                                 }
                                 if store.needsDiskAccess && store.fixtureState == nil {
                                     diskAccessPanel
-                                } else {
+                                }
+                                if !store.needsDiskAccess || store.fixtureState != nil || page == .home || page == .apps {
                                     switch page {
                                     case .home: home
                                     case .apps:
@@ -193,21 +194,31 @@ struct Workbench: View {
 
     private func startInventory() {
         store.startInventory { data in
-            deep = data["deep"] as? Bool ?? false
+            if let preference = data["deep"] as? Bool { deep = preference }
         }
     }
 
     var diskAccessPanel: some View {
         Panel {
-            Label("开启完全磁盘访问权限", systemImage: "lock.shield")
+            Label("当前仅盘点应用程序", systemImage: "lock.shield")
                 .font(.title2.weight(.semibold)).foregroundStyle(lilac)
-            Text("在「隐私与安全性 → 完全磁盘访问权限」中启用既白。如果列表里没有既白，请点「＋」添加当前的 Lumen.app。返回后点击再次检测，或按系统提示重新打开应用。")
+            Text("扫描进程暂未能确认完全磁盘访问。如果系统开关已经开启，请退出并重新打开当前版本。若同时保留了多个版本，可在 Finder 中核对系统设置授权的是哪一个。")
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            if Bundle.main.bundleURL.pathExtension == "app" {
+                Text(displayPath(Bundle.main.bundleURL.path))
+                    .font(.caption.monospaced()).foregroundStyle(.secondary)
+                    .lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+            }
             HStack(spacing: 12) {
                 Button("打开系统设置") { store.openDiskAccessSettings() }
                     .buttonStyle(.borderedProminent)
                 Button("再次检测并扫描") { startInventory() }
                     .buttonStyle(.bordered)
+                if Bundle.main.bundleURL.pathExtension == "app" {
+                    Button("在 Finder 中显示当前版本") {
+                        NSWorkspace.shared.activateFileViewerSelecting([Bundle.main.bundleURL])
+                    }.buttonStyle(.link)
+                }
             }.disabled(!store.busy.isEmpty)
         }
     }

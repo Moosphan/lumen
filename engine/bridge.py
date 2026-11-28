@@ -8,6 +8,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from lumen import local
+from lumen.actions import _directory
 from lumen.service import dispatch
 
 
@@ -35,14 +37,28 @@ def native_caller():
         return False
 
 
-def has_full_disk_access():
-    """Conservative preflight using a protected system directory's access bits.
+def has_full_disk_access(home):
+    """Check whether the scan process can list the user's protected Trash.
 
-    No directory enumeration, database reads or permission requests are needed.
-    Test in the actual scanning process so a new build or revoked grant is detected.
+    macOS protects enumeration with Full Disk Access without prompting.
+    https://developer.apple.com/videos/play/wwdc2019/701/
     """
-    return sys.platform == "darwin" and os.access(
-        "/Library/Application Support/com.apple.TCC", os.R_OK | os.X_OK)
+    if sys.platform != "darwin":
+        return False
+    try:
+        with _directory(home / ".Trash") as fd, os.scandir(fd) as entries:
+            next(entries, None)
+    except OSError:
+        return False
+    return True
+
+
+def limited_inventory(home):
+    apps = local.installed_apps(home, True, ())
+    report = {"disk_access": "limited", "apps": list(apps.values()), "files": [], "local_locations": []}
+    local.summarize(report)
+    report["agent_inventory"] = local.agent_inventory({**report, "issues": [], "projects": {}})
+    return report
 
 
 def main():
@@ -68,17 +84,18 @@ def main():
         state = Path(os.environ.get("LUMEN_STATE_DIR") or
                      (Path.home() / "Library/Application Support/org.lumen.cleaner"))
         fixture_home = os.environ.get("LUMEN_INVENTORY_HOME") if os.environ.get("LUMEN_STATE_DIR") else None
-        if (native and not fixture_home and isinstance(request, dict)
-                and request.get("cmd") != "fixture" and not has_full_disk_access()):
-            sys.stdout.write(json.dumps({
-                "ok": False, "code": "full_disk_access_required",
-                "error": "请在系统设置开启既白的完全磁盘访问权限。"
-            }, ensure_ascii=False))
-            return
         home = Path(fixture_home).resolve() if fixture_home else Path.home()
-        result = {"ok": True, "data": dispatch(state, request, local_home=home,
-                                                include_system=fixture_home is None,
-                                                cancel=lambda: cancelled)}
+        command = request.get("cmd") if isinstance(request, dict) else None
+        if native and not fixture_home and command not in (None, "fixture") and not has_full_disk_access(home):
+            if command == "scan_local":
+                result = {"ok": True, "data": limited_inventory(home)}
+            else:
+                result = {"ok": False, "code": "full_disk_access_required",
+                          "error": "当前扫描进程未能确认完全磁盘访问权限。"}
+        else:
+            result = {"ok": True, "data": dispatch(state, request, local_home=home,
+                                                    include_system=fixture_home is None,
+                                                    cancel=lambda: cancelled)}
     except (ValueError, RuntimeError, KeyError, OSError, TypeError) as error:
         result = {"ok": False, "error": str(error)}
     sys.stdout.write(json.dumps(result, ensure_ascii=False, separators=(",", ":")))

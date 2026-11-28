@@ -124,8 +124,8 @@ func resource(_ name: String, source: String) -> URL? {
                         self.error = envelope?["error"] as? String ?? "本地引擎未能完成操作（退出码 \(task.terminationStatus)）。"
                         return
                     }
-                    if self.fixtureState == nil {
-                        self.needsDiskAccess = false
+                    if self.fixtureState == nil, command == "scan_local" {
+                        self.needsDiskAccess = dashboard.string("disk_access") == "limited"
                     }
                     if let presentation {
                         self.data = dashboard
@@ -135,6 +135,8 @@ func resource(_ name: String, source: String) -> URL? {
                     if !standalone && command != "status" {
                         if dashboard["mcp_startup_deferred"] as? Bool == true {
                             self.notice = "保留了待处理 MCP 草案关联的扫描结果。"
+                        } else if dashboard.string("disk_access") == "limited" {
+                            self.notice = "已盘点应用程序。"
                         } else {
                             self.notice = ["scan", "scan_local"].contains(command)
                                 ? "扫描完成，共 \(self.files.count) 个文件。" : "已更新本地记录。"
@@ -223,7 +225,8 @@ func resource(_ name: String, source: String) -> URL? {
         fixtureState = nil
         data = [:]
         inventory = InventoryPresentation()
-        call("status")
+        if needsDiskAccess { call("scan_local", ["startup": true]) }
+        else { call("status") }
     }
 
     func fixture() {

@@ -30,7 +30,7 @@ lumen_build_id=$(git rev-parse --short HEAD)
 /usr/bin/ditto -c -k --keepParent "dist/$lumen_build_id/Lumen.app" "dist/$lumen_build_id/Lumen.zip"
 ```
 
-首次打开时，通过「打开系统设置」为当前 Lumen.app 开启「隐私与安全性 → 完全磁盘访问权限」。返回既白点击「再次检测并扫描」，或按系统提示重启应用。后续启动会先检测该权限，再自动盘点应用、下载、缓存、日志和本地 Agent 工程。撤回权限时，本机盘点暂停并显示授权入口。更换临时签名的开发包可能需要重新授权。[Apple 的隐私与安全性设置说明](https://support.apple.com/guide/mac-help/change-privacy-security-settings-on-mac-mchl211c911f/mac)
+既白在启动盘点前核对扫描进程能否读取受保护的位置。确认权限后，自动盘点应用、下载、缓存、日志和本地 Agent 工程。权限暂无法确认时仍可查看应用本体占用。通过「打开系统设置」可为当前 Lumen.app 开启「隐私与安全性 → 完全磁盘访问权限」，随后点击「再次检测并扫描」或重新打开应用。权限面板显示当前运行包的位置。更换临时签名的开发包可能需要重新授权。[Apple 的隐私与安全性设置说明](https://support.apple.com/guide/mac-help/change-privacy-security-settings-on-mac-mchl211c911f/mac)
 
 首页显示已盘点数据的占比和启动盘容量。应用排行支持在 Finder 中显示应用及打开所在目录。可在「扫描范围」排除自动发现的位置，或添加额外目录。清理需要审阅和确认，自动收尾可单独启用。
 
