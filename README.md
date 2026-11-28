@@ -30,7 +30,9 @@ lumen_build_id=$(git rev-parse --short HEAD)
 /usr/bin/ditto -c -k --keepParent "dist/$lumen_build_id/Lumen.app" "dist/$lumen_build_id/Lumen.zip"
 ```
 
-既白在启动盘点前核对扫描进程能否读取受保护的位置。确认权限后，自动盘点应用、下载、缓存、日志和本地 Agent 工程。权限暂无法确认时仍可查看应用本体占用。通过「打开系统设置」可为当前 Lumen.app 开启「隐私与安全性 → 完全磁盘访问权限」，随后点击「再次检测并扫描」或重新打开应用。权限面板显示当前运行包的位置。更换临时签名的开发包可能需要重新授权。[Apple 的隐私与安全性设置说明](https://support.apple.com/guide/mac-help/change-privacy-security-settings-on-mac-mchl211c911f/mac)
+既白在启动盘点前核对扫描进程能否读取受保护的位置。确认权限后，自动盘点应用、下载、缓存、日志和本地 Agent 工程。权限暂无法确认时仍可查看应用本体占用。下载解压后，用 Finder 把 `Lumen.app` 移到固定位置，例如「应用程序」。打开后在「隐私与安全性 → 完全磁盘访问权限」为该位置的既白开启权限，再按系统提示重新打开。权限面板显示当前运行包的位置。升级时先退出旧版，再在原位置替换应用。[Apple 的隐私与安全性设置说明](https://support.apple.com/guide/mac-help/change-privacy-security-settings-on-mac-mchl211c911f/mac)
+
+GitHub 上现有的旧开发预览包采用临时签名，更换这些包可能需要重新授权。采用同一开发团队的 Developer ID 签名发布后，macOS 可用稳定的代码身份识别后续版本。首次切换到该签名版本时，需要为它授权一次。[Apple 的代码签名说明](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements)
 
 首页圆环显示启动盘已用空间、各类文件的占用和未归类差额。点击「未归类占用」可按目录或类别查看补查出的文件分配空间，并在 Finder 中打开目录。快照、其他 APFS 卷和无法读取的位置可能形成剩余差额。应用排行支持在 Finder 中显示应用及打开所在目录。可在「扫描范围」排除自动发现的位置，或添加额外目录。清理需要审阅和确认，自动收尾可单独启用。
 
@@ -60,7 +62,7 @@ lumen_build_id=$(git rev-parse --short HEAD)
 
 「扫描范围」中的本地 MCP 默认关闭。启用后可复制 Codex 连接命令或通用 MCP JSON。Agent 用本次扫描的别名拟定草案，用户在既白窗口逐项核对并批准，随后可在清理记录恢复。[MCP 配置与审批流程](docs/技术方案.md#8-本地-mcp-草案与原生审批)
 
-**规则覆盖。** 低影响操作依赖具体应用版本及文件用途。当前包含 VS Code 1.95.3 的过期会话日志规则；样本应用规则限于既白创建的演练目录。模型按版本和共享 blob 盘点保护，重建成本未知的项目资产进入人工审阅。第三方应用包的可恢复卸载限明确适配且通过身份与占用检查的版本。开发包使用 ad-hoc 签名，正式 Developer ID 分发与公证见 [#10](https://github.com/Moosphan/lumen/issues/10)。
+**规则覆盖。** 低影响操作依赖具体应用版本及文件用途。当前包含 VS Code 1.95.3 的过期会话日志规则；样本应用规则限于既白创建的演练目录。模型按版本和共享 blob 盘点保护，重建成本未知的项目资产进入人工审阅。第三方应用包的可恢复卸载限明确适配且通过身份与占用检查的版本。
 
 在「清理建议 → 开发工具缓存」看到 Docker 虚拟磁盘时，可点「读取构建缓存」，查看本机 Docker Desktop 内置构建器报告的总量、共享量及未使用且未共享的量。虚拟磁盘的已分配空间与构建器报告分别显示。[Docker 盘点口径](docs/技术方案.md#10-docker-构建缓存盘点)
 
@@ -74,6 +76,22 @@ lumen_build_id=$(git rev-parse --short HEAD)
 ```
 
 第一条命令在私有临时目录生成文件、应用包、工程和多份副本，使用 macOS 沙箱禁止测试进程联网及向测试目录外写入。第二条运行 Swift 客户端到真实 Python 引擎的隔离冒烟测试。两个脚本均自行回收临时夹具。[验证范围与结果](docs/验证报告.md)
+
+## 从 GitHub 分发
+
+发行者在签名 Mac 的钥匙串准备 Apple 团队的 **Developer ID Application** 证书及私钥，并通过 `xcrun notarytool store-credentials` 保存公证配置。始终使用同一 Apple 团队与既白的 bundle ID `org.lumen.cleaner`。
+
+```bash
+/usr/bin/python3 -B scripts/package.py \
+  --output dist/release/Lumen.app \
+  --sign-identity 'Developer ID Application: Example Name (TEAMID)' \
+  --notary-profile lumen-notary \
+  --release-zip dist/release/Lumen-macOS-arm64.zip
+```
+
+在 Apple Silicon Mac 构建得到 ARM64 包。脚本启用 Hardened Runtime，先签内部动态库，再签外层应用。Apple 接受公证并且应用内的票据通过验证后，脚本才生成可上传到 GitHub Releases 的 ZIP。签名私钥和公证配置保留在钥匙串。需要在签名 Mac 上验证两个发布包可互相满足对方的 designated requirement，并通过同一位置首次授权、退出重开、重启及覆盖升级的验收。[Apple 直接分发指南](https://developer.apple.com/documentation/xcode/packaging-mac-software-for-distribution) · [分发任务 #10](https://github.com/Moosphan/lumen/issues/10)
+
+本机开发测试可单独传入 `--sign-identity` 使用钥匙串中的 Apple Development 身份。GitHub 公共分发使用 Developer ID 和公证。
 
 ## 技术与任务
 
